@@ -38,12 +38,13 @@ def default_reward(prev_obs: Optional[np.ndarray],
     r = 0.0
 
     # 1. Growth (Points change: eating +, boosting -)
-    # Scale up points_delta because it can be very small for pellets
+    # Scale up points_delta massively to prioritize eating over just surviving.
     if "points_delta_norm" in idx:
-        r += 2.0 * float(obs[idx["points_delta_norm"]])
+        r += 10.0 * float(obs[idx["points_delta_norm"]])
 
     # 2. Survival
-    r += 0.005
+    # Reduced significantly to prevent "safe circling" local optima.
+    r += 0.0001
 
     # 3. Wall Safety
     # wall_dist_norm: 1.0 (center) -> -1.0 (wall)
