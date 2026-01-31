@@ -1,3 +1,6 @@
+from pathlib import Path
+"""Slither bot trainer with PPO-style learning and TOML-based configuration."""
+
 import asyncio
 import json
 import math
@@ -10,25 +13,22 @@ import numpy as np
 # pip install websockets torch
 import websockets
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from pathlib import Path
-
-
+from torch import nn
+from torch import optim
 PROTOCOL_VERSION = 1
 
 
 MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024)))
 # --- Config loading from config.toml (auto-generated if missing), env vars override ---
-try:
-    import tomllib  # py3.11+
-except Exception:
-    tomllib = None  # type: ignore
+import sys
 
 try:
-    import toml  # optional fallback
-except Exception:
-    toml = None  # type: ignore
+    if sys.version_info >= 3, 11):
+        import tomllib as _toml_reader  # type: ignore
+    else:
+        import tomli as _toml_reader  # type: ignore
+except ImportError:
+    _toml_reader = None  # type: ignore
 
 
 def _toml_quote(s: str) -> str:
@@ -69,7 +69,7 @@ def _read_config_toml(path: Path) -> Dict[str, Any]:
 
 def _write_config_toml(path: Path, sections: Dict[str, Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    header = (
+    header = 
         "# Slither trainer configuration\n"
         "# Auto-generated because it was missing.\n"
         "# Environment variables prefixed with SLITHER_ override values in this file.\n\n"
@@ -117,7 +117,7 @@ def _default_net_layers() -> int:
 
 @dataclass
 class Config:
-    ws_url: str = "ws://localhost:5174"
+    ws_url: str = "ws://192.168.0.200:5174"
     bot_name: str = "NNTrainer"
     actors: int = 4
 
@@ -382,7 +382,7 @@ class Transition:
     done: float  # 1.0 if episode ended at this step else 0.0
 
 
-class ActorClient:
+class ActorClient:  # pylint: disable=too-many-instance-attributes
     def __init__(self,
                  actor_id: int,
                  cfg: Config,
@@ -423,8 +423,10 @@ class ActorClient:
                 async with websockets.connect(url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
                     await self._handshake(ws, name)
                     await self._loop(ws)
-            except Exception as e:
-                print(f"[actor {self.actor_id}] disconnected, reason={type(e).__name__}: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(
+                    f"[actor {self.actor_id}] disconnected, reason={type(e).__name__}: {e}"
+                )
                 await asyncio.sleep(0.5)
 
     async def _handshake(self, ws, name: str) -> None:
@@ -469,13 +471,13 @@ class ActorClient:
         if getattr(self, "last_assign_tick", None) is not None and now_tick is not None:
             lat = getattr(self, "last_assign_tick", None)
             lived = int(now_tick - lat)
-    
+
         self.assign_count = int(getattr(self, "assign_count", 0)) + 1
         if lived is None:
             print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, assigns={self.assign_count}")
         else:
             print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, lived_ticks={lived}, assigns={self.assign_count}")
-    
+
         self.snake_id = int(snake_id)
         self.prev_obs = None
         self.rollout.clear()
@@ -518,7 +520,10 @@ class ActorClient:
                 gen = msg.get("gen")
                 if gen is not None and gen != getattr(self, "last_gen", None):
                     self.last_gen = gen
-                    print(f"[actor {self.actor_id}] gen={gen}, tick={msg.get('tick')}, alive={msg.get('alive')}/{msg.get('aliveTotal')}")
+                    print(
+                        f"[actor {self.actor_id}] gen={gen}, tick={msg.get('tick')}, "
+                        f"alive={msg.get('alive')}/{msg.get('aliveTotal')}"
+                    )
                 continue
 
             if t != "sensors":
@@ -583,7 +588,7 @@ class ActorClient:
                 self.rollout = []
 
 
-class SharedState:
+class SharedState:  # pylint: disable=too-many-instance-attributes
     """
     Shared policy/value network weights.
     Learner updates the train_model; actors use an inference copy to avoid training contention.
@@ -602,6 +607,10 @@ class SharedState:
 
     def _sync_infer_from_train(self) -> None:
         self.infer_model.load_state_dict(self.train_model.state_dict())
+
+    def sync_infer_from_train(self) -> None:
+        """Sync the inference model weights from the training model."""
+        self._sync_infer_from_train()
 
     def act(self, obs: np.ndarray, turn_std: float) -> Tuple[float, float, float, float]:
         """
@@ -651,15 +660,15 @@ class SharedState:
         bern = torch.distributions.Bernoulli(probs=boost_prob)
         logp_boost = bern.log_prob(act_boost)
 
-        logp = (logp_turn + logp_boost)
+        logp = logp_turn + logp_boost)
         ratio = torch.exp(logp - old_logp)
 
         clipped = torch.clamp(ratio, 1.0 - self.cfg.ppo_clip, 1.0 + self.cfg.ppo_clip)
         policy_loss = -(torch.min(ratio * adv, clipped * adv)).mean()
 
-        value_loss = ((returns - value) ** 2).mean()
+        value_loss = (returns - value) ** 2).mean()
 
-        entropy = (normal.entropy() + bern.entropy()).mean()
+        entropy = normal.entropy() + bern.entropy()).mean()
 
         loss = policy_loss + self.cfg.vf_coef * value_loss - self.cfg.ent_coef * entropy
 
@@ -732,6 +741,7 @@ def save_checkpoint(cfg: Config, shared_state: SharedState) -> None:
 
 
 def load_checkpoint_if_present(cfg: Config, shared_state: SharedState) -> Optional[Path]:
+    # pylint: disable=too-many-return-statements,too-many-branches
     """
     Loads a checkpoint if present and compatible with the current model shape.
     Returns the Path that was loaded, or None if no compatible checkpoint exists.
@@ -788,7 +798,7 @@ def load_checkpoint_if_present(cfg: Config, shared_state: SharedState) -> Option
     shared_state.train_model.load_state_dict(model_sd)
     shared_state.optimizer.load_state_dict(opt_sd)
     shared_state.update_steps = int(payload.get("update_steps", 0))
-    shared_state._sync_infer_from_train()
+    shared_state.sync_infer_from_train()
     return cand
 
 
@@ -797,18 +807,18 @@ def gae(rollout: List[Transition], gamma: float, lam: float) -> Tuple[np.ndarray
     Computes advantages and returns for a single rollout.
     done is assumed 0 inside rollout; terminal handling can be added by setting done when assign arrives.
     """
-    T = len(rollout)
-    adv = np.zeros(T, dtype=np.float32)
-    ret = np.zeros(T, dtype=np.float32)
+    t_len = len(rollout)
+    adv = np.zeros(t_len, dtype=np.float32)
+    ret = np.zeros(t_len, dtype=np.float32)
 
     last_gae = 0.0
     last_value = 0.0  # bootstrap off 0 by default; can be replaced with value(next_obs) if you keep next obs
 
-    for t in reversed(range(T)):
+    for t in reversed(range(t_len)):
         r = rollout[t].reward
         v = rollout[t].value
         d = rollout[t].done
-        next_v = last_value if t == T - 1 else rollout[t + 1].value
+        next_v = last_value if t == t_len - 1 else rollout[t + 1].value
         delta = r + gamma * (1.0 - d) * next_v - v
         last_gae = delta + gamma * lam * (1.0 - d) * last_gae
         adv[t] = last_gae
@@ -818,6 +828,7 @@ def gae(rollout: List[Transition], gamma: float, lam: float) -> Tuple[np.ndarray
 
 
 def collate_rollouts(rollouts: List[List[Transition]], cfg: Config, device: str) -> Dict[str, torch.Tensor]:
+    # pylint: disable=too-many-locals
     obs = np.concatenate([np.stack([tr.obs for tr in ro], axis=0) for ro in rollouts], axis=0)
     act_turn = np.concatenate([np.asarray([tr.action_turn for tr in ro], dtype=np.float32) for ro in rollouts], axis=0)
     act_boost = np.concatenate([np.asarray([tr.action_boost for tr in ro], dtype=np.float32) for ro in rollouts], axis=0)
@@ -834,7 +845,7 @@ def collate_rollouts(rollouts: List[List[Transition]], cfg: Config, device: str)
     ret = np.concatenate(rets, axis=0)
 
     # Normalize advantages
-    adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+    adv = adv - adv.mean()) / (adv.std() + 1e-8)
 
     batch = {
         "obs": torch.tensor(obs, dtype=torch.float32, device=device),
@@ -848,6 +859,7 @@ def collate_rollouts(rollouts: List[List[Transition]], cfg: Config, device: str)
 
 
 async def learner_loop(cfg: Config, shared_state: SharedState, experience_q: asyncio.Queue) -> None:
+    # pylint: disable=too-many-locals
     last_log = time.time()
     updates = 0
     total_steps = 0
@@ -855,7 +867,7 @@ async def learner_loop(cfg: Config, shared_state: SharedState, experience_q: asy
     pending_rollouts: List[List[Transition]] = []
 
     while True:
-        actor_id, rollout = await experience_q.get()
+        _actor_id, rollout = await experience_q.get()
         pending_rollouts.append(rollout)
         total_steps += len(rollout)
 
@@ -884,13 +896,12 @@ async def learner_loop(cfg: Config, shared_state: SharedState, experience_q: asy
 
                 save_checkpoint(cfg, shared_state)
 
-            except Exception as e:
-
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 print(f"[learner] checkpoint save failed: {type(e).__name__}: {e}")
         now = time.time()
         if now - last_log >= cfg.log_every_seconds:
             denom = float(cfg.epochs)
-            msg = (
+            msg = 
                 f"[learner] updates={updates}, steps={total_steps}, "
                 f"loss={metrics_accum['loss']/denom:.4f}, "
                 f"policy={metrics_accum['policy_loss']/denom:.4f}, "
@@ -937,7 +948,10 @@ async def main() -> None:
         except Exception:
             pass
     obs_dim = await discover_obs_dim(cfg.ws_url)
-    print(f"[main] ws={cfg.ws_url}, obs_dim={obs_dim}, actors={cfg.actors}, train_device={cfg.train_device}, infer_device={cfg.infer_device}")
+    print(
+        f"[main] ws={cfg.ws_url}, obs_dim={obs_dim}, actors={cfg.actors}, "
+        f"train_device={cfg.train_device}, infer_device={cfg.infer_device}"
+    )
 
     shared_state = SharedState(obs_dim=obs_dim, cfg=cfg)
 
@@ -952,8 +966,7 @@ async def main() -> None:
 
             print(f"[main] resumed from {loaded} at update_steps={shared_state.update_steps}")
 
-    except Exception as e:
-
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"[main] checkpoint load failed: {type(e).__name__}: {e}")
     experience_q: asyncio.Queue = asyncio.Queue(maxsize=cfg.actors * 4)
 
