@@ -10,12 +10,12 @@ if not exist ".venv\Scripts\python.exe" (
 
 call ".venv\Scripts\activate.bat"
 
-set "TRAINER=trainer.py"
+set "TRAINER=-m pyrl_trainer"
 
 rem If first arg is a .py file, treat it as the trainer script
 if not "%~1"=="" (
   if /I "%~x1"==".py" (
-    set "TRAINER=%~1"
+    set "TRAINER="%~1""
     shift
   )
 )
@@ -29,5 +29,5 @@ shift
 goto collect_args
 
 :run
-python "%TRAINER%" %ARGS%
+python %TRAINER% %ARGS%
 exit /b %errorlevel%

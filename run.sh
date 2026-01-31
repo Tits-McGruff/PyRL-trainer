@@ -10,7 +10,7 @@ fi
 
 . ".venv/bin/activate"
 
-TRAINER="trainer.py"
+TRAINER="-m pyrl_trainer"
 
 # If first arg ends with .py, treat it as the trainer script
 if [ "${1-}" != "" ]; then
@@ -22,4 +22,4 @@ if [ "${1-}" != "" ]; then
   esac
 fi
 
-python "$TRAINER" "$@"
+python $TRAINER "$@"
