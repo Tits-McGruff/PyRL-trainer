@@ -32,7 +32,7 @@ class PolicyValueNet(nn.Module):
 
     def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.net(obs)
-        turn_mean = torch.tanh(self.turn_head(x)).squeeze(-1)
+        turn_mean = self.turn_head(x).squeeze(-1)
         boost_logit = self.boost_head(x).squeeze(-1)
         value = self.value_head(x).squeeze(-1)
         return turn_mean, boost_logit, value

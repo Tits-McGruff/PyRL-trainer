@@ -34,7 +34,10 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
 
     def _sync_infer_from_train(self) -> None:
         """Internal sync, assumes thread safety or called from safe context."""
-        self.infer_model.load_state_dict(self.train_model.state_dict())
+        # Explicitly move tensors to the inference device to avoid runtime errors
+        target_device = self.cfg.infer_device
+        state_dict = {k: v.to(target_device) for k, v in self.train_model.state_dict().items()}
+        self.infer_model.load_state_dict(state_dict)
 
     def sync_infer_from_train(self) -> None:
         """Sync the inference model weights from the training model."""
@@ -50,15 +53,22 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         boost_prob = torch.sigmoid(boost_logit).item()
         value = value.item()
 
-        # Simple stochasticity: Normal around mean for turn, Bernoulli for boost.
-        turn_sample = np.random.normal(loc=turn_mean, scale=turn_std)
-        turn = float(np.clip(turn_sample, -1.0, 1.0))
+        # TanhNormal: Sample from N(mean, std), then apply tanh.
+        # Log prob needs Jacobian correction.
+        u = np.random.normal(loc=turn_mean, scale=turn_std)
+        turn = float(math.tanh(u))
+        
+        # Boost is Bernoulli
         boost = 1.0 if (np.random.rand() < boost_prob) else 0.0
 
-        # Approx logp
-        normal_logp = -0.5 * (((turn_sample - turn_mean) / turn_std) ** 2) - math.log(turn_std) - 0.5 * math.log(2 * math.pi)
+        # Logp
+        # log p(a) = log p(u) - log(1 - tanh^2(u))
+        normal_logp = -0.5 * (((u - turn_mean) / turn_std) ** 2) - math.log(turn_std) - 0.5 * math.log(2 * math.pi)
+        correction = math.log(1.0 - turn**2 + 1e-6)
+        logp_turn = normal_logp - correction
+        
         bern_logp = math.log(boost_prob + 1e-8) if boost > 0.5 else math.log(1.0 - boost_prob + 1e-8)
-        logp = float(normal_logp + bern_logp)
+        logp = float(logp_turn + bern_logp)
 
         return turn, boost, logp, value
 
@@ -76,10 +86,24 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         turn_mean, boost_logit, value = self.train_model(obs)
         boost_prob = torch.sigmoid(boost_logit)
 
-        # Recompute approximate logp under current policy.
+        # Recompute logp of the TAKEN action under CURRRENT policy.
+        # Note: act_turn is already tanh(u). We need to recover u or use a TanhNormal dist.
+        # Inverse tanh: u = atanh(act_turn)
+        # However, act_turn might be slightly clipped/noisy.
+        # TanhNormal in PyTorch:
         turn_std = torch.tensor(self.cfg.turn_std, device=obs.device)
-        normal = torch.distributions.Normal(turn_mean, turn_std)
-        logp_turn = normal.log_prob(act_turn)
+        
+        # 1. Base distribution N(mean, std)
+        base_dist = torch.distributions.Normal(turn_mean, turn_std)
+        
+        # 2. Transform: Tanh
+        transforms = [torch.distributions.transforms.TanhTransform(cache_size=1)]
+        dist = torch.distributions.TransformedDistribution(base_dist, transforms)
+        
+        # 3. Log prob of the action
+        # Epsilon prevents nan at boundaries
+        act_turn_clamped = torch.clamp(act_turn, -0.999999, 0.999999)
+        logp_turn = dist.log_prob(act_turn_clamped)
 
         bern = torch.distributions.Bernoulli(probs=boost_prob)
         logp_boost = bern.log_prob(act_boost)
@@ -92,7 +116,16 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
 
         value_loss = ((returns - value) ** 2).mean()
 
-        entropy = (normal.entropy() + bern.entropy()).mean()
+        # Entropy of TanhNormal is tricky. It has no closed form.
+        # We can approximate it by sampling, or just use the base Normal entropy (ignoring squash).
+        # Standard practice: Use base distribution entropy if strictly varying std, 
+        # OR just ignore entropy for Tanh part?
+        # A common simple approximation is just base_dist.entropy(), knowing it's not exact.
+        # But we want to encourage exploration properly. 
+        # Actually g.entropy() is not implemented for TransformedDistribution.
+        # We'll use base_dist.entropy() - expected_log_det_jacobian? No, that's complex.
+        # Let's use the entropy of the base Normal as a proxy for exploration width.
+        entropy = (base_dist.entropy() + bern.entropy()).mean()
 
         loss = policy_loss + self.cfg.vf_coef * value_loss - self.cfg.ent_coef * entropy
 
@@ -102,9 +135,6 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         self.optimizer.step()
 
         self.update_steps += 1
-        # NOTE: We do NOT sync here because we are in a thread.
-        # Syncing must happen on the main thread or safely.
-
         return {
             "loss": float(loss.item()),
             "policy_loss": float(policy_loss.item()),
@@ -128,19 +158,21 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         return metrics
 
 
-def gae(rollout: List[Transition], gamma: float, lam: float) -> Tuple[np.ndarray, np.ndarray]:
+def gae(rollout: List[Transition], gamma: float, lam: float, bootstrap_value: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
     t_len = len(rollout)
     adv = np.zeros(t_len, dtype=np.float32)
     ret = np.zeros(t_len, dtype=np.float32)
 
     last_gae = 0.0
-    last_value = 0.0
+    last_value = bootstrap_value
 
     for t in reversed(range(t_len)):
         r = rollout[t].reward
         v = rollout[t].value
         d = rollout[t].done
         next_v = last_value if t == t_len - 1 else rollout[t + 1].value
+        # If done=1, next_v is masked out by (1-d) anyway.
+        # If done=0 (truncation), we essentially use bootstrap_value as next_v for the last step
         delta = r + gamma * (1.0 - d) * next_v - v
         last_gae = delta + gamma * lam * (1.0 - d) * last_gae
         adv[t] = last_gae
@@ -149,7 +181,10 @@ def gae(rollout: List[Transition], gamma: float, lam: float) -> Tuple[np.ndarray
     return adv, ret
 
 
-def collate_rollouts(rollouts: List[List[Transition]], cfg: Config, device: str) -> Dict[str, torch.Tensor]:
+def collate_rollouts(rollouts_and_boots: List[Tuple[List[Transition], float]], cfg: Config, device: str) -> Dict[str, torch.Tensor]:
+    # rollouts_and_boots is list of (rollout, bootstrap)
+    rollouts = [r for r, _ in rollouts_and_boots]
+    
     obs = np.concatenate([np.stack([tr.obs for tr in ro], axis=0) for ro in rollouts], axis=0)
     act_turn = np.concatenate([np.asarray([tr.action_turn for tr in ro], dtype=np.float32) for ro in rollouts], axis=0)
     act_boost = np.concatenate([np.asarray([tr.action_boost for tr in ro], dtype=np.float32) for ro in rollouts], axis=0)
@@ -157,8 +192,8 @@ def collate_rollouts(rollouts: List[List[Transition]], cfg: Config, device: str)
 
     advs = []
     rets = []
-    for ro in rollouts:
-        a, r = gae(ro, cfg.gamma, cfg.gae_lambda)
+    for ro, boot in rollouts_and_boots:
+        a, r = gae(ro, cfg.gamma, cfg.gae_lambda, bootstrap_value=boot)
         advs.append(a)
         rets.append(r)
 
@@ -230,19 +265,21 @@ async def learner_loop(cfg: Config, shared_state: SharedState, experience_q: asy
     updates = 0
     total_steps = 0
 
-    pending_rollouts: List[List[Transition]] = []
+    pending_data: List[Tuple[List[Transition], float]] = []
 
     while True:
-        _actor_id, rollout = await experience_q.get()
-        pending_rollouts.append(rollout)
+        # Unpack tuple including bootstrap value
+        _actor_id, rollout, bootstrap = await experience_q.get()
+        pending_data.append((rollout, bootstrap))
         total_steps += len(rollout)
 
         # Train when we have enough samples.
-        if sum(len(r) for r in pending_rollouts) < cfg.minibatch:
+        current_samples = sum(len(r) for r, _ in pending_data)
+        if current_samples < cfg.minibatch:
             continue
 
-        batch = collate_rollouts(pending_rollouts, cfg, device=cfg.train_device)
-        pending_rollouts = []
+        batch = collate_rollouts(pending_data, cfg, device=cfg.train_device)
+        pending_data = []
 
         metrics_accum = {"loss": 0.0, "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0}
         for _ in range(cfg.epochs):

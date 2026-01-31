@@ -30,12 +30,6 @@ jobs:
             && pip install torch \
             || true
 
-      - name: Analysing the code with pylint (py3.8/3.9)
-        if: ${{ matrix.python-version == '3.8' || matrix.python-version == '3.9' }}
-        run: |
-          pylint --disable=import-error $(git ls-files '*.py')
-
-      - name: Analysing the code with pylint (py3.10)
-        if: ${{ matrix.python-version == '3.10' }}
+      - name: Analysing the code with pylint
         run: |
           pylint $(git ls-files '*.py')
