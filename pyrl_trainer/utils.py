@@ -27,31 +27,55 @@ def default_reward(prev_obs: Optional[np.ndarray],
                    obs: np.ndarray,
                    idx: Dict[str, int]) -> float:
     """
-    Placeholder reward, purely to make the training loop runnable.
-    Replace with your real reward shaping.
+    Shaped reward function:
+    - Growth: points_delta_norm (eating +, boosting -)
+    - Survival: constant bonus
+    - Safety: penalties for wall proximity and frontal hazards
     """
-    alive_bonus = 0.001
     if prev_obs is None:
-        return alive_bonus
+        return 0.0
 
-    r = alive_bonus
+    r = 0.0
 
-    if "size_norm" in idx:
-        r += 0.05 * float(obs[idx["size_norm"]] - prev_obs[idx["size_norm"]])
+    # 1. Growth (Points change: eating +, boosting -)
+    # Scale up points_delta because it can be very small for pellets
+    if "points_delta_norm" in idx:
+        r += 2.0 * float(obs[idx["points_delta_norm"]])
 
-    if "points_pct" in idx:
-        r += 0.02 * float(obs[idx["points_pct"]] - prev_obs[idx["points_pct"]])
+    # 2. Survival
+    r += 0.005
 
-    # Mild safety shaping
+    # 3. Wall Safety
+    # wall_dist_norm: 1.0 (center) -> -1.0 (wall)
+    if "wall_dist_norm" in idx:
+        wall = float(obs[idx["wall_dist_norm"]])
+        if wall < -0.5:
+             # Penalize exponentially as we get closer to wall
+             # at -0.5 -> penalty 0
+             # at -1.0 -> penalty -0.05 * (1.0)^2 = -0.05
+             r -= 0.05 * ((-wall) ** 2)
+
+    # 4. Frontal Collision Safety
+    # Front bins are usually in the middle of the array if sorted by angle.
+    # API: Bin 0 is back (-pi), Bin N/2 is front (0).
     hazard_labels = [k for k in idx.keys() if k.startswith("hazard_")]
-    wall_labels = [k for k in idx.keys() if k.startswith("wall_")]
     if hazard_labels:
-        h = np.mean([obs[idx[k]] for k in hazard_labels])
-        # hazard is clearance (-1 close, 1 far). Higher is better.
-        r += 0.01 * float(h)
-    if wall_labels:
-        w = np.mean([obs[idx[k]] for k in wall_labels])
-        r += 0.01 * float(w)
+        n_bins = len(hazard_labels)
+        center_bin = n_bins // 2
+        # Look at 3 center bins (front)
+        # Bins are indexed 0..N-1.
+        # e.g., 16 bins. center=8. indices 7, 8, 9.
+        start_bin = max(0, center_bin - 1)
+        end_bin = min(n_bins, center_bin + 2)
+        
+        front_hazards = [hazard_labels[i] for i in range(start_bin, end_bin)]
+        
+        # Hazard bin: -1 (blocked/close) to 1 (clear).
+        avg_clearance = np.mean([obs[idx[h]] for h in front_hazards])
+        
+        # If avg_clearance < -0.5 (very close), penalize.
+        if avg_clearance < -0.5:
+            r -= 0.1
 
     return float(r)
 
