@@ -122,10 +122,17 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             lived = int(now_tick - lat)
 
         self.assign_count = int(getattr(self, "assign_count", 0)) + 1
+        
+        # Extract size from previous observation if available
+        size_str = ""
+        if self.prev_obs is not None and "size_norm" in self.sensor_idx:
+            size_val = self.prev_obs[self.sensor_idx["size_norm"]]
+            size_str = f", size_norm={size_val:.3f}"
+
         if lived is None:
             print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, assigns={self.assign_count}")
         else:
-            print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, lived_ticks={lived}, assigns={self.assign_count}")
+            print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, lived_ticks={lived}{size_str}, assigns={self.assign_count}")
 
         self.snake_id = int(snake_id)
         self.prev_obs = None
