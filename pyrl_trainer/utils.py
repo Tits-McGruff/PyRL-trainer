@@ -42,6 +42,21 @@ def default_reward(prev_obs: Optional[np.ndarray],
     if "points_delta_norm" in idx:
         r += 10.0 * float(obs[idx["points_delta_norm"]])
 
+    # 1b. Food Approach (Dense Shaping)
+    # Give a small reward for moving towards food (value decreasing towards -1).
+    # This helps break the "circling" local optimum by providing a gradient.
+    if "nearest_food_dist_norm" in idx:
+        f_idx = idx["nearest_food_dist_norm"]
+        # Assuming -1 is close and 1 is far (like wall_dist).
+        # We want to encourage decreasing value (getting closer).
+        curr_dist = float(obs[f_idx])
+        prev_dist = float(prev_obs[f_idx])
+        # Delta: Positive if we got closer (prev > curr)
+        delta = prev_dist - curr_dist
+        # Clamp delta to avoid massive spikes when target switches
+        delta = clamp(delta, -0.1, 0.1)
+        r += 0.5 * delta
+
     # 2. Survival
     # Reduced significantly to prevent "safe circling" local optima.
     r += 0.0001
