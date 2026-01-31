@@ -115,7 +115,7 @@ def _default_net_layers() -> int:
 
 @dataclass
 class Config:
-    ws_url: str = "ws://192.168.0.200:5174"
+    ws_url: str = "ws://localhost:5174"
     bot_name: str = "NNTrainer"
     actors: int = 4
 
