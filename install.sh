@@ -23,8 +23,9 @@ python -m pip install --upgrade pip setuptools wheel
 if [ -f "requirements.txt" ]; then
   pip install -r requirements.txt
 else
-  pip install numpy websockets torch
-  pip install tomli
+  pip install numpy websockets tomli
+  echo "Installing PyTorch with CUDA 12.6 support..."
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 fi
 
 echo "Done, venv is .venv"

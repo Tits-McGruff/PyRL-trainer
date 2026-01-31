@@ -1,5 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
 numpy
 websockets
+# Ensure full torch stack
 torch
-# For TOML parsing on Python < 3.11
+torchvision
+torchaudio
 tomli; python_version<'3.11'
