@@ -23,7 +23,7 @@ MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024
 import sys
 
 try:
-    if sys.version_info >= 3, 11):
+    if sys.version_info >= (3, 11):
         import tomllib as _toml_reader  # type: ignore
     else:
         import tomli as _toml_reader  # type: ignore
@@ -60,16 +60,14 @@ def _toml_dump_sections(sections: Dict[str, Dict[str, Any]]) -> str:
 
 def _read_config_toml(path: Path) -> Dict[str, Any]:
     raw = path.read_bytes()
-    if tomllib is not None:
-        return tomllib.loads(raw.decode("utf-8"))
-    if toml is not None:
-        return toml.loads(raw.decode("utf-8"))
-    raise RuntimeError("Reading TOML requires Python 3.11+ (tomllib) or `pip install toml`.")
+    if _toml_reader is not None:
+        return _toml_reader.loads(raw.decode("utf-8"))
+    raise RuntimeError("Reading TOML requires Python 3.11+ (tomllib) or `pip install tomli`.")
 
 
 def _write_config_toml(path: Path, sections: Dict[str, Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    header = 
+    header = (
         "# Slither trainer configuration\n"
         "# Auto-generated because it was missing.\n"
         "# Environment variables prefixed with SLITHER_ override values in this file.\n\n"
@@ -294,7 +292,7 @@ class PolicyValueNet(nn.Module):
         super().__init__()
         layers = int(max(1, layers))
 
-        blocks = []
+        blocks: List[nn.Module] = []
         # First layer maps obs -> hidden
         blocks.append(nn.Linear(obs_dim, hidden))
         blocks.append(nn.ReLU())
@@ -660,15 +658,15 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         bern = torch.distributions.Bernoulli(probs=boost_prob)
         logp_boost = bern.log_prob(act_boost)
 
-        logp = logp_turn + logp_boost)
+        logp = logp_turn + logp_boost
         ratio = torch.exp(logp - old_logp)
 
         clipped = torch.clamp(ratio, 1.0 - self.cfg.ppo_clip, 1.0 + self.cfg.ppo_clip)
         policy_loss = -(torch.min(ratio * adv, clipped * adv)).mean()
 
-        value_loss = (returns - value) ** 2).mean()
+        value_loss = ((returns - value) ** 2).mean()
 
-        entropy = normal.entropy() + bern.entropy()).mean()
+        entropy = (normal.entropy() + bern.entropy()).mean()
 
         loss = policy_loss + self.cfg.vf_coef * value_loss - self.cfg.ent_coef * entropy
 
@@ -845,7 +843,7 @@ def collate_rollouts(rollouts: List[List[Transition]], cfg: Config, device: str)
     ret = np.concatenate(rets, axis=0)
 
     # Normalize advantages
-    adv = adv - adv.mean()) / (adv.std() + 1e-8)
+    adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
     batch = {
         "obs": torch.tensor(obs, dtype=torch.float32, device=device),
@@ -901,7 +899,7 @@ async def learner_loop(cfg: Config, shared_state: SharedState, experience_q: asy
         now = time.time()
         if now - last_log >= cfg.log_every_seconds:
             denom = float(cfg.epochs)
-            msg = 
+            msg = (
                 f"[learner] updates={updates}, steps={total_steps}, "
                 f"loss={metrics_accum['loss']/denom:.4f}, "
                 f"policy={metrics_accum['policy_loss']/denom:.4f}, "
