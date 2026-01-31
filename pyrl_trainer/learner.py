@@ -97,8 +97,9 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         base_dist = torch.distributions.Normal(turn_mean, turn_std)
         
         # 2. Transform: Tanh
-        transforms = [torch.distributions.transforms.TanhTransform(cache_size=1)]
-        dist = torch.distributions.TransformedDistribution(base_dist, transforms)
+        dist = torch.distributions.TransformedDistribution(
+            base_dist, torch.distributions.transforms.TanhTransform(cache_size=1)
+        )
         
         # 3. Log prob of the action
         # Epsilon prevents nan at boundaries
