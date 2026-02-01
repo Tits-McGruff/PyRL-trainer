@@ -12,12 +12,6 @@ from .config import Config, PROTOCOL_VERSION
 from .utils import build_index, compute_stride, default_reward, clamp
 
 
-# We need PROTOCOL_VERSION from somewhere, assuming it's in config or we define it here.
-# Since it was global in trainer.py, let's put it in config or here.
-# For now, I'll rely on it being imported from config if I put it there, or just define it.
-PROTOCOL_VERSION = 1
-
-
 MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024)))
 
 
@@ -53,7 +47,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
         self.last_sent_tick: Optional[int] = None
         self.last_sent_time: float = 0.0
 
-        self.prev_obs: Optional[np.ndarray] = None
+        self.last_obs: Optional[np.ndarray] = None
         self.rollout: List[Transition] = []
 
         self.episodes: int = 0
@@ -66,11 +60,28 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
 
         self.pending_transition: Optional[Transition] = None
 
+    def _reset_per_snake_state(self) -> None:
+        self.last_obs = None
+        self.pending_transition = None
+        self.rollout.clear()
+        self.last_sent_tick = None
+
+    def _reset_connection_state(self) -> None:
+        self.snake_id = None
+        self.sensor_order = []
+        self.sensor_idx = {}
+        self.last_sensor_tick = None
+        self.last_assign_tick = None
+        self.last_gen = None
+        self.last_sent_time = 0.0
+        self._reset_per_snake_state()
+
     async def run(self) -> None:
         url = self.cfg.ws_url
         name = f"{self.cfg.bot_name}-{self.actor_id:03d}"
         while True:
             try:
+                self._reset_connection_state()
                 async with websockets.connect(url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
                     await self._handshake(ws, name)
                     await self._loop(ws)
@@ -127,44 +138,101 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
         
         # Extract size from previous observation if available
         size_str = ""
-        if self.prev_obs is not None and "size_norm" in self.sensor_idx:
-            size_val = self.prev_obs[self.sensor_idx["size_norm"]]
+        if self.last_obs is not None and "size_norm" in self.sensor_idx:
+            size_val = self.last_obs[self.sensor_idx["size_norm"]]
             size_str = f", size_norm={size_val:.3f}"
 
         if lived is None:
             print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, assigns={self.assign_count}")
         else:
             print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, lived_ticks={lived}{size_str}, assigns={self.assign_count}")
-
-            # *** CRITICAL FIX: Handle Termination ***
-            # The previous snake died. If we have a pending transition, finalize it as terminal.
-            if self.pending_transition is not None:
-                # We don't have a "next obs" because we died, but essentially we transitioned to a terminal state.
-                # Use a small death penalty or just the regular reward up to this point.
-                # Let's say reward is -0.5 for dying.
-                self.pending_transition.reward = -0.5
-                self.pending_transition.done = 1.0
-                self.rollout.append(self.pending_transition)
-                
-            # Flush the rollout immediately so the learner sees the death event.
-            if self.rollout:
-                # bootstrap 0.0 because it's terminal
-                await self.experience_q.put((self.actor_id, list(self.rollout), 0.0))
-                self.rollout.clear()
+        if prev is not None:
+            await self._finalize_terminal_episode()
 
         self.snake_id = int(snake_id)
-        self.prev_obs = None
-        self.pending_transition = None # Clear pending since we are a new snake
-        self.last_sent_tick = None
+        self._reset_per_snake_state()
         self.episodes += 1
         self.last_assign_tick = now_tick
 
     def _should_send_action(self, tick: int) -> bool:
-        if self.last_sent_tick == tick:
-            return False
-        if self.stride <= 1:
-            return True
-        return (tick % self.stride) == 0
+        if self.last_sent_tick is not None:
+            if self.last_sent_tick == tick:
+                return False
+            if (tick - self.last_sent_tick) < self.stride:
+                return False
+        if self.cfg.max_actions_per_second > 0 and self.last_sent_time > 0.0:
+            min_interval = 1.0 / float(self.cfg.max_actions_per_second)
+            if (time.time() - self.last_sent_time) < min_interval:
+                return False
+        return True
+
+    async def _finalize_terminal_episode(self, death_penalty: float = -0.5) -> None:
+        if self.pending_transition is not None:
+            self.pending_transition.reward += float(death_penalty)
+            self.pending_transition.done = 1.0
+            self.rollout.append(self.pending_transition)
+            self.pending_transition = None
+
+        if self.rollout:
+            await self.experience_q.put((self.actor_id, list(self.rollout), 0.0))
+            self.rollout.clear()
+
+    async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
+        if self.snake_id is None:
+            return
+        if int(msg.get("snakeId", -1)) != self.snake_id:
+            return
+
+        tick = int(msg.get("tick", 0))
+        self.last_sensor_tick = tick
+        if self.last_assign_tick is None:
+            self.last_assign_tick = tick
+        sensors = msg.get("sensors") or []
+        obs = np.asarray(sensors, dtype=np.float32)
+        if obs.shape[0] != len(self.sensor_order):
+            return
+
+        if self.last_obs is not None and self.pending_transition is not None:
+            r = default_reward(self.last_obs, obs, self.sensor_idx)
+            self.pending_transition.reward += r
+
+        self.last_obs = obs
+
+        if not self._should_send_action(tick):
+            return
+
+        with torch.no_grad():
+            turn, boost, logp, value = self.shared_state.act(obs, turn_std=self.cfg.turn_std)
+
+        if self.pending_transition is not None:
+            self.rollout.append(self.pending_transition)
+            self.pending_transition = None
+
+        if len(self.rollout) >= self.cfg.horizon:
+            await self.experience_q.put((self.actor_id, list(self.rollout), float(value)))
+            self.rollout.clear()
+
+        self.pending_transition = Transition(
+            obs=obs,
+            action_turn=turn,
+            action_boost=boost,
+            logp=logp,
+            value=value,
+            reward=0.0,
+            done=0.0
+        )
+        self.steps += 1
+
+        action_msg = {
+            "type": "action",
+            "tick": tick,
+            "snakeId": self.snake_id,
+            "turn": clamp(turn, -1.0, 1.0),
+            "boost": clamp(boost, 0.0, 1.0),
+        }
+        await ws.send(json.dumps(action_msg))
+        self.last_sent_tick = tick
+        self.last_sent_time = time.time()
 
     async def _loop(self, ws) -> None:
         while True:
@@ -196,62 +264,4 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             if t != "sensors":
                 continue
 
-            if self.snake_id is None:
-                continue
-            if int(msg.get("snakeId", -1)) != self.snake_id:
-                continue
-
-            tick = int(msg.get("tick", 0))
-            self.last_sensor_tick = tick
-            sensors = msg.get("sensors") or []
-            obs = np.asarray(sensors, dtype=np.float32)
-            if obs.shape[0] != len(self.sensor_order):
-                continue
-
-            # *** CRITICAL FIX: Transition Alignment ***
-            # 1. Finalize the pending transition from the PREVIOUS tick using CURRENT obs.
-            if self.pending_transition is not None:
-                # Reward is based on the change from prev_obs (stored in pending) to obs (current)
-                r = default_reward(self.pending_transition.obs, obs, self.sensor_idx)
-                self.pending_transition.reward = r
-                self.rollout.append(self.pending_transition)
-                self.pending_transition = None
-
-            # 3. Choose NEW action for the CURRENT state (and get its value)
-            self.prev_obs = obs # pending_transition source obs
-            
-            with torch.no_grad():
-                turn, boost, logp, value = self.shared_state.act(obs, turn_std=self.cfg.turn_std)
-
-            # 2. Check if rollout is full and send it
-            # We do this AFTER acting so we have 'value' to use as bootstrap
-            if len(self.rollout) >= self.cfg.horizon:
-                # bootstrap with current value.
-                # If we die later, this chunk is valid (non-terminal end).
-                await self.experience_q.put((self.actor_id, list(self.rollout), float(value)))
-                self.rollout.clear()
-
-            # 4. Store as PENDING.
-            # done is 0.0 for now. It becomes 1.0 only if we die.
-            self.pending_transition = Transition(
-                obs=obs,
-                action_turn=turn,
-                action_boost=boost,
-                logp=logp,
-                value=value,
-                reward=0.0,
-                done=0.0
-            )
-            self.steps += 1
-
-            if self._should_send_action(tick):
-                action_msg = {
-                    "type": "action",
-                    "tick": tick,
-                    "snakeId": self.snake_id,
-                    "turn": clamp(turn, -1.0, 1.0),
-                    "boost": clamp(boost, 0.0, 1.0),
-                }
-                await ws.send(json.dumps(action_msg))
-                self.last_sent_tick = tick
-                self.last_sent_time = time.time()
+            await self._handle_sensors(msg, ws)
