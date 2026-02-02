@@ -1,6 +1,9 @@
+"""Integration tests for actor transitions."""
+
+# pylint: disable=import-error,protected-access
+
 import asyncio
 
-import numpy as np
 import pytest
 
 from pyrl_trainer.agent import ActorClient
@@ -9,21 +12,27 @@ from pyrl_trainer.config import Config
 pytestmark = pytest.mark.integration
 
 
-class DummySharedState:
-    def act(self, obs, turn_std):
+class DummySharedState:  # pylint: disable=too-few-public-methods
+    """Minimal stand-in for SharedState."""
+
+    def act(self, _obs, _turn_std):
+        """Return fixed policy outputs."""
         return 0.1, 1.0, -0.5, 0.25
 
 
-class DummyWS:
+class DummyWS:  # pylint: disable=too-few-public-methods
+    """Capture outgoing messages."""
     def __init__(self):
         self.sent = []
 
     async def send(self, data):
+        """Store outgoing payloads."""
         self.sent.append(data)
 
 
 @pytest.mark.asyncio
 async def test_transitions_align_with_stride(monkeypatch):
+    """Pending transitions align with sent actions."""
     cfg = Config(max_actions_per_second=0, horizon=10)
     actor = ActorClient(0, cfg, DummySharedState(), asyncio.Queue())
     actor.snake_id = 1

@@ -1,3 +1,7 @@
+"""Unit tests for utility helpers."""
+
+# pylint: disable=import-error
+
 import numpy as np
 import pytest
 
@@ -7,6 +11,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_compute_stride():
+    """Compute stride respects max action rates."""
     assert compute_stride(60, 120) == 1
     assert compute_stride(240, 120) == 2
     assert compute_stride(240, 60) == 4
@@ -14,6 +19,7 @@ def test_compute_stride():
 
 
 def test_default_reward_points_and_food():
+    """Reward increases with points and food proximity."""
     idx = {
         "points_delta_norm": 0,
         "nearest_food_dist_norm": 1,

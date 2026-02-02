@@ -1,3 +1,7 @@
+"""End-to-end test for actor client."""
+
+# pylint: disable=import-error
+
 import asyncio
 import json
 
@@ -10,13 +14,17 @@ from pyrl_trainer.config import Config
 pytestmark = pytest.mark.e2e
 
 
-class DummySharedState:
-    def act(self, obs, turn_std):
+class DummySharedState:  # pylint: disable=too-few-public-methods
+    """Minimal stand-in for SharedState."""
+
+    def act(self, _obs, _turn_std):
+        """Return fixed policy outputs."""
         return 0.0, 0.0, 0.0, 0.0
 
 
 @pytest.mark.asyncio
 async def test_actor_end_to_end_handshake_and_actions():
+    """Actor connects, receives sensors, and sends actions."""
     actions = []
     server_ready = asyncio.Event()
 

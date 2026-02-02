@@ -1,3 +1,7 @@
+"""System tests for learner loop."""
+
+# pylint: disable=import-error
+
 import asyncio
 
 import numpy as np
@@ -12,6 +16,7 @@ pytestmark = pytest.mark.system
 
 @pytest.mark.asyncio
 async def test_learner_loop_updates_once():
+    """Learner loop processes a minimal batch."""
     cfg = Config(
         minibatch=2,
         epochs=1,
