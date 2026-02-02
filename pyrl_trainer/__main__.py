@@ -1,18 +1,21 @@
+"""Entrypoint for the trainer process."""
+
 import asyncio
-import os
-import torch
 import json
+import os
+
+import torch
 import websockets
-from .config import load_or_create_config, Config, PROTOCOL_VERSION, MAX_WS_MESSAGE_BYTES
+
+from .config import load_or_create_config, PROTOCOL_VERSION, MAX_WS_MESSAGE_BYTES
 from .learner import SharedState, learner_loop, load_checkpoint_if_present
 from .agent import ActorClient
 
+# pylint: disable=duplicate-code
+
 
 async def discover_obs_dim(ws_url: str) -> int:
-    """
-    Connect once, read welcome, return sensorCount; does not join as player.
-    This avoids hardcoding obs dim and honors sensorSpec order.
-    """
+    """Connect once and read the sensor count without joining as a player."""
     async with websockets.connect(ws_url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
         hello = {"type": "hello", "clientType": "bot", "version": PROTOCOL_VERSION}
         await ws.send(json.dumps(hello))
@@ -33,6 +36,7 @@ async def discover_obs_dim(ws_url: str) -> int:
 
 
 async def main() -> None:
+    """Start the learner and actor tasks."""
     cfg = load_or_create_config(os.environ.get("SLITHER_CONFIG", "config.toml"))
 
     # GPU fast-path
@@ -41,12 +45,12 @@ async def main() -> None:
         torch.backends.cudnn.allow_tf32 = True
         try:
             torch.set_float32_matmul_precision("high")
-        except Exception:
+        except (AttributeError, RuntimeError):
             pass
-            
+
     try:
         obs_dim = await discover_obs_dim(cfg.ws_url)
-    except Exception as e:
+    except (OSError, RuntimeError, websockets.WebSocketException) as e:
         print(f"[main] Failed to connect to {cfg.ws_url}: {e}")
         print("[main] Ensure the game server is running.")
         return
@@ -63,7 +67,7 @@ async def main() -> None:
         loaded = load_checkpoint_if_present(cfg, shared_state)
         if loaded is not None:
             print(f"[main] resumed from {loaded} at update_steps={shared_state.update_steps}")
-    except Exception as e:  # pylint: disable=broad-exception-caught
+    except (OSError, RuntimeError) as e:
         print(f"[main] checkpoint load failed: {type(e).__name__}: {e}")
 
     experience_q: asyncio.Queue = asyncio.Queue(maxsize=cfg.actors * 4)

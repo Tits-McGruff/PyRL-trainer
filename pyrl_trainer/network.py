@@ -1,6 +1,9 @@
+"""Neural network policy and value heads."""
+
+from typing import List, Tuple
+
 import torch
 from torch import nn
-from typing import Tuple, List
 
 
 class PolicyValueNet(nn.Module):
@@ -31,6 +34,7 @@ class PolicyValueNet(nn.Module):
         self.value_head = nn.Linear(hidden, 1)
 
     def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute turn mean, boost logit, and value."""
         x = self.net(obs)
         turn_mean = self.turn_head(x).squeeze(-1)
         boost_logit = self.boost_head(x).squeeze(-1)

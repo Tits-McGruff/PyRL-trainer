@@ -1,31 +1,34 @@
+"""Utility helpers for the trainer."""
+
 import math
 import os
-import numpy as np
 from typing import Dict, List, Optional
+
+import numpy as np
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
+    """Clamp a float between lo and hi."""
     return float(max(lo, min(hi, x)))
 
 
 def build_index(order: List[str]) -> Dict[str, int]:
+    """Map sensor labels to index positions."""
     return {label: i for i, label in enumerate(order)}
 
 
 def compute_stride(tick_rate: int, max_actions_per_second: int) -> int:
-    """
-    Ensures we never exceed maxActionsPerSecond.
-    If tick_rate <= max APS, stride is 1, send each tick.
-    If tick_rate > max APS, stride > 1, send every stride ticks, last action held by server.
-    """
+    """Compute the action stride to respect maxActionsPerSecond."""
     if max_actions_per_second <= 0:
         return 1
     return max(1, math.ceil(tick_rate / max_actions_per_second))
 
 
-def default_reward(prev_obs: Optional[np.ndarray],
-                   obs: np.ndarray,
-                   idx: Dict[str, int]) -> float:
+def default_reward(  # pylint: disable=too-many-locals
+    prev_obs: Optional[np.ndarray],
+    obs: np.ndarray,
+    idx: Dict[str, int],
+) -> float:
     """
     Shaped reward function:
     - Growth: points_delta_norm (eating +, boosting -)
@@ -66,10 +69,10 @@ def default_reward(prev_obs: Optional[np.ndarray],
     if "wall_dist_norm" in idx:
         wall = float(obs[idx["wall_dist_norm"]])
         if wall < -0.5:
-             # Penalize exponentially as we get closer to wall
-             # at -0.5 -> penalty 0
-             # at -1.0 -> penalty -0.05 * (1.0)^2 = -0.05
-             r -= 0.05 * ((-wall) ** 2)
+            # Penalize exponentially as we get closer to wall
+            # at -0.5 -> penalty 0
+            # at -1.0 -> penalty -0.05 * (1.0)^2 = -0.05
+            r -= 0.05 * ((-wall) ** 2)
 
     # 4. Frontal Collision Safety
     # Front bins are usually in the middle of the array if sorted by angle.
@@ -83,12 +86,12 @@ def default_reward(prev_obs: Optional[np.ndarray],
         # e.g., 16 bins. center=8. indices 7, 8, 9.
         start_bin = max(0, center_bin - 1)
         end_bin = min(n_bins, center_bin + 2)
-        
+
         front_hazards = [hazard_labels[i] for i in range(start_bin, end_bin)]
-        
+
         # Hazard bin: -1 (blocked/close) to 1 (clear).
         avg_clearance = np.mean([obs[idx[h]] for h in front_hazards])
-        
+
         # If avg_clearance < -0.5 (very close), penalize.
         if avg_clearance < -0.5:
             r -= 0.1
@@ -97,4 +100,5 @@ def default_reward(prev_obs: Optional[np.ndarray],
 
 
 def ensure_dir(p: str) -> None:
+    """Ensure a directory exists."""
     os.makedirs(p, exist_ok=True)

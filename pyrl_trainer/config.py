@@ -1,3 +1,5 @@
+"""Configuration loading and defaults for the trainer."""
+
 import os
 import sys
 from dataclasses import dataclass, asdict
@@ -69,7 +71,7 @@ def _env_int(key: str, default: int) -> int:
         return int(default)
     try:
         return int(v)
-    except Exception:
+    except (TypeError, ValueError):
         return int(default)
 
 
@@ -79,7 +81,7 @@ def _env_float(key: str, default: float) -> float:
         return float(default)
     try:
         return float(v)
-    except Exception:
+    except (TypeError, ValueError):
         return float(default)
 
 
@@ -89,22 +91,23 @@ def _env_str(key: str, default: str) -> str:
 
 
 def _default_train_device() -> str:
-    import torch
+    import torch  # pylint: disable=import-outside-toplevel
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def _default_net_hidden() -> int:
-    import torch
+    import torch  # pylint: disable=import-outside-toplevel
     return 512 if torch.cuda.is_available() else 256
 
 
 def _default_net_layers() -> int:
-    import torch
+    import torch  # pylint: disable=import-outside-toplevel
     return 4 if torch.cuda.is_available() else 2
 
 
 @dataclass
-class Config:
+class Config:  # pylint: disable=too-many-instance-attributes
+    """Trainer configuration values."""
     ws_url: str = "ws://localhost:5174"
     bot_name: str = "NNTrainer"
     actors: int = 4
@@ -204,7 +207,7 @@ def _merge_cfg(base: Config, flat: Dict[str, Any]) -> Config:
         if hasattr(cfg, k):
             try:
                 setattr(cfg, k, v)
-            except Exception:
+            except (TypeError, ValueError):
                 pass
     return cfg
 
@@ -244,6 +247,7 @@ def _apply_env_overrides(cfg: Config) -> Config:
 
 
 def load_or_create_config(config_path: str = "config.toml") -> Config:
+    """Load config from disk or create defaults if missing."""
     path = Path(config_path)
     defaults = _defaults_config()
 
@@ -254,7 +258,7 @@ def load_or_create_config(config_path: str = "config.toml") -> Config:
         data = _read_config_toml(path)
         flat = _flatten_sections(data)
         cfg = _merge_cfg(defaults, flat)
-    except Exception:
+    except (OSError, RuntimeError, ValueError, TypeError):
         cfg = defaults
 
     cfg = _apply_env_overrides(cfg)
@@ -264,7 +268,6 @@ def load_or_create_config(config_path: str = "config.toml") -> Config:
         cfg.net_hidden = _default_net_hidden()
     if cfg.net_layers <= 0:
         cfg.net_layers = _default_net_layers()
-        
     # Ensure train_device is set if it was empty
     if not cfg.train_device:
         cfg.train_device = _default_train_device()

@@ -1,12 +1,15 @@
+"""Actor client for the Slither training server."""
+
 import asyncio
 import json
-import time
 import os
-import websockets
-import torch
-import numpy as np
+import time
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import torch
+import websockets
 
 from .config import Config, PROTOCOL_VERSION
 from .utils import build_index, compute_stride, default_reward, clamp
@@ -16,7 +19,8 @@ MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024
 
 
 @dataclass
-class Transition:
+class Transition:  # pylint: disable=too-few-public-methods
+    """Single environment transition for PPO."""
     obs: np.ndarray
     action_turn: float
     action_boost: float
@@ -27,10 +31,11 @@ class Transition:
 
 
 class ActorClient:  # pylint: disable=too-many-instance-attributes
+    """WebSocket client that controls a single snake."""
     def __init__(self,
                  actor_id: int,
                  cfg: Config,
-                 shared_state: Any, # Avoid circular type hint for SharedState
+                 shared_state: Any,  # Avoid circular type hint for SharedState.
                  experience_q: asyncio.Queue):
         self.actor_id = actor_id
         self.cfg = cfg
@@ -77,6 +82,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
         self._reset_per_snake_state()
 
     async def run(self) -> None:
+        """Connect to the server and keep the control loop alive."""
         url = self.cfg.ws_url
         name = f"{self.cfg.bot_name}-{self.actor_id:03d}"
         while True:
@@ -135,7 +141,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             lived = int(now_tick - lat)
 
         self.assign_count = int(getattr(self, "assign_count", 0)) + 1
-        
+
         # Extract size from previous observation if available
         size_str = ""
         if self.last_obs is not None and "size_norm" in self.sensor_idx:
@@ -143,9 +149,15 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             size_str = f", size_norm={size_val:.3f}"
 
         if lived is None:
-            print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, assigns={self.assign_count}")
+            print(
+                f"[actor {self.actor_id}] assign {prev} -> {snake_id}, "
+                f"assigns={self.assign_count}"
+            )
         else:
-            print(f"[actor {self.actor_id}] assign {prev} -> {snake_id}, lived_ticks={lived}{size_str}, assigns={self.assign_count}")
+            print(
+                f"[actor {self.actor_id}] assign {prev} -> {snake_id}, "
+                f"lived_ticks={lived}{size_str}, assigns={self.assign_count}"
+            )
         if prev is not None:
             await self._finalize_terminal_episode()
 
