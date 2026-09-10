@@ -17,7 +17,7 @@ pytestmark = pytest.mark.e2e
 class DummySharedState:  # pylint: disable=too-few-public-methods
     """Minimal stand-in for SharedState."""
 
-    def act(self, _obs, _turn_std):
+    def act(self, _obs, **_kwargs):
         """Return fixed policy outputs."""
         return 0.0, 0.0, 0.0, 0.0
 
@@ -31,27 +31,28 @@ async def test_actor_end_to_end_handshake_and_actions():
     async def handler(ws):
         hello = json.loads(await ws.recv())
         assert hello["type"] == "hello"
+        assert hello["clientType"] == "bot"
+        assert hello["version"] == 2
 
         await ws.send(
             json.dumps(
                 {
                     "type": "welcome",
+                    "protocolVersion": 2,
                     "tickRate": 20,
                     "sensorSpec": {"order": ["points_delta_norm"]},
                 }
             )
         )
 
-        seen_join = False
-        seen_viz = False
-        for _ in range(2):
-            msg = json.loads(await ws.recv())
-            if msg["type"] == "join":
-                seen_join = True
-            if msg["type"] == "viz":
-                seen_viz = True
-        assert seen_join
-        assert seen_viz
+        reclaim_join = json.loads(await ws.recv())
+        assert reclaim_join["type"] == "join"
+        assert reclaim_join["resumeToken"] == "expired-token"
+        await ws.send(json.dumps({"type": "reclaimResult", "reclaimed": False,
+                                  "reason": "invalid"}))
+        fresh_join = json.loads(await ws.recv())
+        assert fresh_join["type"] == "join"
+        assert "resumeToken" not in fresh_join
 
         await ws.send(
             json.dumps(
@@ -59,6 +60,7 @@ async def test_actor_end_to_end_handshake_and_actions():
                     "type": "assign",
                     "snakeId": 1,
                     "controller": "bot",
+                    "resumeToken": "replacement-token",
                 }
             )
         )
@@ -95,6 +97,7 @@ async def test_actor_end_to_end_handshake_and_actions():
     )
     experience_q: asyncio.Queue = asyncio.Queue()
     actor = ActorClient(0, cfg, DummySharedState(), experience_q)
+    actor.resume_token = "expired-token"
 
     task = asyncio.create_task(actor.run())
 
@@ -109,6 +112,7 @@ async def test_actor_end_to_end_handshake_and_actions():
         await server.wait_closed()
 
     assert len(actions) >= 1
+    assert actor.resume_token == "replacement-token"
     _actor_id, transitions, bootstrap = rollout
     assert len(transitions) == 1
     assert isinstance(bootstrap, float)

@@ -103,7 +103,7 @@ Environment variables (`SLITHER_*`) override TOML values:
 Example:
 
 ```bash
-SLITHER_WS_URL=ws://127.0.0.1:5174 SLITHER_ACTORS=8 python -m pyrl_trainer
+SLITHER_WS_URL=ws://127.0.0.1:3000 SLITHER_ACTORS=8 python -m pyrl_trainer
 ```
 
 ## Checkpoints

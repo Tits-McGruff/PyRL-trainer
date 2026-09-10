@@ -25,6 +25,8 @@ async def discover_obs_dim(ws_url: str) -> int:
                 continue
             msg = json.loads(raw)
             if msg.get("type") == "welcome":
+                if msg.get("protocolVersion") != PROTOCOL_VERSION:
+                    raise RuntimeError("server welcome did not confirm Protocol 2")
                 spec = msg.get("sensorSpec") or {}
                 sensor_count = int(spec.get("sensorCount", 0))
                 if sensor_count <= 0:

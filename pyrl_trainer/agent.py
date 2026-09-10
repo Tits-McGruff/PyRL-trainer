@@ -30,7 +30,7 @@ class Transition:  # pylint: disable=too-few-public-methods
     done: float  # 1.0 if episode ended at this step else 0.0
 
 
-class ActorClient:  # pylint: disable=too-many-instance-attributes
+class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
     """WebSocket client that controls a single snake."""
     def __init__(self,
                  actor_id: int,
@@ -43,6 +43,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
         self.experience_q = experience_q
 
         self.snake_id: Optional[int] = None
+        self.resume_token: Optional[str] = None
         self.tick_rate: int = 60
         self.stride: int = 1
 
@@ -108,14 +109,17 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
                 continue
             msg = json.loads(raw)
             if msg.get("type") == "welcome":
+                if msg.get("protocolVersion") != PROTOCOL_VERSION:
+                    raise RuntimeError("server welcome did not confirm Protocol 2")
                 self.tick_rate = int(msg.get("tickRate", 60))
                 self.stride = compute_stride(self.tick_rate, self.cfg.max_actions_per_second)
                 spec = msg.get("sensorSpec") or {}
                 self.sensor_order = list(spec.get("order") or [])
                 self.sensor_idx = build_index(self.sensor_order)
                 join = {"type": "join", "mode": "player", "name": name[:24]}
+                if self.resume_token:
+                    join["resumeToken"] = self.resume_token
                 await ws.send(json.dumps(join))
-                await ws.send(json.dumps({"type": "viz", "enabled": False}))
                 break
             if msg.get("type") == "error":
                 raise RuntimeError(f"server error during handshake: {msg.get('message')}")
@@ -126,13 +130,21 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             if isinstance(raw, (bytes, bytearray)):
                 continue
             msg = json.loads(raw)
+            if msg.get("type") == "reclaimResult" and not msg.get("reclaimed"):
+                self.resume_token = None
+                await ws.send(json.dumps({"type": "join", "mode": "player", "name": name[:24]}))
+                continue
             if msg.get("type") == "assign":
-                await self._on_assign(msg.get("snakeId"))
+                await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
                 break
             if msg.get("type") == "error":
                 raise RuntimeError(f"server error during assign wait: {msg.get('message')}")
 
-    async def _on_assign(self, snake_id: int) -> None:
+    async def _on_assign(self, snake_id: int, resume_token: str) -> None:
+        if not isinstance(snake_id, int) or snake_id <= 0:
+            raise RuntimeError("server assignment omitted a valid snakeId")
+        if not isinstance(resume_token, str) or not resume_token:
+            raise RuntimeError("Protocol 2 assignment omitted resumeToken")
         prev = self.snake_id
         now_tick = getattr(self, "last_sensor_tick", None)
         lived = None
@@ -162,6 +174,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             await self._finalize_terminal_episode()
 
         self.snake_id = int(snake_id)
+        self.resume_token = resume_token
         self._reset_per_snake_state()
         self.episodes += 1
         self.last_assign_tick = now_tick
@@ -256,7 +269,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes
             t = msg.get("type")
 
             if t == "assign":
-                await self._on_assign(msg.get("snakeId"))
+                await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
                 continue
 
             if t == "error":

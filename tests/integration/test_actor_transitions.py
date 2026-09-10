@@ -15,7 +15,7 @@ pytestmark = pytest.mark.integration
 class DummySharedState:  # pylint: disable=too-few-public-methods
     """Minimal stand-in for SharedState."""
 
-    def act(self, _obs, _turn_std):
+    def act(self, _obs, **_kwargs):
         """Return fixed policy outputs."""
         return 0.1, 1.0, -0.5, 0.25
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, Any, List
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024)))
 
 # --- Config loading from config.toml ---
@@ -108,7 +108,7 @@ def _default_net_layers() -> int:
 @dataclass
 class Config:  # pylint: disable=too-many-instance-attributes
     """Trainer configuration values."""
-    ws_url: str = "ws://localhost:5174"
+    ws_url: str = "ws://localhost:3000"
     bot_name: str = "NNTrainer"
     actors: int = 4
 
