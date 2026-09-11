@@ -91,7 +91,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 self._reset_connection_state()
                 async with websockets.connect(url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
                     await self._handshake(ws, name)
-                    await self._loop(ws)
+                    await self._loop(ws, name)
             except Exception as e:  # pylint: disable=broad-exception-caught
                 print(
                     f"[actor {self.actor_id}] disconnected, reason={type(e).__name__}: {e}"
@@ -109,13 +109,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 continue
             msg = json.loads(raw)
             if msg.get("type") == "welcome":
-                if msg.get("protocolVersion") != PROTOCOL_VERSION:
-                    raise RuntimeError("server welcome did not confirm Protocol 2")
-                self.tick_rate = int(msg.get("tickRate", 60))
-                self.stride = compute_stride(self.tick_rate, self.cfg.max_actions_per_second)
-                spec = msg.get("sensorSpec") or {}
-                self.sensor_order = list(spec.get("order") or [])
-                self.sensor_idx = build_index(self.sensor_order)
+                self._apply_welcome(msg)
                 join = {"type": "join", "mode": "player", "name": name[:24]}
                 if self.resume_token:
                     join["resumeToken"] = self.resume_token
@@ -139,6 +133,32 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 break
             if msg.get("type") == "error":
                 raise RuntimeError(f"server error during assign wait: {msg.get('message')}")
+
+    def _apply_welcome(self, msg: Dict[str, Any]) -> None:
+        """Apply the bounded Protocol 2 fields needed by the actor."""
+        if msg.get("protocolVersion") != PROTOCOL_VERSION:
+            raise RuntimeError("server welcome did not confirm Protocol 2")
+        self.tick_rate = int(msg.get("tickRate", 60))
+        self.stride = compute_stride(self.tick_rate, self.cfg.max_actions_per_second)
+        spec = msg.get("sensorSpec") or {}
+        self.sensor_order = list(spec.get("order") or [])
+        self.sensor_idx = build_index(self.sensor_order)
+
+    async def _handle_state_replaced(self, msg: Dict[str, Any], ws, name: str) -> None:
+        """End the old episode and join the imported authority without a stale token."""
+        welcome = msg.get("welcome")
+        if not isinstance(welcome, dict):
+            raise RuntimeError("stateReplaced omitted the replacement welcome")
+        await self._finalize_terminal_episode(death_penalty=0.0)
+        self.snake_id = None
+        self.resume_token = None
+        self.last_sensor_tick = None
+        self.last_assign_tick = None
+        self.last_gen = None
+        self.last_sent_time = 0.0
+        self._reset_per_snake_state()
+        self._apply_welcome(welcome)
+        await ws.send(json.dumps({"type": "join", "mode": "player", "name": name[:24]}))
 
     async def _on_assign(self, snake_id: int, resume_token: str) -> None:
         if not isinstance(snake_id, int) or snake_id <= 0:
@@ -259,7 +279,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_sent_tick = tick
         self.last_sent_time = time.time()
 
-    async def _loop(self, ws) -> None:
+    async def _loop(self, ws, name: str) -> None:
         while True:
             raw = await ws.recv()
             if isinstance(raw, (bytes, bytearray)):
@@ -270,6 +290,10 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
 
             if t == "assign":
                 await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
+                continue
+
+            if t == "stateReplaced":
+                await self._handle_state_replaced(msg, ws, name)
                 continue
 
             if t == "error":

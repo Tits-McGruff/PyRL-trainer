@@ -3,6 +3,7 @@
 # pylint: disable=import-error,protected-access
 
 import asyncio
+import json
 
 import pytest
 
@@ -58,3 +59,30 @@ async def test_transitions_align_with_stride(monkeypatch):
     assert abs(actor.rollout[0].reward - 2.0) < 1e-6
     assert actor.pending_transition is not None
     assert abs(actor.pending_transition.reward - 0.0) < 1e-6
+
+
+@pytest.mark.asyncio
+async def test_import_replacement_rejoins_without_stale_token():
+    """A live import ends the old episode and sends one fresh Protocol 2 join."""
+    actor = ActorClient(7, Config(max_actions_per_second=20), DummySharedState(), asyncio.Queue())
+    actor.snake_id = 91
+    actor.resume_token = "stale-token"
+    actor.sensor_order = ["old"]
+    actor.sensor_idx = {"old": 0}
+    ws = DummyWS()
+
+    await actor._handle_state_replaced({
+        "type": "stateReplaced",
+        "welcome": {
+            "protocolVersion": 2,
+            "tickRate": 60,
+            "sensorSpec": {"order": ["food_proximity"]},
+        },
+    }, ws, "trainer-007")
+
+    assert actor.snake_id is None
+    assert actor.resume_token is None
+    assert actor.sensor_order == ["food_proximity"]
+    assert json.loads(ws.sent[-1]) == {
+        "type": "join", "mode": "player", "name": "trainer-007"
+    }
