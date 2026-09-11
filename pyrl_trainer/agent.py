@@ -12,10 +12,17 @@ import torch
 import websockets
 
 from .config import Config, PROTOCOL_VERSION
-from .utils import build_index, compute_stride, default_reward, clamp
+from .utils import (
+    build_index,
+    clamp,
+    compute_stride,
+    default_reward_components,
+)
 
 
-MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024)))
+MAX_WS_MESSAGE_BYTES = int(
+    os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024))
+)
 
 
 @dataclass
@@ -23,6 +30,7 @@ class Transition:  # pylint: disable=too-few-public-methods
     """Single environment transition for PPO."""
     obs: np.ndarray
     action_turn: float
+    turn_latent: float
     action_boost: float
     logp: float
     value: float
@@ -32,11 +40,13 @@ class Transition:  # pylint: disable=too-few-public-methods
 
 class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
     """WebSocket client that controls a single snake."""
-    def __init__(self,
-                 actor_id: int,
-                 cfg: Config,
-                 shared_state: Any,  # Avoid circular type hint for SharedState.
-                 experience_q: asyncio.Queue):
+    def __init__(
+        self,
+        actor_id: int,
+        cfg: Config,
+        shared_state: Any,  # Avoid circular type hint for SharedState.
+        experience_q: asyncio.Queue,
+    ):
         self.actor_id = actor_id
         self.cfg = cfg
         self.shared_state = shared_state
@@ -65,22 +75,50 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.assign_count: int = 0
 
         self.pending_transition: Optional[Transition] = None
+        self.episode_return: float = 0.0
+        self.episode_actions: int = 0
 
     def _reset_per_snake_state(self) -> None:
         self.last_obs = None
         self.pending_transition = None
         self.rollout.clear()
         self.last_sent_tick = None
+        self.episode_return = 0.0
+        self.episode_actions = 0
 
     def _reset_connection_state(self) -> None:
-        self.snake_id = None
+        """Reset socket-local fields while retaining reclaimable snake state."""
         self.sensor_order = []
         self.sensor_idx = {}
-        self.last_sensor_tick = None
-        self.last_assign_tick = None
-        self.last_gen = None
         self.last_sent_time = 0.0
-        self._reset_per_snake_state()
+
+    async def _truncate_disconnected_rollout(self) -> None:
+        """Flush completed PPO work without inventing a terminal transition."""
+        bootstrap = (
+            float(self.pending_transition.value)
+            if self.pending_transition is not None
+            else 0.0
+        )
+        self.pending_transition = None
+
+        if self.rollout:
+            await self.experience_q.put(
+                (self.actor_id, list(self.rollout), bootstrap)
+            )
+            self.rollout.clear()
+
+        self.last_obs = None
+        self.last_sent_tick = None
+
+    def _record_reward_components(self, components: Dict[str, float]) -> None:
+        callback = getattr(self.shared_state, "record_reward_components", None)
+        if callable(callback):
+            callback(components)
+
+    def _record_episode(self, lifetime_ticks: int) -> None:
+        callback = getattr(self.shared_state, "record_episode", None)
+        if callable(callback):
+            callback(self.episode_return, lifetime_ticks)
 
     async def run(self) -> None:
         """Connect to the server and keep the control loop alive."""
@@ -89,20 +127,29 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         while True:
             try:
                 self._reset_connection_state()
-                async with websockets.connect(url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
+                async with websockets.connect(
+                    url, max_size=MAX_WS_MESSAGE_BYTES
+                ) as ws:
                     await self._handshake(ws, name)
                     await self._loop(ws, name)
-            except Exception as e:  # pylint: disable=broad-exception-caught
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                await self._truncate_disconnected_rollout()
                 print(
-                    f"[actor {self.actor_id}] disconnected, reason={type(e).__name__}: {e}"
+                    f"[actor {self.actor_id}] disconnected, "
+                    f"reason={type(exc).__name__}: {exc}"
                 )
                 await asyncio.sleep(0.5)
 
     async def _handshake(self, ws, name: str) -> None:
-        hello = {"type": "hello", "clientType": "bot", "version": PROTOCOL_VERSION}
+        hello = {
+            "type": "hello",
+            "clientType": "bot",
+            "version": PROTOCOL_VERSION,
+        }
         await ws.send(json.dumps(hello))
 
-        # Wait for welcome
         while True:
             raw = await ws.recv()
             if isinstance(raw, (bytes, bytearray)):
@@ -116,9 +163,10 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 await ws.send(json.dumps(join))
                 break
             if msg.get("type") == "error":
-                raise RuntimeError(f"server error during handshake: {msg.get('message')}")
+                raise RuntimeError(
+                    f"server error during handshake: {msg.get('message')}"
+                )
 
-        # Wait for assign
         while True:
             raw = await ws.recv()
             if isinstance(raw, (bytes, bytearray)):
@@ -128,27 +176,46 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 await self._handle_state_replaced(msg, ws, name)
                 continue
             if msg.get("type") == "reclaimResult" and not msg.get("reclaimed"):
+                await self._truncate_disconnected_rollout()
                 self.resume_token = None
-                await ws.send(json.dumps({"type": "join", "mode": "player", "name": name[:24]}))
+                self.snake_id = None
+                self.last_sensor_tick = None
+                self.last_assign_tick = None
+                self.last_gen = None
+                await ws.send(
+                    json.dumps(
+                        {"type": "join", "mode": "player", "name": name[:24]}
+                    )
+                )
                 continue
             if msg.get("type") == "assign":
-                await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
+                await self._on_assign(
+                    msg.get("snakeId"),
+                    msg.get("resumeToken"),
+                    reclaimed=bool(msg.get("reclaimed", False)),
+                )
                 break
             if msg.get("type") == "error":
-                raise RuntimeError(f"server error during assign wait: {msg.get('message')}")
+                raise RuntimeError(
+                    f"server error during assign wait: {msg.get('message')}"
+                )
 
     def _apply_welcome(self, msg: Dict[str, Any]) -> None:
         """Apply the bounded Protocol 2 fields needed by the actor."""
         if msg.get("protocolVersion") != PROTOCOL_VERSION:
             raise RuntimeError("server welcome did not confirm Protocol 2")
         self.tick_rate = int(msg.get("tickRate", 60))
-        self.stride = compute_stride(self.tick_rate, self.cfg.max_actions_per_second)
+        self.stride = compute_stride(
+            self.tick_rate, self.cfg.max_actions_per_second
+        )
         spec = msg.get("sensorSpec") or {}
         self.sensor_order = list(spec.get("order") or [])
         self.sensor_idx = build_index(self.sensor_order)
 
-    async def _handle_state_replaced(self, msg: Dict[str, Any], ws, name: str) -> None:
-        """End the old episode and join the imported authority without a stale token."""
+    async def _handle_state_replaced(
+        self, msg: Dict[str, Any], ws, name: str
+    ) -> None:
+        """End the old episode and join imported authority without a stale token."""
         welcome = msg.get("welcome")
         if not isinstance(welcome, dict):
             raise RuntimeError("stateReplaced omitted the replacement welcome")
@@ -161,39 +228,63 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_sent_time = 0.0
         self._reset_per_snake_state()
         self._apply_welcome(welcome)
-        await ws.send(json.dumps({"type": "join", "mode": "player", "name": name[:24]}))
+        await ws.send(
+            json.dumps({"type": "join", "mode": "player", "name": name[:24]})
+        )
 
-    async def _on_assign(self, snake_id: int, resume_token: str) -> None:
+    async def _on_assign(
+        self,
+        snake_id: int,
+        resume_token: str,
+        reclaimed: bool = False,
+    ) -> None:
         if not isinstance(snake_id, int) or snake_id <= 0:
             raise RuntimeError("server assignment omitted a valid snakeId")
         if not isinstance(resume_token, str) or not resume_token:
             raise RuntimeError("Protocol 2 assignment omitted resumeToken")
-        prev = self.snake_id
-        now_tick = getattr(self, "last_sensor_tick", None)
+
+        previous_snake = self.snake_id
+        now_tick = self.last_sensor_tick
         lived = None
-        if getattr(self, "last_assign_tick", None) is not None and now_tick is not None:
-            lat = getattr(self, "last_assign_tick", None)
-            lived = int(now_tick - lat)
+        if self.last_assign_tick is not None and now_tick is not None:
+            lived = int(now_tick - self.last_assign_tick)
 
-        self.assign_count = int(getattr(self, "assign_count", 0)) + 1
+        self.assign_count += 1
 
-        # Extract size from previous observation if available
+        if reclaimed:
+            if previous_snake is None:
+                raise RuntimeError(
+                    "server reported a reclaimed assignment without a prior snake"
+                )
+            if int(snake_id) != int(previous_snake):
+                raise RuntimeError(
+                    "server reclaim changed the assigned snake identity"
+                )
+            self.resume_token = resume_token
+            self.last_sent_tick = None
+            print(
+                f"[actor {self.actor_id}] reclaimed snake {snake_id}, "
+                f"assigns={self.assign_count}"
+            )
+            return
+
         size_str = ""
         if self.last_obs is not None and "size_norm" in self.sensor_idx:
-            size_val = self.last_obs[self.sensor_idx["size_norm"]]
-            size_str = f", size_norm={size_val:.3f}"
+            size_value = self.last_obs[self.sensor_idx["size_norm"]]
+            size_str = f", size_norm={size_value:.3f}"
 
         if lived is None:
             print(
-                f"[actor {self.actor_id}] assign {prev} -> {snake_id}, "
+                f"[actor {self.actor_id}] assign {previous_snake} -> {snake_id}, "
                 f"assigns={self.assign_count}"
             )
         else:
             print(
-                f"[actor {self.actor_id}] assign {prev} -> {snake_id}, "
+                f"[actor {self.actor_id}] assign {previous_snake} -> {snake_id}, "
                 f"lived_ticks={lived}{size_str}, assigns={self.assign_count}"
             )
-        if prev is not None:
+
+        if previous_snake is not None:
             await self._finalize_terminal_episode()
 
         self.snake_id = int(snake_id)
@@ -214,16 +305,38 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 return False
         return True
 
-    async def _finalize_terminal_episode(self, death_penalty: float = -0.5) -> None:
+    async def _finalize_terminal_episode(
+        self, death_penalty: float = -0.5
+    ) -> None:
+        had_episode = (
+            self.snake_id is not None
+            or self.episode_actions > 0
+            or self.pending_transition is not None
+            or bool(self.rollout)
+        )
         if self.pending_transition is not None:
-            self.pending_transition.reward += float(death_penalty)
+            penalty = float(death_penalty)
+            self.pending_transition.reward += penalty
             self.pending_transition.done = 1.0
             self.rollout.append(self.pending_transition)
             self.pending_transition = None
+            self.episode_return += penalty
+            if penalty:
+                self._record_reward_components({"death": penalty})
 
         if self.rollout:
-            await self.experience_q.put((self.actor_id, list(self.rollout), 0.0))
+            await self.experience_q.put(
+                (self.actor_id, list(self.rollout), 0.0)
+            )
             self.rollout.clear()
+
+        lifetime_ticks = 0
+        if self.last_assign_tick is not None and self.last_sensor_tick is not None:
+            lifetime_ticks = max(
+                0, int(self.last_sensor_tick - self.last_assign_tick)
+            )
+        if had_episode:
+            self._record_episode(lifetime_ticks)
 
     async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
         if self.snake_id is None:
@@ -235,14 +348,20 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_sensor_tick = tick
         if self.last_assign_tick is None:
             self.last_assign_tick = tick
+
         sensors = msg.get("sensors") or []
         obs = np.asarray(sensors, dtype=np.float32)
         if obs.shape[0] != len(self.sensor_order):
             return
 
         if self.last_obs is not None and self.pending_transition is not None:
-            r = default_reward(self.last_obs, obs, self.sensor_idx)
-            self.pending_transition.reward += r
+            components = default_reward_components(
+                self.last_obs, obs, self.sensor_idx
+            )
+            reward = float(sum(components.values()))
+            self.pending_transition.reward += reward
+            self.episode_return += reward
+            self._record_reward_components(components)
 
         self.last_obs = obs
 
@@ -250,26 +369,36 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             return
 
         with torch.no_grad():
-            turn, boost, logp, value = self.shared_state.act(obs, turn_std=self.cfg.turn_std)
+            (
+                turn,
+                boost,
+                logp,
+                value,
+                turn_latent,
+            ) = self.shared_state.act(obs, turn_std=self.cfg.turn_std)
 
         if self.pending_transition is not None:
             self.rollout.append(self.pending_transition)
             self.pending_transition = None
 
         if len(self.rollout) >= self.cfg.horizon:
-            await self.experience_q.put((self.actor_id, list(self.rollout), float(value)))
+            await self.experience_q.put(
+                (self.actor_id, list(self.rollout), float(value))
+            )
             self.rollout.clear()
 
         self.pending_transition = Transition(
             obs=obs,
             action_turn=turn,
+            turn_latent=turn_latent,
             action_boost=boost,
             logp=logp,
             value=value,
             reward=0.0,
-            done=0.0
+            done=0.0,
         )
         self.steps += 1
+        self.episode_actions += 1
 
         action_msg = {
             "type": "action",
@@ -289,31 +418,37 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 continue
 
             msg = json.loads(raw)
-            t = msg.get("type")
+            msg_type = msg.get("type")
 
-            if t == "assign":
-                await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
+            if msg_type == "assign":
+                await self._on_assign(
+                    msg.get("snakeId"),
+                    msg.get("resumeToken"),
+                    reclaimed=bool(msg.get("reclaimed", False)),
+                )
                 continue
 
-            if t == "stateReplaced":
+            if msg_type == "stateReplaced":
                 await self._handle_state_replaced(msg, ws, name)
                 continue
 
-            if t == "error":
-                m = msg.get("message")
-                raise RuntimeError(f"server protocol error: {m}")
+            if msg_type == "error":
+                raise RuntimeError(
+                    f"server protocol error: {msg.get('message')}"
+                )
 
-            if t == "stats":
-                gen = msg.get("gen")
-                if gen is not None and gen != getattr(self, "last_gen", None):
-                    self.last_gen = gen
+            if msg_type == "stats":
+                generation = msg.get("gen")
+                if generation is not None and generation != self.last_gen:
+                    self.last_gen = generation
                     print(
-                        f"[actor {self.actor_id}] gen={gen}, tick={msg.get('tick')}, "
+                        f"[actor {self.actor_id}] gen={generation}, "
+                        f"tick={msg.get('tick')}, "
                         f"alive={msg.get('alive')}/{msg.get('aliveTotal')}"
                     )
                 continue
 
-            if t != "sensors":
+            if msg_type != "sensors":
                 continue
 
             await self._handle_sensors(msg, ws)

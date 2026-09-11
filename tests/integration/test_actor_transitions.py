@@ -18,7 +18,7 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
 
     def act(self, _obs, **_kwargs):
         """Return fixed policy outputs."""
-        return 0.1, 1.0, -0.5, 0.25
+        return 0.1, 1.0, -0.5, 0.25, 0.1003
 
 
 class DummyWS:  # pylint: disable=too-few-public-methods
@@ -46,7 +46,16 @@ async def test_transitions_align_with_stride(monkeypatch):
     actor.sensor_order = ["points_delta_norm"]
     actor.sensor_idx = {"points_delta_norm": 0}
 
-    monkeypatch.setattr("pyrl_trainer.agent.default_reward", lambda prev, obs, idx: 1.0)
+    monkeypatch.setattr(
+        "pyrl_trainer.agent.default_reward_components",
+        lambda prev, obs, idx: {
+            "growth": 1.0,
+            "food_approach": 0.0,
+            "survival": 0.0,
+            "wall": 0.0,
+            "hazard": 0.0,
+        },
+    )
 
     ws = DummyWS()
 
@@ -63,13 +72,18 @@ async def test_transitions_align_with_stride(monkeypatch):
     assert len(actor.rollout) == 1
     assert abs(actor.rollout[0].reward - 2.0) < 1e-6
     assert actor.pending_transition is not None
-    assert abs(actor.pending_transition.reward - 0.0) < 1e-6
+    assert abs(actor.pending_transition.reward) < 1e-6
 
 
 @pytest.mark.asyncio
 async def test_import_replacement_rejoins_without_stale_token():
     """A live import ends the old episode and sends one fresh Protocol 2 join."""
-    actor = ActorClient(7, Config(max_actions_per_second=20), DummySharedState(), asyncio.Queue())
+    actor = ActorClient(
+        7,
+        Config(max_actions_per_second=20),
+        DummySharedState(),
+        asyncio.Queue(),
+    )
     actor.snake_id = 91
     actor.resume_token = "stale-token"
     actor.sensor_order = ["old"]
@@ -96,13 +110,28 @@ async def test_import_replacement_rejoins_without_stale_token():
 @pytest.mark.asyncio
 async def test_import_replacement_during_initial_assignment_wait():
     """A replacement arriving before the first assignment sends a fresh join."""
-    actor = ActorClient(8, Config(max_actions_per_second=20), DummySharedState(), asyncio.Queue())
+    actor = ActorClient(
+        8,
+        Config(max_actions_per_second=20),
+        DummySharedState(),
+        asyncio.Queue(),
+    )
     actor.resume_token = "stale-token"
     ws = DummyWS([
-        {"type": "welcome", "protocolVersion": 2, "tickRate": 60,
-         "sensorSpec": {"order": ["old"]}},
-        {"type": "stateReplaced", "welcome": {"protocolVersion": 2, "tickRate": 30,
-         "sensorSpec": {"order": ["food_proximity"]}}},
+        {
+            "type": "welcome",
+            "protocolVersion": 2,
+            "tickRate": 60,
+            "sensorSpec": {"order": ["old"]},
+        },
+        {
+            "type": "stateReplaced",
+            "welcome": {
+                "protocolVersion": 2,
+                "tickRate": 30,
+                "sensorSpec": {"order": ["food_proximity"]},
+            },
+        },
         {"type": "assign", "snakeId": 12, "resumeToken": "fresh-token"},
     ])
 
@@ -110,7 +139,9 @@ async def test_import_replacement_during_initial_assignment_wait():
 
     sent = [json.loads(value) for value in ws.sent]
     assert sent[1]["resumeToken"] == "stale-token"
-    assert sent[2] == {"type": "join", "mode": "player", "name": "trainer-008"}
+    assert sent[2] == {
+        "type": "join", "mode": "player", "name": "trainer-008"
+    }
     assert actor.snake_id == 12
     assert actor.resume_token == "fresh-token"
     assert actor.sensor_order == ["food_proximity"]

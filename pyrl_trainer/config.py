@@ -9,8 +9,6 @@ from typing import Dict, Any, List
 PROTOCOL_VERSION = 2
 MAX_WS_MESSAGE_BYTES = int(os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024)))
 
-# --- Config loading from config.toml ---
-
 try:
     if sys.version_info >= (3, 11):
         import tomllib as _toml_reader  # type: ignore
@@ -116,6 +114,7 @@ class Config:  # pylint: disable=too-many-instance-attributes
     max_actions_per_second: int = 120
 
     horizon: int = 256
+    batch_size: int = 1024
     gamma: float = 0.99
     gae_lambda: float = 0.95
     ppo_clip: float = 0.2
@@ -161,6 +160,7 @@ def _config_sections(cfg: Config) -> Dict[str, Dict[str, Any]]:
         },
         "training": {
             "horizon": cfg.horizon,
+            "batch_size": cfg.batch_size,
             "gamma": cfg.gamma,
             "gae_lambda": cfg.gae_lambda,
             "ppo_clip": cfg.ppo_clip,
@@ -221,6 +221,7 @@ def _apply_env_overrides(cfg: Config) -> Config:
     cfg.max_actions_per_second = _env_int("SLITHER_MAX_APS", cfg.max_actions_per_second)
 
     cfg.horizon = _env_int("SLITHER_HORIZON", cfg.horizon)
+    cfg.batch_size = _env_int("SLITHER_BATCH_SIZE", cfg.batch_size)
     cfg.gamma = _env_float("SLITHER_GAMMA", cfg.gamma)
     cfg.gae_lambda = _env_float("SLITHER_GAE_LAMBDA", cfg.gae_lambda)
     cfg.ppo_clip = _env_float("SLITHER_PPO_CLIP", cfg.ppo_clip)
@@ -263,13 +264,16 @@ def load_or_create_config(config_path: str = "config.toml") -> Config:
 
     cfg = _apply_env_overrides(cfg)
 
-    # Re-validate defaults if 0
     if cfg.net_hidden <= 0:
         cfg.net_hidden = _default_net_hidden()
     if cfg.net_layers <= 0:
         cfg.net_layers = _default_net_layers()
-    # Ensure train_device is set if it was empty
     if not cfg.train_device:
         cfg.train_device = _default_train_device()
+
+    cfg.horizon = max(1, int(cfg.horizon))
+    cfg.batch_size = max(1, int(cfg.batch_size))
+    cfg.minibatch = max(1, int(cfg.minibatch))
+    cfg.epochs = max(1, int(cfg.epochs))
 
     return cfg

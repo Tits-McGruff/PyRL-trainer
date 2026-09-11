@@ -16,8 +16,9 @@ pytestmark = pytest.mark.system
 
 @pytest.mark.asyncio
 async def test_learner_loop_updates_once():
-    """Learner loop processes a minimal batch."""
+    """Learner loop processes a minimal PPO batch."""
     cfg = Config(
+        batch_size=2,
         minibatch=2,
         epochs=1,
         net_hidden=8,
@@ -29,19 +30,23 @@ async def test_learner_loop_updates_once():
     experience_q: asyncio.Queue = asyncio.Queue()
 
     obs = np.zeros(3, dtype=np.float32)
-    tr = Transition(
+    turn, boost, logp, value, latent = shared_state.act(obs, cfg.turn_std)
+    transition = Transition(
         obs=obs,
-        action_turn=0.0,
-        action_boost=0.0,
-        logp=0.0,
-        value=0.0,
+        action_turn=turn,
+        turn_latent=latent,
+        action_boost=boost,
+        logp=logp,
+        value=value,
         reward=1.0,
         done=0.0,
     )
 
-    await experience_q.put((0, [tr, tr], 0.0))
+    await experience_q.put((0, [transition, transition], 0.0))
 
-    task = asyncio.create_task(learner_loop(cfg, shared_state, experience_q))
+    task = asyncio.create_task(
+        learner_loop(cfg, shared_state, experience_q)
+    )
 
     try:
         for _ in range(100):
