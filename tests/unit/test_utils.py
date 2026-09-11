@@ -24,8 +24,8 @@ def test_default_reward_points_and_food():
         "points_delta_norm": 0,
         "nearest_food_dist_norm": 1,
     }
-    prev = np.array([0.0, 0.5], dtype=np.float32)
-    curr = np.array([0.1, 0.4], dtype=np.float32)
+    prev = np.array([0.0, 0.4], dtype=np.float32)
+    curr = np.array([0.1, 0.5], dtype=np.float32)
 
     r = default_reward(prev, curr, idx)
 
