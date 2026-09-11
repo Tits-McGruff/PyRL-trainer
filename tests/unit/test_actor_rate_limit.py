@@ -91,7 +91,7 @@ async def test_disconnect_truncates_rollout_and_reclaim_preserves_episode():
     assert actor_id == 0
     assert len(transitions) == 1
     assert bootstrap == pytest.approx(0.75)
-    assert actor.rollout == []
+    assert not actor.rollout
     assert actor.pending_transition is None
     assert actor.last_obs is None
     assert actor.snake_id == 7
