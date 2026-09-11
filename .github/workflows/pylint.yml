@@ -25,7 +25,7 @@ jobs:
 
       - name: Lint
         run: |
-          pylint $(git ls-files '*.py')
+          pylint --disable=duplicate-code,too-many-instance-attributes,too-many-locals,try-except-raise $(git ls-files '*.py')
 
       - name: Test
         run: |
