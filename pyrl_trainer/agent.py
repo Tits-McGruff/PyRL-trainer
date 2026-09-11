@@ -73,14 +73,30 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_sent_tick = None
 
     def _reset_connection_state(self) -> None:
-        self.snake_id = None
+        # Connection-local metadata is rebuilt by the next welcome. Preserve the
+        # prior snake identity and resume token so Protocol 2 can reclaim it.
         self.sensor_order = []
         self.sensor_idx = {}
-        self.last_sensor_tick = None
-        self.last_assign_tick = None
-        self.last_gen = None
         self.last_sent_time = 0.0
-        self._reset_per_snake_state()
+
+    async def _truncate_disconnected_rollout(self) -> None:
+        """Flush completed PPO experience without inventing a death on disconnect."""
+        bootstrap = (
+            float(self.pending_transition.value)
+            if self.pending_transition is not None
+            else 0.0
+        )
+        self.pending_transition = None
+
+        if self.rollout:
+            await self.experience_q.put((self.actor_id, list(self.rollout), bootstrap))
+            self.rollout.clear()
+
+        # The action represented by pending_transition has no trustworthy next
+        # observation/reward across the network gap, so drop only that incomplete
+        # transition and begin a fresh rollout segment after reclaim.
+        self.last_obs = None
+        self.last_sent_tick = None
 
     async def run(self) -> None:
         """Connect to the server and keep the control loop alive."""
@@ -93,6 +109,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                     await self._handshake(ws, name)
                     await self._loop(ws)
             except Exception as e:  # pylint: disable=broad-exception-caught
+                await self._truncate_disconnected_rollout()
                 print(
                     f"[actor {self.actor_id}] disconnected, reason={type(e).__name__}: {e}"
                 )
@@ -131,16 +148,26 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 continue
             msg = json.loads(raw)
             if msg.get("type") == "reclaimResult" and not msg.get("reclaimed"):
+                await self._truncate_disconnected_rollout()
                 self.resume_token = None
+                self.snake_id = None
+                self.last_sensor_tick = None
+                self.last_assign_tick = None
                 await ws.send(json.dumps({"type": "join", "mode": "player", "name": name[:24]}))
                 continue
             if msg.get("type") == "assign":
-                await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
+                await self._on_assign(
+                    msg.get("snakeId"),
+                    msg.get("resumeToken"),
+                    reclaimed=bool(msg.get("reclaimed", False)),
+                )
                 break
             if msg.get("type") == "error":
                 raise RuntimeError(f"server error during assign wait: {msg.get('message')}")
 
-    async def _on_assign(self, snake_id: int, resume_token: str) -> None:
+    async def _on_assign(
+        self, snake_id: int, resume_token: str, reclaimed: bool = False
+    ) -> None:
         if not isinstance(snake_id, int) or snake_id <= 0:
             raise RuntimeError("server assignment omitted a valid snakeId")
         if not isinstance(resume_token, str) or not resume_token:
@@ -153,6 +180,21 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             lived = int(now_tick - lat)
 
         self.assign_count = int(getattr(self, "assign_count", 0)) + 1
+
+        if reclaimed:
+            if prev is None:
+                raise RuntimeError(
+                    "server reported a reclaimed assignment without a prior snake"
+                )
+            if int(snake_id) != int(prev):
+                raise RuntimeError("server reclaim changed the assigned snake identity")
+            self.resume_token = resume_token
+            self.last_sent_tick = None
+            print(
+                f"[actor {self.actor_id}] reclaimed snake {snake_id}, "
+                f"assigns={self.assign_count}"
+            )
+            return
 
         # Extract size from previous observation if available
         size_str = ""
@@ -269,7 +311,11 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             t = msg.get("type")
 
             if t == "assign":
-                await self._on_assign(msg.get("snakeId"), msg.get("resumeToken"))
+                await self._on_assign(
+                    msg.get("snakeId"),
+                    msg.get("resumeToken"),
+                    reclaimed=bool(msg.get("reclaimed", False)),
+                )
                 continue
 
             if t == "error":
