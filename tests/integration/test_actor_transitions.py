@@ -23,12 +23,17 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
 
 class DummyWS:  # pylint: disable=too-few-public-methods
     """Capture outgoing messages."""
-    def __init__(self):
+    def __init__(self, received=None):
         self.sent = []
+        self.received = list(received or [])
 
     async def send(self, data):
         """Store outgoing payloads."""
         self.sent.append(data)
+
+    async def recv(self):
+        """Return the next queued server payload."""
+        return json.dumps(self.received.pop(0))
 
 
 @pytest.mark.asyncio
@@ -86,3 +91,26 @@ async def test_import_replacement_rejoins_without_stale_token():
     assert json.loads(ws.sent[-1]) == {
         "type": "join", "mode": "player", "name": "trainer-007"
     }
+
+
+@pytest.mark.asyncio
+async def test_import_replacement_during_initial_assignment_wait():
+    """A replacement arriving before the first assignment sends a fresh join."""
+    actor = ActorClient(8, Config(max_actions_per_second=20), DummySharedState(), asyncio.Queue())
+    actor.resume_token = "stale-token"
+    ws = DummyWS([
+        {"type": "welcome", "protocolVersion": 2, "tickRate": 60,
+         "sensorSpec": {"order": ["old"]}},
+        {"type": "stateReplaced", "welcome": {"protocolVersion": 2, "tickRate": 30,
+         "sensorSpec": {"order": ["food_proximity"]}}},
+        {"type": "assign", "snakeId": 12, "resumeToken": "fresh-token"},
+    ])
+
+    await actor._handshake(ws, "trainer-008")
+
+    sent = [json.loads(value) for value in ws.sent]
+    assert sent[1]["resumeToken"] == "stale-token"
+    assert sent[2] == {"type": "join", "mode": "player", "name": "trainer-008"}
+    assert actor.snake_id == 12
+    assert actor.resume_token == "fresh-token"
+    assert actor.sensor_order == ["food_proximity"]

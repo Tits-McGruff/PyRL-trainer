@@ -124,6 +124,9 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             if isinstance(raw, (bytes, bytearray)):
                 continue
             msg = json.loads(raw)
+            if msg.get("type") == "stateReplaced":
+                await self._handle_state_replaced(msg, ws, name)
+                continue
             if msg.get("type") == "reclaimResult" and not msg.get("reclaimed"):
                 self.resume_token = None
                 await ws.send(json.dumps({"type": "join", "mode": "player", "name": name[:24]}))
