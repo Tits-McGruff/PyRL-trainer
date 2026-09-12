@@ -100,7 +100,7 @@ def _checkpoint_candidates(cfg: Config) -> List[Path]:
     return candidates
 
 
-def _payload_compatible(  # pylint: disable=too-many-return-statements
+def _payload_compatible(  # pylint: disable=too-many-return-statements,too-many-branches
     payload: Any,
     cfg: Config,
     shared_state: Any,
