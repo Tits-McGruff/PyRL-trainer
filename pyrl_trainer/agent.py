@@ -12,6 +12,7 @@ import torch
 import websockets
 
 from .config import Config, PROTOCOL_VERSION
+from .sensor_contract import SensorContract, SensorContractError
 from .utils import (
     build_index,
     clamp,
@@ -28,6 +29,7 @@ MAX_WS_MESSAGE_BYTES = int(
 @dataclass
 class Transition:  # pylint: disable=too-few-public-methods
     """Single environment transition for PPO."""
+
     obs: np.ndarray
     action_turn: float
     turn_latent: float
@@ -40,6 +42,7 @@ class Transition:  # pylint: disable=too-few-public-methods
 
 class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
     """WebSocket client that controls a single snake."""
+
     def __init__(
         self,
         actor_id: int,
@@ -134,6 +137,8 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                     await self._loop(ws, name)
             except asyncio.CancelledError:
                 raise
+            except SensorContractError:
+                raise
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 await self._truncate_disconnected_rollout()
                 print(
@@ -201,15 +206,27 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 )
 
     def _apply_welcome(self, msg: Dict[str, Any]) -> None:
-        """Apply the bounded Protocol 2 fields needed by the actor."""
+        """Apply Protocol 2 fields and enforce the model's sensor contract."""
         if msg.get("protocolVersion") != PROTOCOL_VERSION:
             raise RuntimeError("server welcome did not confirm Protocol 2")
         self.tick_rate = int(msg.get("tickRate", 60))
         self.stride = compute_stride(
             self.tick_rate, self.cfg.max_actions_per_second
         )
+
         spec = msg.get("sensorSpec") or {}
-        self.sensor_order = list(spec.get("order") or [])
+        expected_contract = getattr(self.shared_state, "sensor_contract", None)
+        if expected_contract is not None:
+            actual_contract = SensorContract.from_spec(spec)
+            if actual_contract != expected_contract:
+                raise SensorContractError(
+                    "server sensor contract changed; refusing to run the current model"
+                )
+            self.sensor_order = list(actual_contract.order)
+        else:
+            self.sensor_order = list(spec.get("order") or [])
+            if not self.sensor_order:
+                raise RuntimeError("server welcome omitted sensor order")
         self.sensor_idx = build_index(self.sensor_order)
 
     async def _handle_state_replaced(
@@ -301,7 +318,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 return False
         if self.cfg.max_actions_per_second > 0 and self.last_sent_time > 0.0:
             min_interval = 1.0 / float(self.cfg.max_actions_per_second)
-            if (time.time() - self.last_sent_time) < min_interval:
+            if (time.monotonic() - self.last_sent_time) < min_interval:
                 return False
         return True
 
@@ -409,7 +426,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         }
         await ws.send(json.dumps(action_msg))
         self.last_sent_tick = tick
-        self.last_sent_time = time.time()
+        self.last_sent_time = time.monotonic()
 
     async def _loop(self, ws, name: str) -> None:
         while True:

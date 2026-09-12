@@ -9,12 +9,15 @@ import pytest
 
 from pyrl_trainer.agent import ActorClient, Transition
 from pyrl_trainer.config import Config
+from pyrl_trainer.sensor_contract import SensorContract, SensorContractError
 
 pytestmark = pytest.mark.unit
 
 
 class DummySharedState:  # pylint: disable=too-few-public-methods
     """Minimal stand-in for SharedState."""
+
+    sensor_contract = None
 
     def act(self, _obs, **_kwargs):
         """Return fixed policy outputs."""
@@ -40,18 +43,38 @@ def test_should_send_action_stride():
 
 
 def test_should_send_action_time_gate(monkeypatch):
-    """Time gating prevents sending too quickly."""
+    """Monotonic time gating prevents sending too quickly."""
     cfg = Config(max_actions_per_second=2)
     actor = _make_actor(cfg)
     actor.stride = 1
     actor.last_sent_tick = 10
     actor.last_sent_time = 1.0
 
-    monkeypatch.setattr("pyrl_trainer.agent.time.time", lambda: 1.1)
+    monkeypatch.setattr("pyrl_trainer.agent.time.monotonic", lambda: 1.1)
     assert actor._should_send_action(11) is False
 
-    monkeypatch.setattr("pyrl_trainer.agent.time.time", lambda: 1.6)
+    monkeypatch.setattr("pyrl_trainer.agent.time.monotonic", lambda: 1.6)
     assert actor._should_send_action(11) is True
+
+
+def test_welcome_rejects_changed_sensor_contract():
+    """An actor refuses a server layout that disagrees with its model contract."""
+    shared_state = DummySharedState()
+    shared_state.sensor_contract = SensorContract("v3", ("a", "b"))
+    actor = ActorClient(0, Config(), shared_state, asyncio.Queue())
+
+    welcome = {
+        "protocolVersion": 2,
+        "tickRate": 60,
+        "sensorSpec": {
+            "sensorCount": 2,
+            "layoutVersion": "v3",
+            "order": ["b", "a"],
+        },
+    }
+
+    with pytest.raises(SensorContractError):
+        actor._apply_welcome(welcome)
 
 
 @pytest.mark.asyncio
