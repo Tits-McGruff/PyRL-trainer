@@ -6,6 +6,7 @@ torch
 torchvision
 torchaudio
 tomli; python_version<'3.11'
+tomli-w
 pytest
 pytest-asyncio
 pylint

@@ -10,7 +10,7 @@ server applies them during its tick loop.
 
 ## Endpoints and ports
 
-- WebSocket: `ws://HOST:PORT` (default `ws://localhost:5174`).
+- WebSocket: `ws://HOST:PORT` (default `ws://localhost:3000`).
 - HTTP: `http://HOST:PORT` for REST endpoints on the same server.
 - TLS: use `wss://` and `https://` if the server is behind TLS.
 
@@ -25,9 +25,9 @@ current TypeScript server implementation and `server/config.toml`.
 ### WebSocket, handshake, and lifecycle
 
 1. WebSocket URL format is `ws://HOST:PORT` with no path. Example:
-   `ws://192.168.0.200:5174`. No query params are required or read by the
+   `ws://192.168.0.200:3000`. No query params are required or read by the
    server.
-2. `PROTOCOL_VERSION` is `1`, defined in `server/protocol.ts`.
+2. `PROTOCOL_VERSION` is `2`, defined in `server/protocol.ts`.
 3. No auth headers, API keys, allowlists, or session tokens are required or
    supported for WebSocket connections. The server does not inspect custom
    headers for WS auth.
@@ -43,9 +43,9 @@ current TypeScript server implementation and `server/config.toml`.
    strictly equal to `PROTOCOL_VERSION` (no range tolerance).
 7. `join.name` is required only for `mode: "player"`. It must be a string
    of length <= 24. There are no character restrictions beyond length.
-8. `assign` messages contain only `snakeId` and `controller`. The server
-   does not emit extra fields. For external bot clients (`clientType: "bot"`)
-   the `controller` field is always `"bot"`.
+8. `assign` messages include `snakeId`, `controller`, an opaque
+   `resumeToken`, and optional `reclaimed`. Reconnect with the last token to
+   reclaim the same live snake; a failed `reclaimResult` requires a fresh join.
 9. `sensors.meta` is optional in the schema but is always included by the
    current server build. No additional fields are emitted. Clients should
    ignore unknown fields if they ever appear.
@@ -85,7 +85,8 @@ current TypeScript server implementation and `server/config.toml`.
     actions are silent.
 15. When a snake dies, the server sends a new `assign` and the next tick's
     `sensors` correspond to the new `snakeId`. `assign` precedes the first
-    `sensors` for the replacement snake.
+    `sensors` for the replacement snake. `stateReplaced` ends the old episode;
+    apply its nested `welcome` and join again without the old token.
 
 ### Rate limits and configuration
 
@@ -102,8 +103,8 @@ current TypeScript server implementation and `server/config.toml`.
 
 19. `sensorSpec.layoutVersion` is `"v3"`. This is the only supported version.
     Legacy layouts (`v2` and `legacy`) are no longer supported.
-20. `sensorSpec.sensorCount` always equals 17 + (4 * bins). The scalar count
-    is fixed at 17.
+20. `sensorSpec.sensorCount` always equals 19 + (4 * bins). The scalar count
+    is fixed at 19.
 21. All four binned channels (`food`, `hazard`, `wall`, `head`) are always
     present in the v3 layout.
 22. All sensor values are clamped into `[-1, 1]` by `buildSensors`.
@@ -170,13 +171,13 @@ The server requires `hello` before `join`, and `join` before `action`, `view`,
 {
   "type": "hello",
   "clientType": "bot",
-  "version": 1
+  "version": 2
 }
 ```
 
 - `clientType`: `"bot"` for training clients. `"ui"` is reserved for the
   browser UI.
-- `version`: must equal `PROTOCOL_VERSION` (currently `1`).
+- `version`: must equal `PROTOCOL_VERSION` (currently `2`).
 
 #### `join`
 
@@ -578,7 +579,7 @@ function policy(sensors, index) {
 These are minimal client-side typings that match the server protocol.
 
 ```ts
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type ClientType = "ui" | "bot";
 export type JoinMode = "spectator" | "player";

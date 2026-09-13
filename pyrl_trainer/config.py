@@ -5,7 +5,9 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
+
+import tomli_w
 
 PROTOCOL_VERSION = 2
 MAX_WS_MESSAGE_BYTES = int(
@@ -19,33 +21,6 @@ try:
         import tomli as _toml_reader  # type: ignore
 except ImportError:
     _toml_reader = None  # type: ignore
-
-
-def _toml_quote(s: str) -> str:
-    s = s.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{s}"'
-
-
-def _toml_value(v: Any) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, float):
-        return repr(float(v))
-    if isinstance(v, str):
-        return _toml_quote(v)
-    raise TypeError(f"unsupported TOML value type: {type(v).__name__}")
-
-
-def _toml_dump_sections(sections: Dict[str, Dict[str, Any]]) -> str:
-    lines: List[str] = []
-    for section_name, kv in sections.items():
-        lines.append(f"[{section_name}]")
-        for k, v in kv.items():
-            lines.append(f"{k} = {_toml_value(v)}")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
 
 
 def _read_config_toml(path: Path) -> Dict[str, Any]:
@@ -64,7 +39,7 @@ def _write_config_toml(path: Path, sections: Dict[str, Dict[str, Any]]) -> None:
         "# Auto-generated because it was missing.\n"
         "# Environment variables prefixed with SLITHER_ override values in this file.\n\n"
     )
-    body = _toml_dump_sections(sections)
+    body = tomli_w.dumps(sections)
     path.write_text(header + body, encoding="utf-8")
 
 

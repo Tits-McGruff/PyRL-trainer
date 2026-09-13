@@ -32,7 +32,7 @@ python -m pip install --upgrade pip setuptools wheel
 if exist "requirements.txt" (
   pip install -r requirements.txt
 ) else (
-  pip install numpy websockets tomli
+  pip install numpy websockets tomli tomli-w
   echo Installing PyTorch with CUDA 12.6 support...
   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 )
