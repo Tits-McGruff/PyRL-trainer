@@ -14,6 +14,21 @@ MAX_WS_MESSAGE_BYTES = int(
     os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024))
 )
 
+CHECKPOINT_SCHEMA_VERSION = 2
+REWARD_CONFIG_VERSION = 1
+
+LEGACY_REWARD_CONFIG = {
+    "reward_growth_scale": 10.0,
+    "reward_food_approach_scale": 0.5,
+    "reward_food_delta_clip": 0.1,
+    "reward_survival_bonus": 0.0001,
+    "reward_wall_threshold": -0.5,
+    "reward_wall_penalty_scale": 0.05,
+    "reward_hazard_threshold": -0.5,
+    "reward_hazard_penalty_magnitude": 0.1,
+    "reward_death_penalty_magnitude": 0.5,
+}
+
 try:
     if sys.version_info >= (3, 11):
         import tomllib as _toml_reader  # type: ignore
@@ -119,11 +134,29 @@ class Config:  # pylint: disable=too-many-instance-attributes
 
     turn_std: float = 0.15
 
+    reward_growth_scale: float = 10.0
+    reward_food_approach_scale: float = 0.5
+    reward_food_delta_clip: float = 0.1
+    reward_survival_bonus: float = 0.0001
+    reward_wall_threshold: float = -0.5
+    reward_wall_penalty_scale: float = 0.05
+    reward_hazard_threshold: float = -0.5
+    reward_hazard_penalty_magnitude: float = 0.1
+    reward_death_penalty_magnitude: float = 0.5
+
     log_every_seconds: float = 5.0
 
     ckpt_dir: str = "./checkpoints"
     save_every_updates: int = 100
     keep_last: int = 5
+
+
+def reward_config_record(cfg: Config) -> Dict[str, float]:
+    """Return the normalized reward settings persisted in checkpoints."""
+    return {
+        key: float(getattr(cfg, key))
+        for key in LEGACY_REWARD_CONFIG
+    }
 
 
 def _defaults_config() -> Config:
@@ -158,6 +191,17 @@ def _config_sections(cfg: Config) -> Dict[str, Dict[str, Any]]:
             "epochs": cfg.epochs,
             "turn_std": cfg.turn_std,
         },
+        "rewards": {
+            "growth_scale": cfg.reward_growth_scale,
+            "food_approach_scale": cfg.reward_food_approach_scale,
+            "food_delta_clip": cfg.reward_food_delta_clip,
+            "survival_bonus": cfg.reward_survival_bonus,
+            "wall_threshold": cfg.reward_wall_threshold,
+            "wall_penalty_scale": cfg.reward_wall_penalty_scale,
+            "hazard_threshold": cfg.reward_hazard_threshold,
+            "hazard_penalty_magnitude": cfg.reward_hazard_penalty_magnitude,
+            "death_penalty_magnitude": cfg.reward_death_penalty_magnitude,
+        },
         "devices": {
             "train_device": cfg.train_device,
             "infer_device": cfg.infer_device,
@@ -182,7 +226,10 @@ def _flatten_sections(data: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in data.items():
         if isinstance(value, dict):
             for nested_key, nested_value in value.items():
-                out[nested_key] = nested_value
+                flattened_key = (
+                    f"reward_{nested_key}" if key == "rewards" else nested_key
+                )
+                out[flattened_key] = nested_value
         else:
             out[key] = value
     return out
@@ -232,6 +279,35 @@ def _apply_env_overrides(cfg: Config) -> Config:
     )
 
     cfg.turn_std = _env_float("SLITHER_TURN_STD", cfg.turn_std)
+
+    cfg.reward_growth_scale = _env_float(
+        "SLITHER_REWARD_GROWTH_SCALE", cfg.reward_growth_scale
+    )
+    cfg.reward_food_approach_scale = _env_float(
+        "SLITHER_REWARD_FOOD_APPROACH_SCALE", cfg.reward_food_approach_scale
+    )
+    cfg.reward_food_delta_clip = _env_float(
+        "SLITHER_REWARD_FOOD_DELTA_CLIP", cfg.reward_food_delta_clip
+    )
+    cfg.reward_survival_bonus = _env_float(
+        "SLITHER_REWARD_SURVIVAL_BONUS", cfg.reward_survival_bonus
+    )
+    cfg.reward_wall_threshold = _env_float(
+        "SLITHER_REWARD_WALL_THRESHOLD", cfg.reward_wall_threshold
+    )
+    cfg.reward_wall_penalty_scale = _env_float(
+        "SLITHER_REWARD_WALL_PENALTY_SCALE", cfg.reward_wall_penalty_scale
+    )
+    cfg.reward_hazard_threshold = _env_float(
+        "SLITHER_REWARD_HAZARD_THRESHOLD", cfg.reward_hazard_threshold
+    )
+    cfg.reward_hazard_penalty_magnitude = _env_float(
+        "SLITHER_REWARD_HAZARD_PENALTY", cfg.reward_hazard_penalty_magnitude
+    )
+    cfg.reward_death_penalty_magnitude = _env_float(
+        "SLITHER_REWARD_DEATH_PENALTY", cfg.reward_death_penalty_magnitude
+    )
+
     cfg.log_every_seconds = _env_float(
         "SLITHER_LOG_EVERY", cfg.log_every_seconds
     )
@@ -318,6 +394,42 @@ def validate_config(cfg: Config) -> Config:
     cfg.turn_std = _validated_float(
         "turn_std", cfg.turn_std, 0.0, minimum_inclusive=False
     )
+
+    cfg.reward_growth_scale = _validated_float(
+        "reward_growth_scale", cfg.reward_growth_scale, 0.0
+    )
+    cfg.reward_food_approach_scale = _validated_float(
+        "reward_food_approach_scale", cfg.reward_food_approach_scale, 0.0
+    )
+    cfg.reward_food_delta_clip = _validated_float(
+        "reward_food_delta_clip",
+        cfg.reward_food_delta_clip,
+        0.0,
+        minimum_inclusive=False,
+    )
+    cfg.reward_survival_bonus = _validated_float(
+        "reward_survival_bonus", cfg.reward_survival_bonus, 0.0
+    )
+    cfg.reward_wall_threshold = _validated_float(
+        "reward_wall_threshold", cfg.reward_wall_threshold, -1.0, maximum=1.0
+    )
+    cfg.reward_wall_penalty_scale = _validated_float(
+        "reward_wall_penalty_scale", cfg.reward_wall_penalty_scale, 0.0
+    )
+    cfg.reward_hazard_threshold = _validated_float(
+        "reward_hazard_threshold", cfg.reward_hazard_threshold, -1.0, maximum=1.0
+    )
+    cfg.reward_hazard_penalty_magnitude = _validated_float(
+        "reward_hazard_penalty_magnitude",
+        cfg.reward_hazard_penalty_magnitude,
+        0.0,
+    )
+    cfg.reward_death_penalty_magnitude = _validated_float(
+        "reward_death_penalty_magnitude",
+        cfg.reward_death_penalty_magnitude,
+        0.0,
+    )
+
     cfg.log_every_seconds = _validated_float(
         "log_every_seconds",
         cfg.log_every_seconds,
