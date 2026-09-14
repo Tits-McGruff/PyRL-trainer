@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from .config import Config
+
 
 REWARD_COMPONENT_KEYS = ("growth", "food_approach", "survival", "wall", "hazard")
 
@@ -31,6 +33,7 @@ def default_reward_components(
     prev_obs: Optional[np.ndarray],
     obs: np.ndarray,
     idx: Dict[str, int],
+    cfg: Config,
 ) -> Dict[str, float]:
     """Return the shaped reward split into stable diagnostic components."""
     parts = {key: 0.0 for key in REWARD_COMPONENT_KEYS}
@@ -38,21 +41,29 @@ def default_reward_components(
         return parts
 
     if "points_delta_norm" in idx:
-        parts["growth"] = 10.0 * float(obs[idx["points_delta_norm"]])
+        parts["growth"] = cfg.reward_growth_scale * float(
+            obs[idx["points_delta_norm"]]
+        )
 
     if "nearest_food_dist_norm" in idx:
-        f_idx = idx["nearest_food_dist_norm"]
-        curr_dist = float(obs[f_idx])
-        prev_dist = float(prev_obs[f_idx])
-        delta = clamp(curr_dist - prev_dist, -0.1, 0.1)
-        parts["food_approach"] = 0.5 * delta
+        food_idx = idx["nearest_food_dist_norm"]
+        # Protocol 2 names this as a distance, but its value increases with
+        # closeness: roughly -1 at the far/no-food limit and +1 at zero distance.
+        curr_closeness = float(obs[food_idx])
+        prev_closeness = float(prev_obs[food_idx])
+        delta = clamp(
+            curr_closeness - prev_closeness,
+            -cfg.reward_food_delta_clip,
+            cfg.reward_food_delta_clip,
+        )
+        parts["food_approach"] = cfg.reward_food_approach_scale * delta
 
-    parts["survival"] = 0.0001
+    parts["survival"] = cfg.reward_survival_bonus
 
     if "wall_dist_norm" in idx:
         wall = float(obs[idx["wall_dist_norm"]])
-        if wall < -0.5:
-            parts["wall"] = -0.05 * ((-wall) ** 2)
+        if wall < cfg.reward_wall_threshold:
+            parts["wall"] = -cfg.reward_wall_penalty_scale * ((-wall) ** 2)
 
     hazard_labels = [key for key in idx if key.startswith("hazard_")]
     if hazard_labels:
@@ -62,8 +73,8 @@ def default_reward_components(
         end_bin = min(n_bins, center_bin + 2)
         front_hazards = hazard_labels[start_bin:end_bin]
         avg_clearance = np.mean([obs[idx[label]] for label in front_hazards])
-        if avg_clearance < -0.5:
-            parts["hazard"] = -0.1
+        if avg_clearance < cfg.reward_hazard_threshold:
+            parts["hazard"] = -cfg.reward_hazard_penalty_magnitude
 
     return parts
 
@@ -72,9 +83,10 @@ def default_reward(
     prev_obs: Optional[np.ndarray],
     obs: np.ndarray,
     idx: Dict[str, int],
+    cfg: Config,
 ) -> float:
     """Return the total shaped reward."""
-    return float(sum(default_reward_components(prev_obs, obs, idx).values()))
+    return float(sum(default_reward_components(prev_obs, obs, idx, cfg).values()))
 
 
 def ensure_dir(p: str) -> None:

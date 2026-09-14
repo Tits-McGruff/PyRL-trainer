@@ -2,17 +2,18 @@
 
 import asyncio
 import time
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 from torch import optim
 
+from .agent import Transition  # Circular import if not careful, but Transition is data
+from .checkpointing import save_checkpoint
 from .config import Config
 from .network import PolicyValueNet
-from .agent import Transition  # Circular import if not careful, but Transition is data
-from .utils import REWARD_COMPONENT_KEYS, ensure_dir
+from .sensor_contract import SensorContract
+from .utils import REWARD_COMPONENT_KEYS
 
 
 class SharedState:  # pylint: disable=too-many-instance-attributes
@@ -20,9 +21,16 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
     Shared policy/value network weights.
     Learner updates the train_model; actors use an inference copy to avoid training contention.
     """
-    def __init__(self, obs_dim: int, cfg: Config):
+
+    def __init__(
+        self,
+        obs_dim: int,
+        cfg: Config,
+        sensor_contract: Optional[SensorContract] = None,
+    ):
         self.cfg = cfg
         self.obs_dim = obs_dim
+        self.sensor_contract = sensor_contract
 
         self.train_model = PolicyValueNet(
             obs_dim, hidden=cfg.net_hidden, layers=cfg.net_layers
@@ -64,7 +72,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         turn_latent: torch.Tensor,
         action_boost: torch.Tensor,
         turn_std: float,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Evaluate a stored pre-tanh turn and boost under one policy."""
         std = torch.as_tensor(
             turn_std, dtype=turn_mean.dtype, device=turn_mean.device
@@ -78,8 +86,9 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             turn_latent, action_turn
         )
         logp_boost = boost_dist.log_prob(action_boost)
-        entropy_proxy = base_dist.entropy() + boost_dist.entropy()
-        return action_turn, logp_turn + logp_boost, entropy_proxy
+        entropy_turn = base_dist.entropy()
+        entropy_boost = boost_dist.entropy()
+        return action_turn, logp_turn + logp_boost, entropy_turn, entropy_boost
 
     def act(
         self, obs: np.ndarray, turn_std: float
@@ -97,7 +106,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         boost_dist = torch.distributions.Bernoulli(logits=boost_logit)
         action_boost = boost_dist.sample()
 
-        action_turn, logp, _entropy = self._joint_logp_entropy(
+        action_turn, logp, _entropy_turn, _entropy_boost = self._joint_logp_entropy(
             turn_mean, boost_logit, turn_latent, action_boost, turn_std
         )
 
@@ -155,7 +164,12 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         adv = batch["adv"]
 
         turn_mean, boost_logit, value = self.train_model(obs)
-        _action_turn, logp, entropy_values = self._joint_logp_entropy(
+        (
+            _action_turn,
+            logp,
+            entropy_turn_values,
+            entropy_boost_values,
+        ) = self._joint_logp_entropy(
             turn_mean,
             boost_logit,
             act_turn_latent,
@@ -170,7 +184,9 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         )
         policy_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
         value_loss = ((returns - value) ** 2).mean()
-        entropy = entropy_values.mean()
+        entropy_turn = entropy_turn_values.mean()
+        entropy_boost = entropy_boost_values.mean()
+        entropy = entropy_turn + entropy_boost
 
         loss = (
             policy_loss
@@ -197,6 +213,8 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             "policy_loss": float(policy_loss.item()),
             "value_loss": float(value_loss.item()),
             "entropy": float(entropy.item()),
+            "entropy_turn": float(entropy_turn.item()),
+            "entropy_boost": float(entropy_boost.item()),
             "approx_kl": float(approx_kl.item()),
             "clip_fraction": float(clip_fraction.item()),
         }
@@ -215,6 +233,8 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             "policy_loss": 0.0,
             "value_loss": 0.0,
             "entropy": 0.0,
+            "entropy_turn": 0.0,
+            "entropy_boost": 0.0,
             "approx_kl": 0.0,
             "clip_fraction": 0.0,
         }
@@ -237,7 +257,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
                     totals[key] += metrics[key] * weight
 
         with torch.no_grad():
-            _turn_mean, _boost_logit, values = self.train_model(batch["obs"])
+            turn_mean, _boost_logit, values = self.train_model(batch["obs"])
             returns = batch["returns"]
             return_variance = torch.var(returns, unbiased=False)
             if float(return_variance.item()) > 1e-8:
@@ -248,9 +268,21 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             else:
                 explained = 0.0
 
+            turn_mean_abs = torch.abs(turn_mean)
+            turn_mean_abs_mean = float(turn_mean_abs.mean().item())
+            turn_mean_abs_max = float(turn_mean_abs.max().item())
+            mean_action = torch.tanh(turn_mean)
+            turn_saturated_fraction = float(
+                (torch.abs(mean_action) > 0.95).to(torch.float32).mean().item()
+            )
+
         denom = float(max(1, weighted_samples))
         metrics = {key: value / denom for key, value in totals.items()}
+        metrics["entropy"] = metrics["entropy_turn"] + metrics["entropy_boost"]
         metrics["explained_variance"] = explained
+        metrics["turn_mean_abs_mean"] = turn_mean_abs_mean
+        metrics["turn_mean_abs_max"] = turn_mean_abs_max
+        metrics["turn_saturated_fraction"] = turn_saturated_fraction
         metrics["optimizer_steps"] = float(optimizer_steps)
         metrics["samples"] = float(sample_count)
         return metrics
@@ -301,36 +333,50 @@ def collate_rollouts(  # pylint: disable=too-many-locals
     rollouts = [rollout for rollout, _bootstrap in rollouts_and_boots]
 
     obs = np.concatenate(
-        [np.stack([transition.obs for transition in rollout], axis=0)
-         for rollout in rollouts],
+        [
+            np.stack([transition.obs for transition in rollout], axis=0)
+            for rollout in rollouts
+        ],
         axis=0,
     )
     act_turn = np.concatenate(
-        [np.asarray(
-            [transition.action_turn for transition in rollout],
-            dtype=np.float32,
-        ) for rollout in rollouts],
+        [
+            np.asarray(
+                [transition.action_turn for transition in rollout],
+                dtype=np.float32,
+            )
+            for rollout in rollouts
+        ],
         axis=0,
     )
     act_turn_latent = np.concatenate(
-        [np.asarray(
-            [transition.turn_latent for transition in rollout],
-            dtype=np.float32,
-        ) for rollout in rollouts],
+        [
+            np.asarray(
+                [transition.turn_latent for transition in rollout],
+                dtype=np.float32,
+            )
+            for rollout in rollouts
+        ],
         axis=0,
     )
     act_boost = np.concatenate(
-        [np.asarray(
-            [transition.action_boost for transition in rollout],
-            dtype=np.float32,
-        ) for rollout in rollouts],
+        [
+            np.asarray(
+                [transition.action_boost for transition in rollout],
+                dtype=np.float32,
+            )
+            for rollout in rollouts
+        ],
         axis=0,
     )
     old_logp = np.concatenate(
-        [np.asarray(
-            [transition.logp for transition in rollout],
-            dtype=np.float32,
-        ) for rollout in rollouts],
+        [
+            np.asarray(
+                [transition.logp for transition in rollout],
+                dtype=np.float32,
+            )
+            for rollout in rollouts
+        ],
         axis=0,
     )
 
@@ -360,55 +406,6 @@ def collate_rollouts(  # pylint: disable=too-many-locals
         "adv": torch.tensor(adv, dtype=torch.float32, device=device),
         "returns": torch.tensor(ret, dtype=torch.float32, device=device),
     }
-
-
-def _list_ckpts(ckpt_dir: str) -> list[Path]:
-    directory = Path(ckpt_dir)
-    if not directory.exists():
-        return []
-    return sorted(directory.glob("ckpt_*.pt"))
-
-
-def _rotate_ckpts(ckpt_dir: str, keep_last: int) -> None:
-    if keep_last <= 0:
-        return
-    ckpts = _list_ckpts(ckpt_dir)
-    if len(ckpts) <= keep_last:
-        return
-    for path in ckpts[: max(0, len(ckpts) - keep_last)]:
-        try:
-            path.unlink()
-        except OSError:
-            pass
-
-
-def save_checkpoint(cfg: Config, shared_state: SharedState) -> None:
-    """Persist a checkpoint and rotate older files."""
-    ensure_dir(cfg.ckpt_dir)
-    step = int(shared_state.update_steps)
-
-    payload = {
-        "update_steps": step,
-        "obs_dim": int(shared_state.obs_dim),
-        "net_hidden": int(cfg.net_hidden),
-        "net_layers": int(cfg.net_layers),
-        "model": shared_state.train_model.state_dict(),
-        "optimizer": shared_state.optimizer.state_dict(),
-    }
-
-    ckpt_dir = Path(cfg.ckpt_dir)
-    latest_path = ckpt_dir / "latest.pt"
-    latest_arch_path = ckpt_dir / f"latest_h{cfg.net_hidden}_l{cfg.net_layers}.pt"
-
-    torch.save(payload, latest_path)
-    torch.save(payload, latest_arch_path)
-
-    numbered = (
-        ckpt_dir / f"ckpt_h{cfg.net_hidden}_l{cfg.net_layers}_{step:08d}.pt"
-    )
-    torch.save(payload, numbered)
-
-    _rotate_ckpts(cfg.ckpt_dir, cfg.keep_last)
 
 
 async def learner_loop(  # pylint: disable=too-many-locals
@@ -464,70 +461,17 @@ async def learner_loop(  # pylint: disable=too-many-locals
                 f"policy={metrics['policy_loss']:.4f}, "
                 f"value={metrics['value_loss']:.4f}, "
                 f"entropy={metrics['entropy']:.4f}, "
+                f"entropy_turn={metrics['entropy_turn']:.4f}, "
+                f"entropy_boost={metrics['entropy_boost']:.4f}, "
                 f"kl={metrics['approx_kl']:.5f}, "
                 f"clip={metrics['clip_fraction']:.3f}, "
                 f"ev={metrics['explained_variance']:.3f}, "
+                f"turn_abs_mean={metrics['turn_mean_abs_mean']:.3f}, "
+                f"turn_abs_max={metrics['turn_mean_abs_max']:.3f}, "
+                f"turn_sat={metrics['turn_saturated_fraction']:.3f}, "
                 f"episodes={int(runtime['episodes'])}, "
                 f"ep_return={runtime['episode_return_mean']:.3f}, "
                 f"lifetime_ticks={runtime['episode_lifetime_mean']:.1f}, "
                 f"reward[{rewards}]"
             )
             last_log = now
-
-
-def load_checkpoint_if_present(cfg: Config, shared_state: SharedState) -> Optional[Path]:
-    # pylint: disable=too-many-return-statements,too-many-branches,too-many-locals
-    """
-    Load a checkpoint if present and compatible with the current model shape.
-    Return the Path that was loaded, or None if no compatible checkpoint exists.
-    """
-    ckpt_dir = Path(cfg.ckpt_dir)
-    latest_arch = ckpt_dir / f"latest_h{cfg.net_hidden}_l{cfg.net_layers}.pt"
-    latest = ckpt_dir / "latest.pt"
-
-    candidate = None
-    if latest_arch.exists():
-        candidate = latest_arch
-    elif latest.exists():
-        candidate = latest
-    else:
-        return None
-
-    try:
-        payload = torch.load(candidate, map_location=cfg.train_device)
-    except (OSError, RuntimeError):
-        return None
-
-    if int(payload.get("obs_dim", -1)) != int(shared_state.obs_dim):
-        return None
-
-    ckpt_hidden = payload.get("net_hidden", None)
-    ckpt_layers = payload.get("net_layers", None)
-    if ckpt_hidden is not None and int(ckpt_hidden) != int(cfg.net_hidden):
-        return None
-    if ckpt_layers is not None and int(ckpt_layers) != int(cfg.net_layers):
-        return None
-
-    model_sd = payload.get("model", None)
-    opt_sd = payload.get("optimizer", None)
-    if not isinstance(model_sd, dict) or not isinstance(opt_sd, dict):
-        return None
-
-    current_sd = shared_state.train_model.state_dict()
-    if set(model_sd.keys()) != set(current_sd.keys()):
-        return None
-
-    for key, value in model_sd.items():
-        if key not in current_sd:
-            return None
-        try:
-            if tuple(value.shape) != tuple(current_sd[key].shape):
-                return None
-        except (AttributeError, TypeError):
-            return None
-
-    shared_state.train_model.load_state_dict(model_sd)
-    shared_state.optimizer.load_state_dict(opt_sd)
-    shared_state.update_steps = int(payload.get("update_steps", 0))
-    shared_state.sync_infer_from_train()
-    return candidate

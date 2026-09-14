@@ -1,13 +1,14 @@
 name: Quality
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   quality:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.10", "3.11", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -17,16 +18,33 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install constrained dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pylint pytest pytest-asyncio numpy websockets tomli-w
-          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install -c constraints.txt pylint pytest pytest-asyncio numpy websockets tomli-w
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then python -m pip install -c constraints.txt tomli; fi
+          python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Record environment
+        run: |
+          python --version
+          python -m pip freeze
 
       - name: Lint
         run: |
           pylint --disable=duplicate-code,too-many-instance-attributes,too-many-locals,try-except-raise $(git ls-files '*.py')
 
-      - name: Test
-        run: |
-          python -m pytest -q
+      - name: Full test suite
+        run: python -m pytest -q
+
+      - name: Unit tests
+        run: python -m pytest -q -m unit
+
+      - name: Integration tests
+        run: python -m pytest -q -m integration
+
+      - name: System tests
+        run: python -m pytest -q -m system
+
+      - name: End-to-end tests
+        run: python -m pytest -q -m e2e
