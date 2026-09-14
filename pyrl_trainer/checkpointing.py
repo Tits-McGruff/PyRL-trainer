@@ -155,7 +155,9 @@ def _schema_version(payload: Dict[str, Any]) -> Optional[int]:
     return version
 
 
-def _valid_reward_record(record: Any) -> Optional[Dict[str, float]]:
+def _valid_reward_record(  # pylint: disable=too-many-return-statements,too-many-branches
+    record: Any,
+) -> Optional[Dict[str, float]]:
     if not isinstance(record, dict) or set(record) != set(LEGACY_REWARD_CONFIG):
         return None
 
@@ -211,7 +213,7 @@ def _reward_compatible(
     return stored == current, False
 
 
-def _architecture_and_sensor_compatible(
+def _architecture_and_sensor_compatible(  # pylint: disable=too-many-return-statements
     payload: Dict[str, Any],
     cfg: Config,
     shared_state: Any,
