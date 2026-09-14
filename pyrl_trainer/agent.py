@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -11,18 +10,13 @@ import numpy as np
 import torch
 import websockets
 
-from .config import Config, PROTOCOL_VERSION
+from .config import Config, MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION
 from .sensor_contract import SensorContract, SensorContractError
 from .utils import (
     build_index,
     clamp,
     compute_stride,
     default_reward_components,
-)
-
-
-MAX_WS_MESSAGE_BYTES = int(
-    os.environ.get("SLITHER_WS_MAX_MESSAGE", str(8 * 1024 * 1024))
 )
 
 
@@ -323,7 +317,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         return True
 
     async def _finalize_terminal_episode(
-        self, death_penalty: float = -0.5
+        self, death_penalty: Optional[float] = None
     ) -> None:
         had_episode = (
             self.snake_id is not None
@@ -332,7 +326,11 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             or bool(self.rollout)
         )
         if self.pending_transition is not None:
-            penalty = float(death_penalty)
+            penalty = (
+                -float(self.cfg.reward_death_penalty_magnitude)
+                if death_penalty is None
+                else float(death_penalty)
+            )
             self.pending_transition.reward += penalty
             self.pending_transition.done = 1.0
             self.rollout.append(self.pending_transition)
@@ -373,7 +371,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
 
         if self.last_obs is not None and self.pending_transition is not None:
             components = default_reward_components(
-                self.last_obs, obs, self.sensor_idx
+                self.last_obs, obs, self.sensor_idx, self.cfg
             )
             reward = float(sum(components.values()))
             self.pending_transition.reward += reward
