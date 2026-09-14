@@ -3,14 +3,14 @@
 import asyncio
 import json
 import os
+from typing import Iterable
 
 import torch
 import websockets
 
 from .agent import ActorClient
+from .checkpointing import load_checkpoint_if_present
 from .config import MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION, load_or_create_config
-from . import learner as learner_module
-from .checkpointing import load_checkpoint_if_present, save_checkpoint
 from .learner import SharedState, learner_loop
 from .sensor_contract import SensorContract
 
@@ -47,6 +47,29 @@ async def discover_obs_dim(ws_url: str) -> int:
     return contract.sensor_count
 
 
+async def _cancel_and_wait(tasks: Iterable[asyncio.Task]) -> None:
+    """Cancel unfinished owned tasks and wait until every task settles."""
+    task_list = list(tasks)
+    for task in task_list:
+        if not task.done():
+            task.cancel()
+    if task_list:
+        await asyncio.gather(*task_list, return_exceptions=True)
+
+
+async def _supervise_tasks(tasks: Iterable[asyncio.Task]) -> None:
+    """Propagate the primary fatal failure after settling all sibling tasks."""
+    task_list = list(tasks)
+    try:
+        await asyncio.gather(*task_list)
+    except (Exception, asyncio.CancelledError):
+        await _cancel_and_wait(task_list)
+        raise
+    finally:
+        if any(not task.done() for task in task_list):
+            await _cancel_and_wait(task_list)
+
+
 async def main() -> None:
     """Start the learner and actor tasks."""
     cfg = load_or_create_config(os.environ.get("SLITHER_CONFIG", "config.toml"))
@@ -70,12 +93,15 @@ async def main() -> None:
     print(
         f"[main] ws={cfg.ws_url}, obs_dim={obs_dim}, "
         f"sensor_layout={sensor_contract.layout_version}, actors={cfg.actors}, "
-        f"train_device={cfg.train_device}, infer_device={cfg.infer_device}"
+        f"train_device={cfg.train_device}, infer_device={cfg.infer_device}, "
+        f"network={cfg.net_hidden}x{cfg.net_layers}"
     )
 
-    shared_state = SharedState(obs_dim=obs_dim, cfg=cfg)
-    setattr(shared_state, "sensor_contract", sensor_contract)
-    learner_module.save_checkpoint = save_checkpoint
+    shared_state = SharedState(
+        obs_dim=obs_dim,
+        cfg=cfg,
+        sensor_contract=sensor_contract,
+    )
 
     try:
         loaded = load_checkpoint_if_present(cfg, shared_state)
@@ -89,14 +115,14 @@ async def main() -> None:
 
     experience_q: asyncio.Queue = asyncio.Queue(maxsize=cfg.actors * 4)
 
-    learner = asyncio.create_task(learner_loop(cfg, shared_state, experience_q))
-
-    actors = []
+    tasks = [
+        asyncio.create_task(learner_loop(cfg, shared_state, experience_q))
+    ]
     for actor_id in range(cfg.actors):
         actor = ActorClient(actor_id, cfg, shared_state, experience_q)
-        actors.append(asyncio.create_task(actor.run()))
+        tasks.append(asyncio.create_task(actor.run()))
 
-    await asyncio.gather(learner, *actors)
+    await _supervise_tasks(tasks)
 
 
 if __name__ == "__main__":
