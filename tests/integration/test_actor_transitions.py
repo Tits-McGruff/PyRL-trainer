@@ -5,9 +5,10 @@
 import asyncio
 import json
 
+import numpy as np
 import pytest
 
-from pyrl_trainer.agent import ActorClient
+from pyrl_trainer.agent import ActorClient, Transition
 from pyrl_trainer.config import Config
 
 pytestmark = pytest.mark.integration
@@ -23,6 +24,7 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
 
 class DummyWS:  # pylint: disable=too-few-public-methods
     """Capture outgoing messages."""
+
     def __init__(self, received=None):
         self.sent = []
         self.received = list(received or [])
@@ -48,7 +50,7 @@ async def test_transitions_align_with_stride(monkeypatch):
 
     monkeypatch.setattr(
         "pyrl_trainer.agent.default_reward_components",
-        lambda prev, obs, idx: {
+        lambda prev, obs, idx, reward_cfg: {
             "growth": 1.0,
             "food_approach": 0.0,
             "survival": 0.0,
@@ -90,20 +92,26 @@ async def test_import_replacement_rejoins_without_stale_token():
     actor.sensor_idx = {"old": 0}
     ws = DummyWS()
 
-    await actor._handle_state_replaced({
-        "type": "stateReplaced",
-        "welcome": {
-            "protocolVersion": 2,
-            "tickRate": 60,
-            "sensorSpec": {"order": ["food_proximity"]},
+    await actor._handle_state_replaced(
+        {
+            "type": "stateReplaced",
+            "welcome": {
+                "protocolVersion": 2,
+                "tickRate": 60,
+                "sensorSpec": {"order": ["food_proximity"]},
+            },
         },
-    }, ws, "trainer-007")
+        ws,
+        "trainer-007",
+    )
 
     assert actor.snake_id is None
     assert actor.resume_token is None
     assert actor.sensor_order == ["food_proximity"]
     assert json.loads(ws.sent[-1]) == {
-        "type": "join", "mode": "player", "name": "trainer-007"
+        "type": "join",
+        "mode": "player",
+        "name": "trainer-007",
     }
 
 
@@ -117,31 +125,100 @@ async def test_import_replacement_during_initial_assignment_wait():
         asyncio.Queue(),
     )
     actor.resume_token = "stale-token"
-    ws = DummyWS([
-        {
-            "type": "welcome",
-            "protocolVersion": 2,
-            "tickRate": 60,
-            "sensorSpec": {"order": ["old"]},
-        },
-        {
-            "type": "stateReplaced",
-            "welcome": {
+    ws = DummyWS(
+        [
+            {
+                "type": "welcome",
                 "protocolVersion": 2,
-                "tickRate": 30,
-                "sensorSpec": {"order": ["food_proximity"]},
+                "tickRate": 60,
+                "sensorSpec": {"order": ["old"]},
             },
-        },
-        {"type": "assign", "snakeId": 12, "resumeToken": "fresh-token"},
-    ])
+            {
+                "type": "stateReplaced",
+                "welcome": {
+                    "protocolVersion": 2,
+                    "tickRate": 30,
+                    "sensorSpec": {"order": ["food_proximity"]},
+                },
+            },
+            {"type": "assign", "snakeId": 12, "resumeToken": "fresh-token"},
+        ]
+    )
 
     await actor._handshake(ws, "trainer-008")
 
     sent = [json.loads(value) for value in ws.sent]
     assert sent[1]["resumeToken"] == "stale-token"
     assert sent[2] == {
-        "type": "join", "mode": "player", "name": "trainer-008"
+        "type": "join",
+        "mode": "player",
+        "name": "trainer-008",
     }
     assert actor.snake_id == 12
     assert actor.resume_token == "fresh-token"
     assert actor.sensor_order == ["food_proximity"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_death_uses_configured_penalty_once():
+    """A genuine terminal episode receives exactly one configured death penalty."""
+    cfg = Config(reward_death_penalty_magnitude=0.75)
+    experience_q = asyncio.Queue()
+    actor = ActorClient(0, cfg, DummySharedState(), experience_q)
+    actor.snake_id = 1
+    actor.pending_transition = Transition(
+        obs=np.zeros(1, dtype=np.float32),
+        action_turn=0.0,
+        turn_latent=0.0,
+        action_boost=0.0,
+        logp=0.0,
+        value=0.0,
+        reward=0.25,
+        done=0.0,
+    )
+
+    await actor._finalize_terminal_episode()
+    _actor_id, rollout, bootstrap = await experience_q.get()
+
+    assert bootstrap == 0.0
+    assert len(rollout) == 1
+    assert rollout[0].reward == pytest.approx(-0.5)
+    assert rollout[0].done == 1.0
+
+
+@pytest.mark.asyncio
+async def test_state_replacement_applies_zero_death_penalty():
+    """State replacement terminates the transition without a death contribution."""
+    cfg = Config(reward_death_penalty_magnitude=0.75)
+    experience_q = asyncio.Queue()
+    actor = ActorClient(0, cfg, DummySharedState(), experience_q)
+    actor.snake_id = 1
+    actor.pending_transition = Transition(
+        obs=np.zeros(1, dtype=np.float32),
+        action_turn=0.0,
+        turn_latent=0.0,
+        action_boost=0.0,
+        logp=0.0,
+        value=0.0,
+        reward=0.25,
+        done=0.0,
+    )
+    actor.sensor_order = ["x"]
+    actor.sensor_idx = {"x": 0}
+    ws = DummyWS()
+
+    await actor._handle_state_replaced(
+        {
+            "welcome": {
+                "protocolVersion": 2,
+                "tickRate": 60,
+                "sensorSpec": {"order": ["x"]},
+            }
+        },
+        ws,
+        "trainer",
+    )
+    _actor_id, rollout, _bootstrap = await experience_q.get()
+
+    assert rollout[0].reward == pytest.approx(0.25)
+    assert rollout[0].done == 1.0
