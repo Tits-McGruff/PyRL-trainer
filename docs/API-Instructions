@@ -10,7 +10,7 @@ server applies them during its tick loop.
 
 ## Endpoints and ports
 
-- WebSocket: `ws://HOST:PORT` (default `ws://localhost:3000`).
+- WebSocket: `ws://HOST:PORT` (default `ws://localhost:5174`).
 - HTTP: `http://HOST:PORT` for REST endpoints on the same server.
 - TLS: use `wss://` and `https://` if the server is behind TLS.
 
@@ -20,12 +20,12 @@ run the server on a different interface.
 ## Protocol clarifications (from server code and defaults)
 
 This section answers concrete integration questions by referencing the
-current TypeScript server implementation and `server/config.toml`.
+current Rust-authoritative server interface and `server/config.toml`.
 
 ### WebSocket, handshake, and lifecycle
 
 1. WebSocket URL format is `ws://HOST:PORT` with no path. Example:
-   `ws://192.168.0.200:3000`. No query params are required or read by the
+   `ws://192.168.0.200:5174`. No query params are required or read by the
    server.
 2. `PROTOCOL_VERSION` is `2`, defined in `server/protocol.ts`.
 3. No auth headers, API keys, allowlists, or session tokens are required or
@@ -354,9 +354,9 @@ The serializer version is included in `welcome.serializerVersion`.
 The server sends the exact sensor order in `welcome.sensorSpec.order`. Do not
 assume a fixed layout; always build your input vector from this order.
 
-### Scalar sensors (17 total)
+### Scalar sensors (19 total)
 
-The scalar sensors occupying indices 0-16 in the vector:
+The scalar sensors occupying indices 0-18 in the vector:
 
 - `heading_sin`, `heading_cos`: sine/cosine of current heading.
 - `size_norm`: snake size fraction in `[-1, 1]`.
@@ -371,6 +371,8 @@ The scalar sensors occupying indices 0-16 in the vector:
 - `boost_cost_norm`: current point loss rate from boosting (scales with size).
 - `wall_dist_norm`: distance to the circular world boundary.
 - `nearest_food_dist_norm`: distance to the nearest food pellet.
+- `nearest_food_dir_sin`, `nearest_food_dir_cos`: direction to the nearest food
+  relative to the snake heading.
 - `nearest_body_dist_norm`: distance to the nearest snake segment (any snake).
 - `nearest_head_dist_norm`: distance to the nearest enemy snake head.
 - `age_norm`: survival time normalized by the generation duration limit.

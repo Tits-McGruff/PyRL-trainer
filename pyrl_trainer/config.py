@@ -108,7 +108,7 @@ def _default_net_layers() -> int:
 class Config:  # pylint: disable=too-many-instance-attributes
     """Trainer configuration values."""
 
-    ws_url: str = "ws://localhost:3000"
+    ws_url: str = "ws://localhost:5174"
     bot_name: str = "NNTrainer"
     actors: int = 4
 
