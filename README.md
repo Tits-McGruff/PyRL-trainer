@@ -211,8 +211,9 @@ CI runs lint, the full suite, and all four marker groups on Python 3.10, 3.11, a
 of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
 Rust manifest's exact parameter views, custom recurrent equations, sensor
 identity and output order. It does not use PPO's `PolicyValueNet` or `ActorClient`.
-The graph/loss/parity and bounded sequence-training primitives are implemented;
-teacher transport, replay/sampling jobs and deployed candidates are still in progress.
+The graph/loss/parity and bounded sequence-training primitives are implemented.
+The HTTP teacher consumer and strict Rust sample decoder are also implemented;
+replay/sampling jobs and deployed candidates are still in progress.
 The sequence API is documented in
 [`docs/canonical-sequence-training.md`](docs/canonical-sequence-training.md).
 
@@ -239,3 +240,16 @@ when the CUDA index is configured. To replace it explicitly inside `.venv`:
 .venv/Scripts/python.exe -m pip check
 .venv/Scripts/python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
 ```
+
+
+`pyrl_trainer.distillation_client.DistillationClient` reads the dedicated
+`/api/distillation/v1/` namespace without joining an actor or sending actions.
+Configure a server origin and capture epoch, call `fetch()` to obtain bounded
+chunks and explicit unavailable ranges, then `commit()` only when the job owns
+that proposal. Save `checkpoint_fields()` atomically with replay, sampler,
+optimizer and RNG state. A fetch never advances the local cursor or acknowledges
+a game transaction. Downloads use finite storage pins that are released after
+validation, including on failure. Restarts bind the source, complete native
+contract, canonical sensor bytes and recorded run seed; legacy unknown seeds
+are rejected. The frozen teacher fixture is produced by Rust's
+`teacher_chunk_reference` tool and tests codec interoperability, not gameplay.

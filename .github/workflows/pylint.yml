@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 8618f5f31965f389ef94e44d48513b139f913acd
+          ref: a965538c5db41d22d494e0d524c908ec5b1b1850
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -68,10 +68,16 @@ jobs:
           python-version: "3.12"
       - name: Install constrained CPU parity dependencies
         run: |
-          python -m pip install -c constraints.txt numpy
+          python -m pip install -c constraints.txt numpy pytest pytest-asyncio
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
       - name: Build the deployed whole-graph runner
         run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph
+      - name: Build the native teacher sample encoder
+        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --bin teacher_chunk_reference
+      - name: Native teacher codec interoperability
+        run: |
+          .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
+          PYRL_TEACHER_CHUNK_REFERENCE=.teacher-chunk-reference python -m pytest -q tests/unit/test_distillation_transport.py
       - name: Optimizer, export, native admission and exact-byte reimport
         run: >-
           python -m pyrl_trainer.canonical_parity

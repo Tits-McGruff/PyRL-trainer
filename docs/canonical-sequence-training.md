@@ -3,8 +3,9 @@
 `pyrl_trainer.sequence_distillation.CanonicalSequenceTrainer` owns Adam and one
 bounded BPTT update over independent delivered-observation windows. It is
 separate from PPO and does not open a socket or instantiate an ActorClient.
-Teacher transport, stream decoding, replay/sampling, job persistence and normal
-candidate deployment remain later integration work.
+Teacher transport and strict Rust stream decoding are implemented separately in
+`distillation_client` and `distillation_transport`. Replay/sampling, atomic job
+persistence and normal candidate deployment remain later integration work.
 
 Method-v1 defaults are batch 32, burn-in 32, BPTT 64, Adam learning rate 3e-4,
 gradient norm clipping 1.0 and Float32. Explicit configuration allows up to 128
