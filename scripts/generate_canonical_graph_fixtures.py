@@ -20,7 +20,12 @@ def _graph(operation, width):
             {"from": source, "to": destination, "fromPort": source_port, "toPort": ordinal}
         )
 
-    if operation == "mixed":
+    if operation == "routing":
+        node("split", "Split", outputSizes=[49, 1, 1])
+        edge("input", "split")
+        outputs = [{"nodeId": "split", "port": 2}, {"nodeId": "split", "port": 1}]
+        states = 0
+    elif operation == "mixed":
         node("mlp", "MLP", inputSize=width, hiddenSizes=[7, 5], outputSize=4)
         node("gru", "GRU", inputSize=4, hiddenSize=3)
         node("lstm", "LSTM", inputSize=4, hiddenSize=2)
@@ -75,6 +80,7 @@ def generate(runner, output):
         ("lstm", "v3", 16),
         ("rru", "basic", 16),
         ("mixed", "motion", 16),
+        ("routing", "v3", 8),
     ]
     for operation, profile, bins in cases:
         width = (

@@ -22,3 +22,10 @@ explicitly when unavailable. Reproduce with a new report path:
 ```powershell
 .venv/Scripts/python.exe -m pyrl_trainer.canonical_parity --runner C:/path/to/canonical-training-graph.exe --fixtures tests/fixtures/canonical_graph --device cuda --output-json new-cuda-report.json
 ```
+
+
+The `*-sequence-roundtrip-v1.json` reports exercise the actual
+`CanonicalSequenceTrainer`: 32 windows, 32 burn-in deliveries and 64 BPTT
+deliveries, with 1,024 burn-in and 2,048 training samples per update.
+The earlier reports retain the initial graph/optimizer primitive evidence.
+CI's live gate now uses the sequence trainer too.

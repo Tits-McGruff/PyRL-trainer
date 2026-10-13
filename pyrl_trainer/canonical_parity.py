@@ -12,7 +12,8 @@ import tempfile
 import numpy as np
 import torch
 
-from .canonical_graph import CanonicalGraph, CanonicalGraphManifest, distillation_loss
+from .canonical_graph import CanonicalGraph, CanonicalGraphManifest
+from .sequence_distillation import CanonicalSequenceTrainer, SequenceBatch
 
 
 def _require(condition, reason):
@@ -58,26 +59,32 @@ def _compare(actual, expected, device):
 
 def _optimize(model, observations, initial_state):
     """Perform actual Adam/autograd with method-v1 loss and a bounded 64-step BPTT window."""
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
-    state = initial_state
-    losses = []
+    trainer = CanonicalSequenceTrainer(model)
+    config = trainer.config
+    rows = config.burn_in_steps + config.bptt_steps
     before = model.export_weights()
-    for row in observations[:64]:
-        output, state = model(row.unsqueeze(0), state)
-        turn = row[:1] * 0.2
-        boost = (row[1:2] > 0).to(torch.float32)
-        losses.append(distillation_loss(output, turn, boost, torch.ones_like(turn)))
-    objective = torch.cat(losses).mean()
-    optimizer.zero_grad(set_to_none=True)
-    objective.backward()
-    _require(torch.isfinite(model.flat_parameters.grad).all(), "nonfinite optimizer gradient")
-    gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    _require(torch.isfinite(gradient_norm), "nonfinite clipped gradient norm")
-    optimizer.step()
+    values = observations[:rows].unsqueeze(1).repeat(1, config.batch_size, 1)
+    labels = values[..., 0] * 0.2
+    batch = SequenceBatch(
+        values,
+        labels,
+        values[..., 1] > 0,
+        torch.ones_like(labels),
+        torch.ones(labels.shape, dtype=torch.bool, device=values.device),
+        torch.zeros(labels.shape, dtype=torch.int64, device=values.device),
+        initial_state.repeat(config.batch_size, 1),
+    )
+    update = trainer.update(batch)
+    _require(update.optimizer_updated, "canonical sequence optimizer did not run")
     _require(model.export_weights() != before, "optimizer did not update canonical parameters")
     return {
-        "loss": objective.item(),
-        "gradientNorm": gradient_norm.item(),
+        "loss": update.loss,
+        "gradientNorm": update.gradient_norm,
+        "batchSize": config.batch_size,
+        "burnInSteps": config.burn_in_steps,
+        "bpttSteps": config.bptt_steps,
+        "trainingSamples": update.training_samples,
+        "burnInSamples": update.burn_in_samples,
         "beforeSha256": hashlib.sha256(before).hexdigest(),
         "afterSha256": hashlib.sha256(model.export_weights()).hexdigest(),
     }
@@ -177,7 +184,7 @@ def run_gate(runner: Path, fixtures: Path, device: str):
     for operation in ["dense", "mlp", "gru", "lstm", "rru", "mixed"]:
         results.extend(_case(runner, fixtures / operation, operation, device))
     source_hash = hashlib.sha256(b"pyrl.canonical-training-source.v1\0")
-    for name in ["canonical_graph.py", "canonical_parity.py"]:
+    for name in ["canonical_graph.py", "canonical_parity.py", "sequence_distillation.py"]:
         source_hash.update(name.encode("utf-8"))
         source_hash.update(Path(__file__).with_name(name).read_bytes().replace(b"\r\n", b"\n"))
     return {

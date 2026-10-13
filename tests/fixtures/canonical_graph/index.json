@@ -70,6 +70,13 @@
       "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
       "target": "x86_64-pc-windows-msvc",
       "steps": 256
+    },
+    {
+      "case": "routing",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
     }
   ]
 }

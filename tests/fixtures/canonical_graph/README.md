@@ -8,8 +8,9 @@ and exact numeric file digests. The reference target is Windows x86_64 MSVC.
 The reference math backend is `rust-scalar-v1`; live roundtrip qualification
 also exercises `rust-sse2-v1`.
 
-The six source graphs cover Input, tanh Dense/MLP, custom GRU/LSTM/RRU,
+The seven source graphs cover Input, tanh Dense/MLP, custom GRU/LSTM/RRU,
 fan-out, explicitly ordered Concat, Split and reversed graph output ports.
+A parameter-free routing graph covers constant-policy evaluation.
 All recurrent graphs include zero and nonzero initial states. Each sequence
 contains 256 deliveries. Source nodes/edges are deliberately submitted in
 reverse array order; Rust compiles the authoritative topology and packing.

@@ -211,8 +211,10 @@ CI runs lint, the full suite, and all four marker groups on Python 3.10, 3.11, a
 of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
 Rust manifest's exact parameter views, custom recurrent equations, sensor
 identity and output order. It does not use PPO's `PolicyValueNet` or `ActorClient`.
-The graph/loss/parity foundation is implemented; teacher transport, bounded
-sequence training, jobs and deployed candidates are still in progress.
+The graph/loss/parity and bounded sequence-training primitives are implemented;
+teacher transport, replay/sampling jobs and deployed candidates are still in progress.
+The sequence API is documented in
+[`docs/canonical-sequence-training.md`](docs/canonical-sequence-training.md).
 
 Run CPU or CUDA qualification with an explicitly built Rust runner:
 
