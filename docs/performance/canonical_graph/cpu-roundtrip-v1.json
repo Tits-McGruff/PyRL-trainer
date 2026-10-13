@@ -1,0 +1,664 @@
+{
+  "trainerSourceSha256": "6fdb27357bf43cea66b0520276a0d6aa458ff993fecb0f8fcc2df3ceba9fb108",
+  "schemaVersion": 1,
+  "gate": "canonical-optimizer-roundtrip-v1",
+  "torchVersion": "2.14.0+cu126",
+  "cudaVersion": "12.6",
+  "device": "cpu",
+  "deviceName": "AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD",
+  "pythonVersion": "3.12.10",
+  "seed": 42,
+  "tf32": false,
+  "dtype": "Float32",
+  "trainingScope": "synthetic parity labels; no gameplay imitation-quality claim",
+  "cases": [
+    {
+      "case": "dense",
+      "initialState": "zero",
+      "backend": "rust-scalar-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 3.2782554626464844e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 3.5762786865234375e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 3.5762786865234375e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 64,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 128,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 256,
+          "maxAbs": 0.0
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "37ea634658f48dd3701c87713e511dd23eb8a7cae1ca3efe67a356d0d6b45569",
+      "observationsSha256": "b143dc1fa11667677aa3e0b348b5762f70f821499a4fcab7e6ce98f4b91637bb",
+      "initialStateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "layoutSha256": "bd19e134f6db9eb8f29a4c16156bb38b58da61cb7915f49090bb24dc56d431c8",
+      "sensorSha256": "7324e9d6df191ca80902f18662250aa94847995c3518aa3f24c5d3bd5258d54c",
+      "optimization": {
+        "loss": 2.579120635986328,
+        "gradientNorm": 8.865509986877441,
+        "beforeSha256": "c5133eed40a2caf11b84c8cf2e03fa9c2643d79a5011380e2d1d8305be0bd031",
+        "afterSha256": "37ea634658f48dd3701c87713e511dd23eb8a7cae1ca3efe67a356d0d6b45569"
+      }
+    },
+    {
+      "case": "dense",
+      "initialState": "zero",
+      "backend": "rust-sse2-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 64,
+          "maxAbs": 8.940696716308594e-08
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.4901161193847656e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 64,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 128,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 256,
+          "maxAbs": 0.0
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "37ea634658f48dd3701c87713e511dd23eb8a7cae1ca3efe67a356d0d6b45569",
+      "observationsSha256": "b143dc1fa11667677aa3e0b348b5762f70f821499a4fcab7e6ce98f4b91637bb",
+      "initialStateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "layoutSha256": "bd19e134f6db9eb8f29a4c16156bb38b58da61cb7915f49090bb24dc56d431c8",
+      "sensorSha256": "7324e9d6df191ca80902f18662250aa94847995c3518aa3f24c5d3bd5258d54c",
+      "optimization": {
+        "loss": 2.579120635986328,
+        "gradientNorm": 8.865509986877441,
+        "beforeSha256": "c5133eed40a2caf11b84c8cf2e03fa9c2643d79a5011380e2d1d8305be0bd031",
+        "afterSha256": "37ea634658f48dd3701c87713e511dd23eb8a7cae1ca3efe67a356d0d6b45569"
+      }
+    },
+    {
+      "case": "mlp",
+      "initialState": "zero",
+      "backend": "rust-scalar-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 4.470348358154297e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.7881393432617188e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 2.086162567138672e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 2.086162567138672e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 64,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 128,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 256,
+          "maxAbs": 0.0
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "013fcaadf86a2aeee026ac6a8a4f6a34d9d2f3eddad0f2ea5e77258724bc60ad",
+      "observationsSha256": "cd8fb80c616668171f8cc252625ec889f0374b8d90498eeaeb4e70098fa693ed",
+      "initialStateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "layoutSha256": "e279ff57097d38b007886bf33900c4af3d1e71e73c73cf29b9183dd4ed2282d6",
+      "sensorSha256": "9da82785f667bb00e8c1d38be38f830adc1a0b72ba6a0eee7252553f2c8ef673",
+      "optimization": {
+        "loss": 5.538694381713867,
+        "gradientNorm": 4.038990020751953,
+        "beforeSha256": "6b890b75c17408152871fa0c8064fa7bff48853c8ac0020537385da157e460b3",
+        "afterSha256": "013fcaadf86a2aeee026ac6a8a4f6a34d9d2f3eddad0f2ea5e77258724bc60ad"
+      }
+    },
+    {
+      "case": "mlp",
+      "initialState": "zero",
+      "backend": "rust-sse2-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 4.470348358154297e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.1920928955078125e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 64,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 128,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 256,
+          "maxAbs": 0.0
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "013fcaadf86a2aeee026ac6a8a4f6a34d9d2f3eddad0f2ea5e77258724bc60ad",
+      "observationsSha256": "cd8fb80c616668171f8cc252625ec889f0374b8d90498eeaeb4e70098fa693ed",
+      "initialStateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "layoutSha256": "e279ff57097d38b007886bf33900c4af3d1e71e73c73cf29b9183dd4ed2282d6",
+      "sensorSha256": "9da82785f667bb00e8c1d38be38f830adc1a0b72ba6a0eee7252553f2c8ef673",
+      "optimization": {
+        "loss": 5.538694381713867,
+        "gradientNorm": 4.038990020751953,
+        "beforeSha256": "6b890b75c17408152871fa0c8064fa7bff48853c8ac0020537385da157e460b3",
+        "afterSha256": "013fcaadf86a2aeee026ac6a8a4f6a34d9d2f3eddad0f2ea5e77258724bc60ad"
+      }
+    },
+    {
+      "case": "gru",
+      "initialState": "nonzero",
+      "backend": "rust-scalar-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 2.384185791015625e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 2.384185791015625e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 4.023313522338867e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 2.384185791015625e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 2.384185791015625e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 4.023313522338867e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "8051d13a3c20bd394d2176af40e89d4fe526fcd4a5f7442750d4dda0ecfbef0f",
+      "observationsSha256": "5c3dc9b3b8f9234afb9017c9a754c29df964c4f0f56931114e7cc23f81876b53",
+      "initialStateSha256": "c689a9637c5caf4d3e8bebdf6736813f4b17957657112d4ad9dbab22f8f3f359",
+      "layoutSha256": "4c568b15bea4940cbc2cb17464694d77a135a10f6b9d5c52afcd92a0dac5e2c6",
+      "sensorSha256": "0ed2fe093f0179f9d6c8b3d9f5baba02004338bd45aef80a289bed140c15089e",
+      "optimization": {
+        "loss": 1.471588134765625,
+        "gradientNorm": 5.942183017730713,
+        "beforeSha256": "a70abf5db2e4974a25643adec535fa0fddd8032447fe804a942dc97044a7ed1c",
+        "afterSha256": "8051d13a3c20bd394d2176af40e89d4fe526fcd4a5f7442750d4dda0ecfbef0f"
+      }
+    },
+    {
+      "case": "gru",
+      "initialState": "nonzero",
+      "backend": "rust-sse2-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.7881393432617188e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.7881393432617188e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.7881393432617188e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.7881393432617188e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.7881393432617188e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.7881393432617188e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "8051d13a3c20bd394d2176af40e89d4fe526fcd4a5f7442750d4dda0ecfbef0f",
+      "observationsSha256": "5c3dc9b3b8f9234afb9017c9a754c29df964c4f0f56931114e7cc23f81876b53",
+      "initialStateSha256": "c689a9637c5caf4d3e8bebdf6736813f4b17957657112d4ad9dbab22f8f3f359",
+      "layoutSha256": "4c568b15bea4940cbc2cb17464694d77a135a10f6b9d5c52afcd92a0dac5e2c6",
+      "sensorSha256": "0ed2fe093f0179f9d6c8b3d9f5baba02004338bd45aef80a289bed140c15089e",
+      "optimization": {
+        "loss": 1.471588134765625,
+        "gradientNorm": 5.942183017730713,
+        "beforeSha256": "a70abf5db2e4974a25643adec535fa0fddd8032447fe804a942dc97044a7ed1c",
+        "afterSha256": "8051d13a3c20bd394d2176af40e89d4fe526fcd4a5f7442750d4dda0ecfbef0f"
+      }
+    },
+    {
+      "case": "lstm",
+      "initialState": "nonzero",
+      "backend": "rust-scalar-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.1920928955078125e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 1.043081283569336e-07
+        },
+        {
+          "step": 64,
+          "maxAbs": 3.5762786865234375e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 3.5762786865234375e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 6.556510925292969e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "2154eed662bae5b8f176e0216fca17de6aa0336dc982a97db686332fca91bb60",
+      "observationsSha256": "75a1047e05f5debde2ffd6d3990a587f95ae181604e433266ae1f23a34bfcb5e",
+      "initialStateSha256": "4df84a6235569971f6a35f66caa4f1ada066bb2d8e6f6e031f5e95bae858deb3",
+      "layoutSha256": "d1578f45ff768f880ced87a2720acdf074dad2ad3fcba614412aa8556052f7b1",
+      "sensorSha256": "60687f33f5557598dfb1da88014c87e99068ffac19a389273e9e6922d6190037",
+      "optimization": {
+        "loss": 4.109884262084961,
+        "gradientNorm": 4.866802215576172,
+        "beforeSha256": "5b153116943808bab9489c171b72464e3786672ba2f31110b2a73cace1b733c7",
+        "afterSha256": "2154eed662bae5b8f176e0216fca17de6aa0336dc982a97db686332fca91bb60"
+      }
+    },
+    {
+      "case": "lstm",
+      "initialState": "nonzero",
+      "backend": "rust-sse2-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 0.0
+        },
+        {
+          "step": 64,
+          "maxAbs": 5.960464477539063e-08
+        },
+        {
+          "step": 128,
+          "maxAbs": 5.960464477539063e-08
+        },
+        {
+          "step": 256,
+          "maxAbs": 5.960464477539063e-08
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.7881393432617188e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 2.384185791015625e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 2.384185791015625e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "2154eed662bae5b8f176e0216fca17de6aa0336dc982a97db686332fca91bb60",
+      "observationsSha256": "75a1047e05f5debde2ffd6d3990a587f95ae181604e433266ae1f23a34bfcb5e",
+      "initialStateSha256": "4df84a6235569971f6a35f66caa4f1ada066bb2d8e6f6e031f5e95bae858deb3",
+      "layoutSha256": "d1578f45ff768f880ced87a2720acdf074dad2ad3fcba614412aa8556052f7b1",
+      "sensorSha256": "60687f33f5557598dfb1da88014c87e99068ffac19a389273e9e6922d6190037",
+      "optimization": {
+        "loss": 4.109884262084961,
+        "gradientNorm": 4.866802215576172,
+        "beforeSha256": "5b153116943808bab9489c171b72464e3786672ba2f31110b2a73cace1b733c7",
+        "afterSha256": "2154eed662bae5b8f176e0216fca17de6aa0336dc982a97db686332fca91bb60"
+      }
+    },
+    {
+      "case": "rru",
+      "initialState": "nonzero",
+      "backend": "rust-scalar-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 1.4901161193847656e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 4.470348358154297e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 4.470348358154297e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 5.364418029785156e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 1.4901161193847656e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 4.470348358154297e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 4.470348358154297e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 5.364418029785156e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "cbf5e806163c6e773153a5c46d334c2876493abcc48f0ab70e6e11039b1be002",
+      "observationsSha256": "ab9b4da6844fe86962d6f58e1b32a477d0b1f874295f7b17a610089d31c4e136",
+      "initialStateSha256": "c689a9637c5caf4d3e8bebdf6736813f4b17957657112d4ad9dbab22f8f3f359",
+      "layoutSha256": "6e13004b56b3bbeefa32324e3d5c730ccafc8fbe7afdf29a68c9774a2c61a721",
+      "sensorSha256": "475728b3d20d87ef66a5bc39b5309bf7f1f6f6132f7cea955092235bd9e703b0",
+      "optimization": {
+        "loss": 3.845133066177368,
+        "gradientNorm": 9.22618293762207,
+        "beforeSha256": "d19ac42cbfe8633e4738acdc92004d78b306b43c3d363e94cda33eff2dce4947",
+        "afterSha256": "cbf5e806163c6e773153a5c46d334c2876493abcc48f0ab70e6e11039b1be002"
+      }
+    },
+    {
+      "case": "rru",
+      "initialState": "nonzero",
+      "backend": "rust-sse2-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 1.4901161193847656e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.1920928955078125e-07
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 1.4901161193847656e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 128,
+          "maxAbs": 1.1920928955078125e-07
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.1920928955078125e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "cbf5e806163c6e773153a5c46d334c2876493abcc48f0ab70e6e11039b1be002",
+      "observationsSha256": "ab9b4da6844fe86962d6f58e1b32a477d0b1f874295f7b17a610089d31c4e136",
+      "initialStateSha256": "c689a9637c5caf4d3e8bebdf6736813f4b17957657112d4ad9dbab22f8f3f359",
+      "layoutSha256": "6e13004b56b3bbeefa32324e3d5c730ccafc8fbe7afdf29a68c9774a2c61a721",
+      "sensorSha256": "475728b3d20d87ef66a5bc39b5309bf7f1f6f6132f7cea955092235bd9e703b0",
+      "optimization": {
+        "loss": 3.845133066177368,
+        "gradientNorm": 9.22618293762207,
+        "beforeSha256": "d19ac42cbfe8633e4738acdc92004d78b306b43c3d363e94cda33eff2dce4947",
+        "afterSha256": "cbf5e806163c6e773153a5c46d334c2876493abcc48f0ab70e6e11039b1be002"
+      }
+    },
+    {
+      "case": "mixed",
+      "initialState": "nonzero",
+      "backend": "rust-scalar-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 3.725290298461914e-09
+        },
+        {
+          "step": 64,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 128,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 256,
+          "maxAbs": 2.9802322387695312e-08
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 8.940696716308594e-08
+        },
+        {
+          "step": 128,
+          "maxAbs": 8.940696716308594e-08
+        },
+        {
+          "step": 256,
+          "maxAbs": 1.3597309589385986e-07
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "f687f68f188bfb06b63072086b964fcf41829811647629ed61d0eb3cb152c103",
+      "observationsSha256": "6c02ac4f5ae6b6d80e786d0f05ec0798cd348f16e5b898aa26c08019ed2ea1de",
+      "initialStateSha256": "45d3537999d3a760ec57ab7fd65c28311f6b5ee9a5206131d8834e5817547163",
+      "layoutSha256": "3f4b24b257ef22977917e1e54fcca0ab25c06c35871684b80a7d942a6d04fc79",
+      "sensorSha256": "fa525c20998440a3eec3a3f1ed944760ed1c26650d8819608efa0cd44f83893e",
+      "optimization": {
+        "loss": 0.7066493034362793,
+        "gradientNorm": 0.23510994017124176,
+        "beforeSha256": "e6dac978fb86d9898db0fa0c81ad5f467b6a21d4168cd732bffdaa2d4c48be87",
+        "afterSha256": "f687f68f188bfb06b63072086b964fcf41829811647629ed61d0eb3cb152c103"
+      }
+    },
+    {
+      "case": "mixed",
+      "initialState": "nonzero",
+      "backend": "rust-sse2-v1",
+      "outputErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 3.725290298461914e-09
+        },
+        {
+          "step": 64,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 128,
+          "maxAbs": 2.9802322387695312e-08
+        },
+        {
+          "step": 256,
+          "maxAbs": 2.9802322387695312e-08
+        }
+      ],
+      "stateErrorGrowth": [
+        {
+          "step": 1,
+          "maxAbs": 2.2351741790771484e-08
+        },
+        {
+          "step": 64,
+          "maxAbs": 5.960464477539063e-08
+        },
+        {
+          "step": 128,
+          "maxAbs": 5.960464477539063e-08
+        },
+        {
+          "step": 256,
+          "maxAbs": 5.960464477539063e-08
+        }
+      ],
+      "nativeSourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "nativeTarget": "x86_64-pc-windows-msvc",
+      "weightsSha256": "f687f68f188bfb06b63072086b964fcf41829811647629ed61d0eb3cb152c103",
+      "observationsSha256": "6c02ac4f5ae6b6d80e786d0f05ec0798cd348f16e5b898aa26c08019ed2ea1de",
+      "initialStateSha256": "45d3537999d3a760ec57ab7fd65c28311f6b5ee9a5206131d8834e5817547163",
+      "layoutSha256": "3f4b24b257ef22977917e1e54fcca0ab25c06c35871684b80a7d942a6d04fc79",
+      "sensorSha256": "fa525c20998440a3eec3a3f1ed944760ed1c26650d8819608efa0cd44f83893e",
+      "optimization": {
+        "loss": 0.7066493034362793,
+        "gradientNorm": 0.23510994017124176,
+        "beforeSha256": "e6dac978fb86d9898db0fa0c81ad5f467b6a21d4168cd732bffdaa2d4c48be87",
+        "afterSha256": "f687f68f188bfb06b63072086b964fcf41829811647629ed61d0eb3cb152c103"
+      }
+    }
+  ]
+}

@@ -203,3 +203,37 @@ CI runs lint, the full suite, and all four marker groups on Python 3.10, 3.11, a
 - `max_actions_per_tick` is retained in config for server alignment but is not directly enforced by actor code.
 - The WebSocket message-size limit has one source, `pyrl_trainer.config.MAX_WS_MESSAGE_BYTES`, controlled by `SLITHER_WS_MAX_MESSAGE`.
 - If connection fails at startup, verify the server is running and reachable at `ws_url`.
+
+
+## Canonical graph distillation tools
+
+`pyrl_trainer.canonical_graph` provides a separate differentiable representation
+of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
+Rust manifest's exact parameter views, custom recurrent equations, sensor
+identity and output order. It does not use PPO's `PolicyValueNet` or `ActorClient`.
+The graph/loss/parity foundation is implemented; teacher transport, bounded
+sequence training, jobs and deployed candidates are still in progress.
+
+Run CPU or CUDA qualification with an explicitly built Rust runner:
+
+```powershell
+.venv/Scripts/python.exe -m pyrl_trainer.canonical_parity --runner C:/path/to/canonical-training-graph.exe --fixtures tests/fixtures/canonical_graph --device cuda --output-json new-roundtrip.json
+```
+
+This gate performs real optimizer updates, exports canonical Float32 bytes,
+independently admits them in Rust, evaluates both native math backends, and
+reimports exact bytes into PyTorch. An unavailable requested GPU fails the gate.
+TF32 and autocast are disabled for the initial parity envelope. Unit tests also
+compare every output and next recurrent state over frozen 256-delivery sequences.
+Compact CPU/RTX4080 reports and reproduction notes are under
+[`docs/performance/canonical_graph`](docs/performance/canonical_graph/README.md).
+These synthetic gates measure semantic/optimizer parity, not gameplay quality.
+
+An existing CPU Torch installation can satisfy the version constraint even
+when the CUDA index is configured. To replace it explicitly inside `.venv`:
+
+```powershell
+.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps -c constraints.txt --index-url https://download.pytorch.org/whl/cu126 torch==2.14.0
+.venv/Scripts/python.exe -m pip check
+.venv/Scripts/python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```

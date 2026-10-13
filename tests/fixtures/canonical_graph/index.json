@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "case": "dense",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "mlp",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "gru",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "gru",
+      "initialState": "nonzero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "lstm",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "lstm",
+      "initialState": "nonzero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "rru",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "rru",
+      "initialState": "nonzero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "mixed",
+      "initialState": "zero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    },
+    {
+      "case": "mixed",
+      "initialState": "nonzero",
+      "sourceSha256": "dfa93703e70a23dbce23379130a1339b90eebefc7709b4bd59651a144cf64a68",
+      "target": "x86_64-pc-windows-msvc",
+      "steps": 256
+    }
+  ]
+}

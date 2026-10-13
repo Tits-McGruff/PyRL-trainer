@@ -48,3 +48,39 @@ jobs:
 
       - name: End-to-end tests
         run: python -m pytest -q -m e2e
+
+  canonical-roundtrip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the canonical native contract
+        uses: actions/checkout@v4
+        with:
+          repository: Tits-McGruff/slither_neuroevo
+          ref: 8618f5f31965f389ef94e44d48513b139f913acd
+          path: .canonical-rust
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .canonical-rust/native
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install constrained CPU parity dependencies
+        run: |
+          python -m pip install -c constraints.txt numpy
+          python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Build the deployed whole-graph runner
+        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph
+      - name: Optimizer, export, native admission and exact-byte reimport
+        run: >-
+          python -m pyrl_trainer.canonical_parity
+          --runner .canonical-rust/native/target/release/canonical-training-graph
+          --fixtures tests/fixtures/canonical_graph
+          --device cpu --output-json canonical-roundtrip-cpu.json
+      - name: Retain numerical parity and optimizer evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-roundtrip-cpu
+          path: canonical-roundtrip-cpu.json
+          if-no-files-found: error
