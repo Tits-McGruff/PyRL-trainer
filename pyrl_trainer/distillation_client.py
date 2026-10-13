@@ -114,16 +114,27 @@ class DistillationClient:
                 checkpoint["sensorContractJson"],
             )
 
-    def _http(self, path, *, method="GET", payload=None, limit=1024 * 1024):
+    def _http(self, path, *, method="GET", payload=None, binary=None, limit=1024 * 1024):
         """Bound response allocation independently of any Content-Length claim."""
         body = (
             None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
         )
-        if body is not None and len(body) > 16384:
+        if binary is not None:
+            if (
+                payload is not None
+                or not isinstance(binary, bytes)
+                or not 88 <= len(binary) <= 64 * 1024**2
+            ):
+                raise DistillationContractError("candidate request byte admission")
+            body = binary
+        elif body is not None and len(body) > 16384:
             raise DistillationContractError("distillation request byte limit")
         headers = {"Accept": "application/json"}
         if body is not None:
-            headers["Content-Type"] = "application/json"
+            headers["Content-Type"] = (
+                "application/octet-stream" if binary is not None else "application/json"
+            )
+            headers["Content-Length"] = str(len(body))
         req = request.Request(self.base_url + path, data=body, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=self.timeout) as response:
@@ -292,3 +303,60 @@ class DistillationClient:
             "runSeed": self.manifest.run_seed,
             "sensorContractJson": self.manifest.sensor_json,
         }
+
+    def upload_candidate(self, artifact):
+        """Send one immutable canonical artifact to the same explicitly configured server origin."""
+        # Keep ordinary metadata consumption independent of Torch imports.
+        # pylint: disable=import-outside-toplevel
+        from .brain_artifact import (
+            BrainArtifact,
+            read_raw_brain_artifact,
+        )  # pylint: disable=import-outside-toplevel
+
+        if not isinstance(artifact, BrainArtifact):
+            raise DistillationContractError("candidate upload requires immutable portable bytes")
+        checked, expected, provenance = read_raw_brain_artifact(artifact.data)
+        if checked != artifact or provenance["sourceKind"] != "distilled":
+            raise DistillationContractError("candidate upload immutable provenance mismatch")
+        record = self._json(f"candidates/{artifact.sha256}", method="POST", binary=artifact.data)
+        exact_keys(record, "descriptor byteCount")
+        if integer(record["byteCount"], 88, 64 * 1024**2) != len(artifact.data):
+            raise DistillationContractError("candidate receipt byte count mismatch")
+        descriptor = record["descriptor"]
+        exact_keys(
+            descriptor,
+            "schemaVersion artifactSha256 weightsSha256 architectureKey layoutSha256 sensorSha256 "
+            "inputSize parameterCount stateSize controlIntervalSeconds lifeStateRule sourceKind",
+        )
+        integer(descriptor["schemaVersion"], 1, 1)
+        if (
+            descriptor["artifactSha256"] != artifact.sha256
+            or descriptor["weightsSha256"] != artifact.weights_sha256
+            or descriptor["sourceKind"] != "distilled"
+        ):
+            raise DistillationContractError("native candidate identity receipt mismatch")
+        for name in ("layoutSha256", "sensorSha256"):
+            hex_identity(descriptor[name], 64)
+        integer(descriptor["inputSize"], 1, 504)
+        integer(descriptor["parameterCount"], 0, 1000000)
+        integer(descriptor["stateSize"], 0, 16384)
+        if (
+            not isinstance(descriptor["architectureKey"], str)
+            or len(descriptor["architectureKey"].encode("utf-8")) > 512 * 1024
+            or descriptor["lifeStateRule"] not in ("reset", "preserve")
+        ):
+            raise DistillationContractError("invalid native candidate compatibility receipt")
+        for name, value in (
+            ("layoutSha256", expected.layout_sha256),
+            ("sensorSha256", expected.sensor_sha256),
+            ("inputSize", expected.input_size),
+            ("parameterCount", expected.total_parameters),
+            ("stateSize", expected.total_state_size),
+            ("controlIntervalSeconds", expected.control_interval_seconds),
+            ("lifeStateRule", expected.life_state_rule),
+        ):
+            if descriptor[name] != value:
+                raise DistillationContractError(
+                    "native candidate complete contract receipt mismatch"
+                )
+        return descriptor

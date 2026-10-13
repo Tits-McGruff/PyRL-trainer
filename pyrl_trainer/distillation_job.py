@@ -14,6 +14,7 @@ import uuid
 import numpy as np
 import torch
 
+from .brain_artifact import encode_brain_artifact
 from .canonical_graph import CanonicalGraph, CanonicalGraphError
 from .distillation_replay import TeacherReplay
 from .distillation_sampling import ReplayDataUnavailable, ReplayWindowSampler
@@ -30,6 +31,7 @@ SOURCE_FILES = (
     "distillation_job.py",
     "distillation_checkpoint.py",
     "distillation_run.py",
+    "brain_artifact.py",
 )
 
 
@@ -130,7 +132,7 @@ class DistillationJob:
         *,
         config=DistillationJobConfig(),
         sequence=SequenceTrainingConfig(),
-        client=None
+        client=None,
     ):
         # Graph, data, device and deployment contracts are separate admitted inputs.
         # pylint: disable=too-many-arguments
@@ -195,6 +197,12 @@ class DistillationJob:
         self.last_save_time = time.monotonic()
         self.last_save_update = 0
         self.candidate_due = False
+        self.pending_candidates = []
+        self.dropped_candidates = 0
+        self.training_samples = 0
+        self.burn_in_samples = 0
+        self.trained_generation_min = None
+        self.trained_generation_max = None
         self.peak_device_bytes = 0
 
     def ingest(self, fetched):
@@ -235,9 +243,24 @@ class DistillationJob:
             self.last_training = metrics
             self.last_state = updated.next_state
             self.last_windows = sampled.windows
-            self.candidate_due = (
-                updated.optimizer_updated and self.trainer.completed_updates % 250 == 0
+            self.training_samples += updated.training_samples
+            self.burn_in_samples += updated.burn_in_samples
+            generations = [window.generation for window in sampled.windows]
+            self.trained_generation_min = min(
+                [
+                    min(generations),
+                    *([] if self.trained_generation_min is None else [self.trained_generation_min]),
+                ]
             )
+            self.trained_generation_max = max(
+                [
+                    max(generations),
+                    *([] if self.trained_generation_max is None else [self.trained_generation_max]),
+                ]
+            )
+            if updated.optimizer_updated and self.trainer.completed_updates % 250 == 0:
+                self._capture_candidate()
+            self.candidate_due = bool(self.pending_candidates)
             if not updated.optimizer_updated:
                 self.status, self.last_error = "paused", "graph has no trainable output dependency"
             return updated
@@ -249,6 +272,70 @@ class DistillationJob:
             # A failed optimizer/device operation may have partially changed trainer state.
             self.checkpoint_allowed = False
             raise
+
+    def _capture_candidate(self):
+        """Freeze each 250th update; bounded pressure discards oldest pending exports."""
+        dataset = self.replay.manifest
+        # Metrics attached to this immutable weight version must evaluate that same version.
+        validation = self.validate()
+        details = {
+            "method": "canonical-distillation-v1",
+            "lossRevision": 1,
+            "jobId": self.job_id,
+            "trainerSourceSha256": trainer_source_sha256(),
+            "seed": f"{self.config.seed:016x}",
+            "updates": f"{self.trainer.completed_updates:016x}",
+            "trainingSamples": f"{self.training_samples:016x}",
+            "burnInSamples": f"{self.burn_in_samples:016x}",
+            "generationStart": f"{self.trained_generation_min:016x}",
+            "generationEnd": f"{self.trained_generation_max:016x}",
+            "teacherContract": dataset.raw["contract"],
+            "runSeed": dataset.run_seed,
+            "sourceCursor": f"{self.replay.cursor:016x}",
+            "training": self.last_training,
+            "validation": validation,
+            "validationModelUpdate": (
+                None if validation is None else f"{self.trainer.completed_updates:016x}"
+            ),
+            "onlineMetrics": self.online_metrics,
+            "environment": self.environment,
+        }
+        artifact = encode_brain_artifact(
+            self.model.manifest,
+            self.model.export_weights(),
+            {"schemaVersion": 1, "sourceKind": "distilled", "details": details},
+        )
+        if len(self.pending_candidates) >= 4:
+            self.pending_candidates.pop(0)
+            self.dropped_candidates += 1
+        self.pending_candidates.append(artifact)
+
+    def upload_pending_candidates(self):
+        """Release only matching native validation receipts; retry failures retain exact bytes."""
+        if self.client is None:
+            return 0
+        count = 0
+        for artifact in tuple(self.pending_candidates):
+            receipt = self.client.upload_candidate(artifact)
+            if (
+                receipt["layoutSha256"] != self.model.manifest.layout_sha256
+                or receipt["sensorSha256"] != self.model.manifest.sensor_sha256
+                or receipt["controlIntervalSeconds"] != self.model.manifest.control_interval_seconds
+                or receipt["lifeStateRule"] != self.model.manifest.life_state_rule
+            ):
+                raise DistillationContractError("native candidate deployment receipt mismatch")
+            self.acknowledge_candidate(artifact.sha256)
+            count += 1
+        return count
+
+    def acknowledge_candidate(self, identity):
+        """Release only an explicitly confirmed immutable handoff, never a gameplay ACK."""
+        for index, artifact in enumerate(self.pending_candidates):
+            if artifact.sha256 == identity:
+                self.pending_candidates.pop(index)
+                self.candidate_due = bool(self.pending_candidates)
+                return True
+        return False
 
     def validate(self):
         """Unweighted held-out-stream metrics; model/optimizer weights remain immutable."""

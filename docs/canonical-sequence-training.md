@@ -6,8 +6,9 @@ separate from PPO and does not open a socket or instantiate an ActorClient.
 Teacher transport and strict Rust stream decoding are implemented separately in
 `distillation_client` and `distillation_transport`. Whole-chunk replay and stable stream partitioning are implemented in
 `distillation_replay`. Bounded window sampling and an initial standalone DistillationJobV1 owner now
-connect replay to actual training and atomic restart. Candidate publication,
-native shadows/deployment and integrated resource qualification remain open.
+connect replay to actual training and atomic restart. Portable candidate snapshots and upload/native admission are now implemented.
+Native shadows, saved-library deployment and integrated resource qualification
+remain open.
 
 Method-v1 defaults are batch 32, burn-in 32, BPTT 64, Adam learning rate 3e-4,
 gradient norm clipping 1.0 and Float32. Explicit configuration allows up to 128
@@ -142,7 +143,20 @@ regressions compare the very next weight bytes, Adam tensors, private RNG draws,
 sampled spans and detached recurrence after restart. Random windows intentionally
 reconstruct only bounded prefixes, not unlimited recurrent history.
 
-Candidate scheduling is currently recorded as `candidateDue` at each 250th
-successful update. Actual immutable candidate export/upload, native admission,
-shadow metrics, final held-out-seed/gameplay gates and full resource qualification
-remain integration work. This initial job owner does not claim those gates passed.
+Every 250th successful optimizer update now freezes an immutable `.slither-brain`
+candidate. The bounded queue retains four pending exports, records discarded
+pending candidates, and checkpoints their complete bytes. Later updates cannot
+mutate them. Candidates include canonical graph/Float32 bytes, teacher/run/config
+identity, method/seed, processed sample counts, trained generation extent,
+validation and numerical provenance. The export contains no Python model/pickle.
+
+The online runner checkpoints the pending handoff before posting it to the same
+configured server's dedicated candidate namespace. Rust independently recompiles
+packing, equations, sensors and deployment before returning a content-ID receipt.
+Only matching complete receipts release pending ownership; lost-response retries
+retain/send identical bytes. Offline jobs retain pending exports in their job
+checkpoint. Candidate upload neither activates a controlling policy nor saves it
+into the brain library. Those actions and native shadows remain explicit later
+integration. Shared PPO v4 sensor contracts now preserve native structural bytes,
+profile, normalization revision, digest and dimensions; incomplete v4 checkpoints
+reject while legacy v3 metadata remains readable.

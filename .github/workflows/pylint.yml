@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: a965538c5db41d22d494e0d524c908ec5b1b1850
+          ref: 5223595
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -71,13 +71,13 @@ jobs:
           python -m pip install -c constraints.txt numpy pytest pytest-asyncio
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
       - name: Build the deployed whole-graph runner
-        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph
-      - name: Build the native teacher sample encoder
-        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --bin teacher_chunk_reference
+        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate
       - name: Native teacher codec interoperability
         run: |
           .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
           PYRL_TEACHER_CHUNK_REFERENCE=.teacher-chunk-reference python -m pytest -q tests/unit/test_distillation_transport.py
+      - name: Portable candidate admission and actual 250-update snapshots
+        run: PYRL_BRAIN_ARTIFACT_RUNNER=.canonical-rust/native/target/release/brain_artifact_validate python -m pytest -q tests/unit/test_brain_artifact.py
       - name: Optimizer, export, native admission and exact-byte reimport
         run: >-
           python -m pyrl_trainer.canonical_parity

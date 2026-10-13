@@ -115,6 +115,10 @@ def run(argv=None):
                 break
             elif job.trainer.completed_updates % 50 == 0:
                 job.validate()
+            if job.pending_candidates and job.client is not None and not args.offline:
+                # Publish the immutable pending handoff before attempting a network receipt.
+                latest = job.save(args.job_directory)
+                job.upload_pending_candidates()
             if job.checkpoint_due():
                 latest = job.save(args.job_directory)
         latest = job.save(args.job_directory)

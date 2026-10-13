@@ -24,6 +24,7 @@ import zipfile
 import numpy as np
 import torch
 
+from .brain_artifact import MAX_ARTIFACT_BYTES, read_raw_brain_artifact
 from .canonical_graph import CanonicalGraphManifest
 from .distillation_client import DistillationClient
 from .distillation_replay import TeacherReplay
@@ -141,7 +142,7 @@ def _preflight(path):
                 raise DistillationContractError("unsupported job ZIP64 directory")
             count, central_size, offset, boundary = values[7], values[8], values[9], zip_offset
         if (
-            not 7 <= count <= 65543
+            not 7 <= count <= 65547
             or central_size > MAX_CENTRAL_BYTES
             or offset + central_size != boundary
         ):
@@ -162,6 +163,8 @@ def _read(archive, name, maximum):
 
 
 def _manifest(path):
+    # Validate the fixed inventory as one complete admission transaction.
+    # pylint: disable=too-many-branches,too-many-statements
     """Verify fixed roles and immutable payloads before accepting a valid snapshot."""
     count = _preflight(path)
     with zipfile.ZipFile(path, "r") as archive:
@@ -177,7 +180,9 @@ def _manifest(path):
             "schemaVersion purpose jobId serial trainerSourceSha256 environment config sequence "
             "dataset replay client sampler updates attemptedUpdates status lastError "
             "training validation "
-            "onlineMetrics lastWindows peakDeviceBytes candidateDue digests chunkCount",
+            "onlineMetrics lastWindows peakDeviceBytes candidateDue digests chunkCount "
+            "candidates droppedCandidates trainingSamples burnInSamples "
+            "generationStart generationEnd",
         )
         integer(metadata["schemaVersion"], 1, 1)
         if metadata["purpose"] != "distillation-job":
@@ -185,8 +190,11 @@ def _manifest(path):
         hex_identity(metadata["jobId"], 32, True)
         integer(metadata["serial"], 1, (1 << 64) - 1)
         chunk_count = integer(metadata["chunkCount"], 0, 65536)
-        if count != len(BASE_FILES) + chunk_count:
-            raise DistillationContractError("job replay member count mismatch")
+        candidates = metadata["candidates"]
+        if not isinstance(candidates, list) or len(candidates) > 4:
+            raise DistillationContractError("job pending candidate count admission")
+        if count != len(BASE_FILES) + chunk_count + len(candidates):
+            raise DistillationContractError("job replay/candidate member count mismatch")
         exact_keys(
             metadata["digests"], "graph.json weights.f32 optimizer.pt rng.pt state.f32 chunks.index"
         )
@@ -210,6 +218,17 @@ def _manifest(path):
             if len(data) != size or hashlib.sha256(data).digest() != digest:
                 raise DistillationContractError("required replay bytes missing/corrupt")
             previous = sequence
+        for candidate in candidates:
+            exact_keys(candidate, "sha256 bytes")
+            identity = hex_identity(candidate["sha256"], 64)
+            size = integer(candidate["bytes"], 88, MAX_ARTIFACT_BYTES)
+            name = f"candidates/{identity}.slither-brain"
+            if name in expected:
+                raise DistillationContractError("duplicate pending candidate identity")
+            expected.add(name)
+            data = _read(archive, name, size)
+            if len(data) != size or _sha(data) != identity:
+                raise DistillationContractError("required pending candidate missing/corrupt")
         if set(names) != expected:
             raise DistillationContractError("unexpected job archive roles")
     return metadata, payloads
@@ -297,12 +316,26 @@ def save_job_checkpoint(job, directory):
         "lastWindows": [asdict(item) for item in job.last_windows],
         "peakDeviceBytes": job.peak_device_bytes,
         "candidateDue": job.candidate_due,
+        "candidates": [
+            {"sha256": artifact.sha256, "bytes": len(artifact.data)}
+            for artifact in job.pending_candidates
+        ],
+        "droppedCandidates": f"{job.dropped_candidates:016x}",
+        "trainingSamples": f"{job.training_samples:016x}",
+        "burnInSamples": f"{job.burn_in_samples:016x}",
+        "generationStart": (
+            None if job.trained_generation_min is None else f"{job.trained_generation_min:016x}"
+        ),
+        "generationEnd": (
+            None if job.trained_generation_max is None else f"{job.trained_generation_max:016x}"
+        ),
         "digests": {name: _sha(data) for name, data in payloads.items()},
         "chunkCount": len(chunks),
     }
     encoded = _json(metadata)
     estimated = sum(map(len, payloads.values())) + sum(len(item.raw_bytes) for item in chunks)
-    estimated += len(encoded) + 1024 * (len(chunks) + len(BASE_FILES))
+    estimated += sum(len(artifact.data) for artifact in job.pending_candidates)
+    estimated += len(encoded) + 1024 * (len(chunks) + len(BASE_FILES) + len(job.pending_candidates))
     if (
         estimated > MAX_CHECKPOINT_BYTES
         or shutil.disk_usage(root).free < estimated + DISK_RESERVE_BYTES
@@ -321,6 +354,8 @@ def save_job_checkpoint(job, directory):
                     archive.writestr(name, data)
                 for item in chunks:
                     archive.writestr(f"chunks/{item.sequence:016x}.bin", item.raw_bytes)
+                for artifact in job.pending_candidates:
+                    archive.writestr(f"candidates/{artifact.sha256}.slither-brain", artifact.data)
             if stream.tell() > MAX_CHECKPOINT_BYTES:
                 raise DistillationContractError("actual job checkpoint exceeds byte admission")
             stream.flush()
@@ -554,6 +589,49 @@ def load_job_checkpoint(path):
     _metrics(metadata["training"], metadata["validation"], sequence)
     if metadata["onlineMetrics"] != {}:
         raise DistillationContractError("unsupported online metric revision")
+    candidates = []
+    with zipfile.ZipFile(path, "r") as archive:
+        for record in metadata["candidates"]:
+            data = _read(archive, f"candidates/{record['sha256']}.slither-brain", record["bytes"])
+            artifact, candidate_manifest, provenance = read_raw_brain_artifact(data)
+            actual_identity = (
+                artifact.sha256,
+                candidate_manifest.layout_sha256,
+                candidate_manifest.sensor_sha256,
+                candidate_manifest.life_state_rule,
+                candidate_manifest.control_interval_seconds,
+                provenance["sourceKind"],
+                provenance["details"].get("jobId"),
+            )
+            expected_identity = (
+                record["sha256"],
+                manifest.layout_sha256,
+                manifest.sensor_sha256,
+                manifest.life_state_rule,
+                manifest.control_interval_seconds,
+                "distilled",
+                metadata["jobId"],
+            )
+            if actual_identity != expected_identity:
+                raise DistillationContractError(
+                    "job pending candidate identity/deployment mismatch"
+                )
+            candidate_update = int(hex_identity(provenance["details"].get("updates"), 16), 16)
+            if not 0 < candidate_update <= updates or candidate_update % 250:
+                raise DistillationContractError("job candidate update cadence mismatch")
+            candidates.append(artifact)
+    if metadata["candidateDue"] != bool(candidates):
+        raise DistillationContractError("job pending candidate flag mismatch")
+    for key in ("generationStart", "generationEnd"):
+        if metadata[key] is not None:
+            hex_identity(metadata[key], 16, True)
+    if (metadata["generationStart"] is None) != (metadata["generationEnd"] is None):
+        raise DistillationContractError("job training generation extent mismatch")
+    if (
+        metadata["generationStart"] is not None
+        and metadata["generationStart"] > metadata["generationEnd"]
+    ):
+        raise DistillationContractError("job training generation order mismatch")
     job.sampler.restore(metadata["sampler"])
     job.trainer.optimizer.load_state_dict(optimizer)
     job.trainer.completed_updates, job.attempted_updates = updates, attempts
@@ -568,5 +646,15 @@ def load_job_checkpoint(path):
     job.last_training, job.last_validation = metadata["training"], metadata["validation"]
     job.online_metrics = metadata["onlineMetrics"]
     job.peak_device_bytes = integer(metadata["peakDeviceBytes"], 0, config.device_bytes)
+    job.pending_candidates = candidates
+    job.dropped_candidates = int(hex_identity(metadata["droppedCandidates"], 16), 16)
+    job.training_samples = int(hex_identity(metadata["trainingSamples"], 16), 16)
+    job.burn_in_samples = int(hex_identity(metadata["burnInSamples"], 16), 16)
+    job.trained_generation_min = (
+        None if metadata["generationStart"] is None else int(metadata["generationStart"], 16)
+    )
+    job.trained_generation_max = (
+        None if metadata["generationEnd"] is None else int(metadata["generationEnd"], 16)
+    )
     job.last_save_update = updates
     return job
