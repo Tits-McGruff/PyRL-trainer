@@ -12,7 +12,14 @@ import struct
 import numpy as np
 
 from .distillation_client import DistillationFetch
-from .distillation_transport import DistillationContractError, TeacherChunk, integer
+from .distillation_transport import (
+    DatasetManifest,
+    DistillationContractError,
+    TeacherChunk,
+    exact_keys,
+    hex_identity,
+    integer,
+)
 from .sequence_distillation import SequenceBoundary
 
 PARTITION_REVISION = 1
@@ -100,6 +107,11 @@ class TeacherReplay:
     def _cost(chunk):
         """Charge raw/decoded arrays and reserved Python/container metadata headroom."""
         return chunk.byte_cost + REPLAY_METADATA_BYTES
+
+    @property
+    def retained_chunks(self):
+        """Constant-time retained count for sampler cache admission."""
+        return len(self._chunks)
 
     @property
     def chunks(self):
@@ -209,3 +221,99 @@ class TeacherReplay:
             for index, label in enumerate(("boost_request", "realized_boost", "post_step_death")):
                 counts[label] += int(np.count_nonzero(chunk.flags & (1 << index)))
         return counts
+
+    def checkpoint_fields(self):
+        """Snapshot ownership counters; the job must also retain every referenced raw chunk."""
+        last = None
+        if self._last_proposal is not None:
+            start, end, chunks, gaps = self._last_proposal
+            last = {
+                "start": f"{start:016x}",
+                "end": f"{end:016x}",
+                "chunks": [[f"{sequence:016x}", digest] for sequence, digest in chunks],
+                "gaps": [[f"{low:016x}", f"{high:016x}"] for low, high in gaps],
+            }
+        return {
+            "schemaVersion": 1,
+            "maxBytes": self.max_bytes,
+            "maxChunks": self.max_chunks,
+            "cursor": f"{self.cursor:016x}",
+            "evictedChunks": f"{self.evicted_chunks:016x}",
+            "evictedSamples": f"{self.evicted_samples:016x}",
+            "lastProposal": last,
+        }
+
+    @classmethod
+    def restore_snapshot(cls, manifest, chunks, fields):
+        # Complete immutable snapshot admission precedes construction/publication.
+        # pylint: disable=too-many-branches,too-many-statements
+        """Reconstruct only explicitly retained complete chunks; never refetch missing data."""
+        exact_keys(
+            fields,
+            "schemaVersion maxBytes maxChunks cursor evictedChunks evictedSamples lastProposal",
+        )
+        integer(fields["schemaVersion"], 1, 1)
+        if not isinstance(manifest, DatasetManifest):
+            raise DistillationContractError("invalid replay snapshot manifest")
+        result = cls(max_bytes=fields["maxBytes"], max_chunks=fields["maxChunks"])
+        cursor = int(hex_identity(fields["cursor"], 16), 16)
+        if cursor > manifest.resolved_through or len(chunks) > result.max_chunks:
+            raise DistillationContractError("replay snapshot cursor/retention admission")
+        owned, previous = REPLAY_FIXED_BYTES, 0
+        for chunk in chunks:
+            if (
+                not isinstance(chunk, TeacherChunk)
+                or chunk.contract != manifest.contract
+                or not previous < chunk.sequence <= cursor
+            ):
+                raise DistillationContractError("replay snapshot object identity/order mismatch")
+            owned += result._cost(chunk)
+            if owned > result.max_bytes:
+                raise DistillationContractError("replay snapshot exceeds RAM admission")
+            previous = chunk.sequence
+        last = fields["lastProposal"]
+        parsed = None
+        if last is not None:
+            exact_keys(last, "start end chunks gaps")
+            start, end = (int(hex_identity(last[key], 16), 16) for key in ("start", "end"))
+            if not 0 <= start <= end == cursor:
+                raise DistillationContractError("replay snapshot retry cursor mismatch")
+            if (
+                not isinstance(last["chunks"], list)
+                or len(last["chunks"]) > 256
+                or not isinstance(last["gaps"], list)
+                or len(last["gaps"]) > 257
+            ):
+                raise DistillationContractError("replay snapshot retry object admission")
+            identities, gaps, intervals = [], [], []
+            for pair in last["chunks"]:
+                if not isinstance(pair, list) or len(pair) != 2:
+                    raise DistillationContractError("replay retry identity shape")
+                sequence = int(hex_identity(pair[0], 16, True), 16)
+                digest = hex_identity(pair[1], 64)
+                if identities and sequence <= identities[-1][0]:
+                    raise DistillationContractError("replay retry identity order")
+                identities.append((sequence, digest))
+                intervals.append((sequence, sequence))
+            for pair in last["gaps"]:
+                if not isinstance(pair, list) or len(pair) != 2:
+                    raise DistillationContractError("replay retry gap shape")
+                low, high = (int(hex_identity(value, 16, True), 16) for value in pair)
+                if low > high:
+                    raise DistillationContractError("replay retry gap extent")
+                gaps.append((low, high))
+                intervals.append((low, high))
+            covered = start
+            for low, high in sorted(intervals):
+                if low != covered + 1 or high > end:
+                    raise DistillationContractError("replay retry disposition coverage")
+                covered = high
+            if covered != end:
+                raise DistillationContractError("replay retry tail coverage")
+            parsed = start, end, tuple(identities), tuple(gaps)
+        result._chunks = deque(chunks)
+        result.cursor, result.owned_bytes, result.manifest = cursor, owned, manifest
+        result.evicted_chunks = int(hex_identity(fields["evictedChunks"], 16), 16)
+        result.evicted_samples = int(hex_identity(fields["evictedSamples"], 16), 16)
+        result._last_proposal = parsed
+        return result

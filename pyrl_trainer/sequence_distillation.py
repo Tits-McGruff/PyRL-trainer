@@ -246,3 +246,28 @@ class CanonicalSequenceTrainer:
                 updated,
                 state.detach(),
             )
+
+    def evaluate(self, batch: SequenceBatch):
+        """Evaluate unweighted validation without optimizer, gradient or parameter mutation."""
+        batch.validate(self.model, self.config)
+        data = batch.on_device(self.model.flat_parameters.device)
+        state = data.initial_state
+        predictions = []
+        with torch.no_grad():
+            for index in range(data.observations.shape[0]):
+                output, state = _delivery(self.model, data, index, state)
+                if index >= self.config.burn_in_steps:
+                    predictions.append(output)
+            outputs = torch.stack(predictions)
+            if not torch.isfinite(outputs).all() or not torch.isfinite(state).all():
+                raise CanonicalGraphError("nonfinite validation inference")
+            start = self.config.burn_in_steps
+            active = data.active[start:]
+            error = outputs[..., 0] - data.teacher_turn[start:]
+            disagreement = (outputs[..., 1] > 0.35) != data.teacher_boost_request[start:].bool()
+            return {
+                "turn_mse": error[active].square().mean().item(),
+                "turn_mae": error[active].abs().mean().item(),
+                "boost_disagreement": disagreement[active].float().mean().item(),
+                "samples": int(active.sum().item()),
+            }

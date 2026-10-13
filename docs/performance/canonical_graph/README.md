@@ -1,6 +1,6 @@
 # Canonical optimizer roundtrip evidence
 
-The two JSON reports retain the mandatory Stage F gate on CPU and the local
+The retained JSON reports record the mandatory Stage F gate on CPU and the local
 RTX 4080 with Torch `2.14.0+cu126`. Both use Float32, fixed seed 42, TF32 disabled,
 Adam at 3e-4 and gradient clipping at 1.0. Each graph receives an actual optimizer
 update with the method-v1 loss. Both native scalar and SSE2 backends independently
@@ -29,3 +29,9 @@ The `*-sequence-roundtrip-v1.json` reports exercise the actual
 deliveries, with 1,024 burn-in and 2,048 training samples per update.
 The earlier reports retain the initial graph/optimizer primitive evidence.
 CI's live gate now uses the sequence trainer too.
+
+
+`cuda-job-owner-roundtrip-v1.json` re-runs all twelve sequence optimizer/export/
+native scalar/SSE2/reimport cases with the current sequence source and the
+Slither `a965538` release runner. It complements the sampler/job CPU/CUDA restart
+regressions; it remains synthetic numerical evidence, not gameplay qualification.

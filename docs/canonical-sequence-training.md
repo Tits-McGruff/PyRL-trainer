@@ -5,8 +5,9 @@ bounded BPTT update over independent delivered-observation windows. It is
 separate from PPO and does not open a socket or instantiate an ActorClient.
 Teacher transport and strict Rust stream decoding are implemented separately in
 `distillation_client` and `distillation_transport`. Whole-chunk replay and stable stream partitioning are implemented in
-`distillation_replay`. Window sampling, atomic job persistence and normal
-candidate deployment remain later integration work.
+`distillation_replay`. Bounded window sampling and an initial standalone DistillationJobV1 owner now
+connect replay to actual training and atomic restart. Candidate publication,
+native shadows/deployment and integrated resource qualification remain open.
 
 Method-v1 defaults are batch 32, burn-in 32, BPTT 64, Adam learning rate 3e-4,
 gradient norm clipping 1.0 and Float32. Explicit configuration allows up to 128
@@ -83,3 +84,65 @@ Rare strata receive one 4x loss multiplier regardless of overlap; cruising recei
 1x. `raw_counts()` preserves unweighted row/stratum/request/realized/death counts.
 This buffer and partition API are primitives; they do not claim durable optimizer,
 sampler/RNG restart, qualified resource admission or a complete training job.
+
+
+`ReplayWindowSampler` samples independent windows uniformly by delivered training
+row within one partition. Its own PCG64 state is checkpointed with a digest of
+the exact retained chunks, graph/deployment contract and sequence configuration.
+Each window has up to 32 burn-in plus 64 training deliveries by default. It uses
+zero initial state and an explicit unknown-prefix boundary when sampling within
+a life. Interior proved life boundaries honor Reset/Preserve; gaps reset. Short
+training suffixes use padding that neither advances recurrence nor contributes
+loss. The sampler does not create observations between delivered samples.
+The stream index has a separate 64 MiB admission including replacement staging;
+CPU batch tensors have a separate 128 MiB default ceiling. These are admission
+bounds, with final integrated workload qualification still required.
+
+`DistillationJob` owns the canonical model/Adam, replay, sampler, private Python
+and Torch CPU/CUDA generators, metrics and the last detached window continuation.
+It normalizes the default two Torch CPU threads against available CPUs. CUDA0
+is preferred explicitly; unavailable CUDA fails rather than selecting CPU.
+The initial device budget is 8 GiB, with cold graph/window admission and observed
+CUDA allocation peaks. Device/optimizer failures pause the job and prohibit
+publishing possibly partial state as an exact checkpoint. Normal short-history
+waiting leaves the job and sampler ready for more captured rows. No loader workers
+or actor/controller objects are created.
+
+Standalone usage with an independently generated matching native graph manifest:
+
+```sh
+python -m pyrl_trainer.distillation_run --manifest graph/manifest.json --weights graph/weights.f32 --origin http://localhost:5174 --capture-epoch CAPTURE_EPOCH_HEX --job-directory distillation-jobs --device cuda:0 --updates 1000
+python -m pyrl_trainer.distillation_run --resume CHECKPOINT_PATH --offline --job-directory distillation-jobs --updates 1000
+```
+
+New-job inputs must match the captured structural sensor bytes/digest and cadence.
+Use `--device cpu` explicitly for CPU training. The runner has finite update and
+wall limits, validates every 50 successful updates, checkpoints every 60 wall
+seconds or 1,000 updates, and saves start/final recovery boundaries. Resume rejects
+explicit changed source, device, seed or sequence settings. Offline resume never
+fetches data or joins a controller.
+
+A `.distill-job` checkpoint is a bounded, uncompressed, self-contained ZIP,
+separate from PPO schema2 and from any deployed brain artifact. It contains the
+canonical graph/Float32 weights, local Adam/private RNG payloads, detached
+recurrence, window identities, source/environment/method records, HTTP admission
+settings and cursor, replay/sampler decisions, and every required immutable raw
+teacher chunk with its binary digest index. ZIP central-directory allocation is
+admitted before metadata parsing. Payload digests, exact schemas, complete replay
+bytes, canonical dimensions and finite optimizer/state values are checked before
+a fresh owner is returned. Torch optimizer/RNG reads use `weights_only=True`;
+those local trainer payloads are never a deployable candidate.
+
+Publication flushes the complete file, creates an exclusive final hard link,
+flushes publication where supported and retains the newest three valid containers.
+The disk reserve is 1 GiB and checkpoint ceiling is 512 MiB. Missing required
+replay data, trainer-source mismatch or numerical-environment mismatch rejects
+exact restart; no observations are refetched or silently reconstructed. CPU/CUDA
+regressions compare the very next weight bytes, Adam tensors, private RNG draws,
+sampled spans and detached recurrence after restart. Random windows intentionally
+reconstruct only bounded prefixes, not unlimited recurrent history.
+
+Candidate scheduling is currently recorded as `candidateDue` at each 250th
+successful update. Actual immutable candidate export/upload, native admission,
+shadow metrics, final held-out-seed/gameplay gates and full resource qualification
+remain integration work. This initial job owner does not claim those gates passed.

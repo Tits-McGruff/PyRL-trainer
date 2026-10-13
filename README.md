@@ -214,8 +214,9 @@ identity and output order. It does not use PPO's `PolicyValueNet` or `ActorClien
 The graph/loss/parity and bounded sequence-training primitives are implemented.
 The HTTP teacher consumer and strict Rust sample decoder are also implemented;
 Bounded replay and stable whole-stream partitioning are implemented in
-`distillation_replay`; window sampling, durable jobs and deployed candidates are
-still in progress.
+`distillation_replay`; bounded window sampling and an initial standalone durable job owner are now
+implemented. Native candidates/shadows and integrated qualification remain
+in progress.
 The sequence API is documented in
 [`docs/canonical-sequence-training.md`](docs/canonical-sequence-training.md).
 
