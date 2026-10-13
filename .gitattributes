@@ -1,0 +1,4 @@
+# Canonical neural fixtures and immutable payloads must survive every checkout byte-for-byte.
+*.f32 binary
+*.bin binary
+*.distill-job binary
