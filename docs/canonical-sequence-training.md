@@ -4,8 +4,9 @@
 bounded BPTT update over independent delivered-observation windows. It is
 separate from PPO and does not open a socket or instantiate an ActorClient.
 Teacher transport and strict Rust stream decoding are implemented separately in
-`distillation_client` and `distillation_transport`. Replay/sampling, atomic job
-persistence and normal candidate deployment remain later integration work.
+`distillation_client` and `distillation_transport`. Whole-chunk replay and stable stream partitioning are implemented in
+`distillation_replay`. Window sampling, atomic job persistence and normal
+candidate deployment remain later integration work.
 
 Method-v1 defaults are batch 32, burn-in 32, BPTT 64, Adam learning rate 3e-4,
 gradient norm clipping 1.0 and Float32. Explicit configuration allows up to 128
@@ -56,3 +57,29 @@ or graphs whose outputs do not depend on their parameters return metrics with
 `optimizer_updated=false`. They never fabricate a learned parameter or head.
 The higher-level job runner must account for such non-updating graphs in its
 bounded termination policy.
+
+
+`TeacherReplay` owns whole decoded chunks with a default 256 MiB RAM ceiling
+and 65,536-object ceiling. Admission charges raw bytes, decoded arrays, per-object
+metadata headroom and a fixed 256 KiB bookkeeping reserve. The configurable byte
+ceiling is 2..512 MiB. This bounds replay ownership; HTTP transfers, tensors,
+optimizer/device memory and durable checkpoint work need separate job admission.
+The job consumes segment views before the next replay mutation.
+
+`admit(fetch)` validates the entire settled chunk/gap proposal before replacing
+replay or advancing its local cursor. Exact retries do not resurrect evicted data.
+Ordinary chunk seals continue recurrence. Missing/evicted prefixes use `GAP`;
+only a proved previous-life end followed by the actual next physical-life start
+uses `LIFE`. Explicit capture/generation reasons remain distinct. A missing global
+sequence for another multiplexed owner does not break a locally proved contiguous
+sample-ordinal stream. Numeric step gaps alone are not interpolated deliveries.
+
+Partition revision 1 hashes `slither.distillation-partition.v1` plus a NUL byte
+and little-endian `(u32 runSeed, u32 baselineSlot, u64 generation)` with SHA256.
+The first eight digest bytes interpreted as a little-endian unsigned integer
+select validation when modulo five is zero. Every physical life/fragment in that
+stream has the same split. Final held-out run seeds remain a job-level gate.
+Rare strata receive one 4x loss multiplier regardless of overlap; cruising receives
+1x. `raw_counts()` preserves unweighted row/stratum/request/realized/death counts.
+This buffer and partition API are primitives; they do not claim durable optimizer,
+sampler/RNG restart, qualified resource admission or a complete training job.

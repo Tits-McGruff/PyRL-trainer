@@ -213,7 +213,9 @@ Rust manifest's exact parameter views, custom recurrent equations, sensor
 identity and output order. It does not use PPO's `PolicyValueNet` or `ActorClient`.
 The graph/loss/parity and bounded sequence-training primitives are implemented.
 The HTTP teacher consumer and strict Rust sample decoder are also implemented;
-replay/sampling jobs and deployed candidates are still in progress.
+Bounded replay and stable whole-stream partitioning are implemented in
+`distillation_replay`; window sampling, durable jobs and deployed candidates are
+still in progress.
 The sequence API is documented in
 [`docs/canonical-sequence-training.md`](docs/canonical-sequence-training.md).
 

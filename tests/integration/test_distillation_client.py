@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from pyrl_trainer.distillation_replay import TeacherReplay
 from pyrl_trainer.distillation_client import DistillationClient, DistillationHTTPError
 from pyrl_trainer.distillation_transport import DistillationContractError
 
@@ -141,6 +142,9 @@ def test_http_cursor_proposals_gaps_pin_cleanup_and_exact_local_commit(endpoint)
     assert client.cursor == 0
     assert fetched.next_cursor == 9 and fetched.gaps == ((1, 6), (8, 9))
     assert fetched.chunks[0].raw_bytes == DATA
+    replay = TeacherReplay()
+    assert replay.admit(fetched)
+    assert replay.cursor == fetched.next_cursor
     assert client.commit(fetched)
     assert not client.commit(fetched)
     restored = DistillationClient(origin, EPOCH, checkpoint=client.checkpoint_fields())
