@@ -1,6 +1,7 @@
 """Self-contained canonical job restarts, atomic publication and isolation."""
 
 from pathlib import Path
+import math
 import copy
 import importlib.util
 import random
@@ -181,6 +182,10 @@ def test_job_rng_isolation_waiting_and_failure_pause(tmp_path, monkeypatch):
 def test_checkpoint_schedule_is_wall_time_or_successful_update_count():
     """The declared 60-second/1,000-update cadence remains independent of game time."""
     job = make_job()
+    # This monotonic value reproduces subtraction rounding below 60 on Linux.
+    job.last_save_time = 123.539807243
+    deadline = job.last_save_time + 60
+    assert not job.checkpoint_due(math.nextafter(deadline, -math.inf))
     assert not job.checkpoint_due(job.last_save_time + 59)
     assert job.checkpoint_due(job.last_save_time + 60)
     job.trainer.completed_updates = 1000

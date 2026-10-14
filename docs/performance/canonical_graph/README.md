@@ -35,3 +35,8 @@ CI's live gate now uses the sequence trainer too.
 native scalar/SSE2/reimport cases with the current sequence source and the
 Slither `a965538` release runner. It complements the sampler/job CPU/CUDA restart
 regressions; it remains synthetic numerical evidence, not gameplay qualification.
+
+`cuda-shadow-coordination-roundtrip-v1.json` repeats the twelve-case CUDA gate
+against the release runner from Slither `d6c1def`, after HTTP shadow coordination
+and durable trainer handoff were connected. All existing numerical tolerances
+and exact trained-weight byte checks pass.

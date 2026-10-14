@@ -369,7 +369,7 @@ class DistillationJob:
         """Checkpoint after 60 wall seconds or 1,000 successful optimizer updates."""
         current = time.monotonic() if now is None else now
         return (
-            current - self.last_save_time >= 60
+            current >= self.last_save_time + 60
             or self.trainer.completed_updates - self.last_save_update >= 1000
         )
 
