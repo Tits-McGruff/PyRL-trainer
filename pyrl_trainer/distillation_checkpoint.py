@@ -4,6 +4,9 @@ All immutable replay bytes are retained locally. Only local trainer optimizer/RN
 payloads use Torch serialization; deployed candidate brains never use this format.
 """
 
+# This module is the persistence owner of the job's private committed-request witness.
+# pylint: disable=protected-access
+
 from dataclasses import asdict
 import hashlib
 import io
@@ -24,6 +27,7 @@ import zipfile
 import numpy as np
 import torch
 
+from .distillation_shadows import online_state
 from .brain_artifact import MAX_ARTIFACT_BYTES, read_raw_brain_artifact
 from .canonical_graph import CanonicalGraphManifest
 from .distillation_client import DistillationClient
@@ -380,6 +384,10 @@ def save_job_checkpoint(job, directory):
         for path in valid[3:]:
             path.unlink()
         _directory_sync(root)
+        # The persistence owner grants this witness only after complete durable publication.
+        job._shadow_checkpoint_request = (
+            job.shadow_request_digest()
+        )  # pylint: disable=protected-access
         return final
     finally:
         temp.unlink(missing_ok=True)
@@ -587,8 +595,7 @@ def load_job_checkpoint(path):
     ):
         raise DistillationContractError("job error admission")
     _metrics(metadata["training"], metadata["validation"], sequence)
-    if metadata["onlineMetrics"] != {}:
-        raise DistillationContractError("unsupported online metric revision")
+    online_state(metadata["onlineMetrics"])
     candidates = []
     with zipfile.ZipFile(path, "r") as archive:
         for record in metadata["candidates"]:
@@ -620,6 +627,19 @@ def load_job_checkpoint(path):
             if not 0 < candidate_update <= updates or candidate_update % 250:
                 raise DistillationContractError("job candidate update cadence mismatch")
             candidates.append(artifact)
+    shadow = metadata["onlineMetrics"]
+    if shadow:
+        receipt = shadow["receipt"]
+        if receipt is not None and (
+            receipt["runId"] != replay.manifest.contract.run_id
+            or receipt["captureEpoch"] != replay.manifest.contract.capture_epoch
+        ):
+            raise DistillationContractError("job online shadow dataset mismatch")
+        pending = shadow["pending"]
+        if pending is not None and pending["artifactSha256"] not in {
+            candidate.sha256 for candidate in candidates
+        }:
+            raise DistillationContractError("pending shadow candidate bytes missing")
     if metadata["candidateDue"] != bool(candidates):
         raise DistillationContractError("job pending candidate flag mismatch")
     for key in ("generationStart", "generationEnd"):
@@ -645,6 +665,7 @@ def load_job_checkpoint(path):
     job.last_error, job.candidate_due = metadata["lastError"], metadata["candidateDue"]
     job.last_training, job.last_validation = metadata["training"], metadata["validation"]
     job.online_metrics = metadata["onlineMetrics"]
+    job._shadow_checkpoint_request = job.shadow_request_digest()  # pylint: disable=protected-access
     job.peak_device_bytes = integer(metadata["peakDeviceBytes"], 0, config.device_bytes)
     job.pending_candidates = candidates
     job.dropped_candidates = int(hex_identity(metadata["droppedCandidates"], 16), 16)

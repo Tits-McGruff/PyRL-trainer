@@ -9,6 +9,8 @@ import json
 import math
 from urllib import error, parse, request
 
+from .distillation_shadows import shadow_metrics, shadow_receipt
+
 from .distillation_transport import (
     DatasetManifest,
     DistillationContractError,
@@ -360,3 +362,81 @@ class DistillationClient:
                     "native candidate complete contract receipt mismatch"
                 )
         return descriptor
+
+    def shadow_metrics(self):
+        """Read cold fixed native metrics without dataset cursor or gameplay acknowledgements."""
+        return shadow_metrics(self._json("shadows", limit=65536))
+
+    def activate_shadow(
+        self,
+        *,
+        slot,
+        baseline_slot,
+        config_revision,
+        artifact_sha256,
+        request_id,
+        process_epoch,
+        expected_activation_sequence,
+    ):
+        """Activate an admitted immutable candidate; retries retain their exact scope."""
+        # Independent diagnostic command metadata is explicit, never an actor/control envelope.
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        if self.manifest is None:
+            raise DistillationContractError("shadow activation requires admitted dataset identity")
+        payload = {
+            "requestId": hex_identity(request_id, 32, True),
+            "expectedProcessEpoch": hex_identity(process_epoch, 32, True),
+            "expectedActivationSequence": hex_identity(expected_activation_sequence, 16),
+            "expectedRunId": self.manifest.contract.run_id,
+            "expectedConfigRevision": hex_identity(config_revision, 16, True),
+            "captureEpoch": self.capture_epoch,
+            "baselineSlot": integer(baseline_slot, 0, 119),
+            "artifactSha256": hex_identity(artifact_sha256, 64),
+        }
+        result = shadow_receipt(
+            self._json(
+                f"shadows/{integer(slot, 0, 3)}/activate",
+                method="POST",
+                payload=payload,
+                limit=16384,
+            )
+        )
+        expected = {
+            "processEpoch": process_epoch,
+            "requestId": request_id,
+            "previousActivationSequence": expected_activation_sequence,
+            "runId": payload["expectedRunId"],
+            "configRevision": config_revision,
+            "captureEpoch": self.capture_epoch,
+            "artifactSha256": artifact_sha256,
+            "shadowSlot": slot,
+            "baselineSlot": baseline_slot,
+            "enabled": True,
+        }
+        if any(result[key] != value for key, value in expected.items()):
+            raise DistillationContractError("native shadow activation receipt mismatch")
+        return result
+
+    def stop_shadow(self, *, slot, activation_sequence, request_id):
+        """Stop only the matching deployment; a delayed request cannot disable its replacement."""
+        result = shadow_receipt(
+            self._json(
+                f"shadows/{integer(slot, 0, 3)}/stop",
+                method="POST",
+                payload={
+                    "requestId": hex_identity(request_id, 32, True),
+                    "captureEpoch": self.capture_epoch,
+                    "activationSequence": hex_identity(activation_sequence, 16, True),
+                },
+                limit=16384,
+            )
+        )
+        if (
+            result["enabled"]
+            or result["shadowSlot"] != slot
+            or result["captureEpoch"] != self.capture_epoch
+            or result["activationSequence"] != activation_sequence
+            or result["requestId"] != request_id
+        ):
+            raise DistillationContractError("native shadow stop receipt mismatch")
+        return result

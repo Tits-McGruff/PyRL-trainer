@@ -215,8 +215,9 @@ The graph/loss/parity and bounded sequence-training primitives are implemented.
 The HTTP teacher consumer and strict Rust sample decoder are also implemented;
 Bounded replay and stable whole-stream partitioning are implemented in
 `distillation_replay`; bounded window sampling and an initial standalone durable job owner are now
-implemented. Portable candidates and native upload admission are implemented; shadows,
-saved-library deployment and integrated qualification remain in progress.
+implemented. Portable candidates, native upload admission and explicit shadow
+activation/metrics are implemented. Saved-library deployment and integrated
+resource/gameplay qualification remain in progress.
 The sequence API is documented in
 [`docs/canonical-sequence-training.md`](docs/canonical-sequence-training.md).
 
@@ -256,3 +257,23 @@ validation, including on failure. Restarts bind the source, complete native
 contract, canonical sensor bytes and recorded run seed; legacy unknown seeds
 are rejected. The frozen teacher fixture is produced by Rust's
 `teacher_chunk_reference` tool and tests codec interoperability, not gameplay.
+
+Optional native shadow evaluation is explicit. Add all three flags to an online
+new-job invocation of `pyrl_trainer.distillation_run`:
+
+```powershell
+--shadow-slot 0 --shadow-baseline-slot 1 --shadow-config-revision 0000000000000001
+```
+
+The chosen slot is 0..3 and follows one selected baseline teacher. The run must
+already admit baseline v2 and matching v4 sensors/cadence; ordinary v3 production
+defaults remain unchanged pending qualification. Candidate upload alone does not
+activate a student. An opted-in job freezes the complete request and immutable
+candidate in a self-contained checkpoint before issuing the ordered native
+activation. Lost replies retry the same process/request/observed-slot identity;
+a changed process or replaced segment fails explicitly. Exact job resume cannot
+change shadow configuration. Metrics are Rust-computed unweighted summaries,
+including exact counters and separate delivery/publication steps. They never
+consume a dataset cursor, send gameplay ACKs or rewrite controlling weights.
+`DistillationClient.shadow_metrics`, `activate_shadow` and `stop_shadow` also
+expose these bounded diagnostic routes for explicit library use.

@@ -12,8 +12,16 @@ import torch
 
 from pyrl_trainer.canonical_graph import CanonicalGraphManifest
 from pyrl_trainer.distillation_checkpoint import load_job_checkpoint
-from pyrl_trainer.distillation_client import DistillationClient, DistillationFetch
-from pyrl_trainer.distillation_job import DistillationJob, DistillationJobConfig
+from pyrl_trainer.distillation_client import (
+    DistillationClient,
+    DistillationFetch,
+    DistillationHTTPError,
+)
+from pyrl_trainer.distillation_job import (
+    DistillationJob,
+    DistillationJobConfig,
+    trainer_source_sha256,
+)
 from pyrl_trainer.distillation_transport import DistillationContractError
 
 # Load test-only fixture helpers explicitly; no production module imports a test codec.
@@ -327,7 +335,165 @@ def test_cli_rejects_changed_resume_seed_and_sequence_settings(tmp_path):
 
 def test_loaded_source_identity_does_not_relabel_a_live_process(monkeypatch):
     """A running job stays bound to its loaded implementation after filesystem/source changes."""
-    from pyrl_trainer.distillation_job import trainer_source_sha256  # pylint: disable=import-outside-toplevel
     original = trainer_source_sha256()
     monkeypatch.setattr("pyrl_trainer.distillation_job._compute_source_sha256", lambda: "00" * 32)
     assert trainer_source_sha256() == original
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_shadow_request_is_saved_before_activation_and_lost_reply_restart_reuses_exact_segment(
+    tmp_path, monkeypatch, device
+):
+    """Real updates freeze bytes; a synthetic HTTP reply loss cannot reset the native segment."""
+
+    job = make_job(device)
+    client = DistillationClient("http://localhost:8765", job.replay.manifest.contract.capture_epoch)
+    client.manifest, client.cursor = job.replay.manifest, job.replay.cursor
+    job.client = client
+    job.configure_shadow(0, 1, "0000000000000001")
+    for _ in range(250):
+        assert job.update().optimizer_updated
+    artifact = job.pending_candidates[0]
+    requests, receipts = [], {}
+    metric = {"schemaVersion": 1, "processEpoch": "13" * 16, "slots": [None] * 4}
+    fail_once = [True]
+    monkeypatch.setattr(client, "upload_candidate", lambda _artifact: {})
+
+    def json_reply(path, **kwargs):
+        """Fake only HTTP outcomes; checkpoint/optimizer/RNG/canonical export remain real."""
+        if path == "shadows":
+            return copy.deepcopy(metric)
+        assert path == "shadows/0/activate"
+        payload = kwargs["payload"]
+        requests.append(copy.deepcopy(payload))
+        receipts.setdefault(
+            payload["requestId"],
+            {
+                "schemaVersion": 1,
+                "processEpoch": "13" * 16,
+                "requestId": payload["requestId"],
+                "commandSequence": "0000000000000002",
+                "activationSequence": "0000000000000002",
+                "previousActivationSequence": payload["expectedActivationSequence"],
+                "runId": payload["expectedRunId"],
+                "configRevision": payload["expectedConfigRevision"],
+                "captureEpoch": payload["captureEpoch"],
+                "artifactSha256": payload["artifactSha256"],
+                "shadowSlot": 0,
+                "baselineSlot": 1,
+                "effectiveStep": "000000000000000c",
+                "enabled": True,
+                "acknowledgedAt": 1000,
+            },
+        )
+        if fail_once[0]:
+            fail_once[0] = False
+            raise DistillationHTTPError(0, "injected lost native receipt")
+        return copy.deepcopy(receipts[payload["requestId"]])
+
+    monkeypatch.setattr(client, "_json", json_reply)
+    assert job.stage_pending_shadow()
+    pending = copy.deepcopy(job.online_metrics["pending"])
+    with pytest.raises(DistillationContractError, match="committed.*checkpoint"):
+        job.activate_pending_shadow()
+    assert not requests
+    checkpoint = job.save(tmp_path)
+    job.online_metrics["pending"]["expectedActivationSequence"] = "0000000000000001"
+    with pytest.raises(DistillationContractError, match="committed.*checkpoint"):
+        job.activate_pending_shadow()
+    job.online_metrics["pending"]["expectedActivationSequence"] = pending[
+        "expectedActivationSequence"
+    ]
+    with pytest.raises(DistillationHTTPError, match="lost native"):
+        job.activate_pending_shadow()
+    assert job.online_metrics["pending"] == pending
+    assert job.pending_candidates[0] == artifact
+    restored = load_job_checkpoint(checkpoint)
+    restored.client = client
+    received = restored.activate_pending_shadow()
+    assert received["requestId"] == pending["requestId"]
+    assert requests[0] == requests[1] and len(receipts) == 1
+    assert not restored.pending_candidates and restored.online_metrics["pending"] is None
+    assert restored.model.export_weights() == job.model.export_weights()
+    assert_optimizer_equal(
+        restored.trainer.optimizer.state_dict(), job.trainer.optimizer.state_dict()
+    )
+    saved = restored.save(tmp_path)
+    again = load_job_checkpoint(saved)
+    assert again.online_metrics == restored.online_metrics
+    assert again.trainer.completed_updates == 250
+    assert again.update().optimizer_updated
+    expected = restored.update()
+    assert (
+        expected.optimizer_updated
+        and again.model.export_weights() == restored.model.export_weights()
+    )
+
+
+def test_shadow_metrics_bind_immutable_segment_and_preserve_exact_large_counters(monkeypatch):
+    """Diagnostic polling cannot round u64 identities or consume training/dataset state."""
+    job = make_job()
+    client = DistillationClient("http://localhost:8765", job.replay.manifest.contract.capture_epoch)
+    client.manifest, client.cursor = job.replay.manifest, job.replay.cursor
+    job.client = client
+    job.configure_shadow(0, 1, "0000000000000001")
+    receipt = {
+        "schemaVersion": 1,
+        "processEpoch": "13" * 16,
+        "requestId": "17" * 16,
+        "commandSequence": "0000000000000002",
+        "activationSequence": "0000000000000002",
+        "previousActivationSequence": "0" * 16,
+        "runId": client.manifest.contract.run_id,
+        "configRevision": "0000000000000001",
+        "captureEpoch": client.capture_epoch,
+        "artifactSha256": "23" * 32,
+        "shadowSlot": 0,
+        "baselineSlot": 1,
+        "effectiveStep": "000000000000000c",
+        "enabled": True,
+        "acknowledgedAt": 1000,
+    }
+    job.online_metrics["receipt"] = receipt
+    total = {
+        "samples": "0020000000000001",
+        "turnAbsoluteError": 0,
+        "turnSquaredError": 0,
+        "boostDisagreements": "0" * 16,
+        "turnMae": 0,
+        "turnMse": 0,
+        "boostDisagreementRate": 0,
+    }
+    snapshot = {
+        "shadowSlot": 0,
+        "artifactSha256": receipt["artifactSha256"],
+        "captureEpoch": client.capture_epoch,
+        "baselineSlot": 1,
+        "activationSequence": receipt["activationSequence"],
+        "activationStep": receipt["effectiveStep"],
+        "completedStep": "0020000000000003",
+        "lastSampleStep": "0020000000000002",
+        "generation": "0000000000000001",
+        "physicalSnakeId": "8000000000000001",
+        "enabled": True,
+        "error": None,
+        "rawOutputs": [0.1, 0.2],
+        "totals": total,
+        "strategies": [total] * 4,
+        "lifeStages": [total] * 3,
+        "strata": [total] * 6,
+        "cruising": total,
+        "preDeath": total,
+        "deaths": "0" * 16,
+    }
+    metrics = {"schemaVersion": 1, "processEpoch": "13" * 16, "slots": [snapshot, None, None, None]}
+    monkeypatch.setattr(client, "_json", lambda *_args, **_kwargs: copy.deepcopy(metrics))
+    weights, cursor = job.model.export_weights(), client.cursor
+    assert job.poll_shadow_metrics()["totals"]["samples"] == "0020000000000001"
+    assert job.model.export_weights() == weights and client.cursor == cursor
+    snapshot["totals"] = {**total, "samples": "0000000000000001"}
+    with pytest.raises(DistillationContractError, match="regressed"):
+        job.poll_shadow_metrics()
+    metrics["processEpoch"] = "19" * 16
+    with pytest.raises(DistillationContractError, match="replaced/interrupted"):
+        job.poll_shadow_metrics()

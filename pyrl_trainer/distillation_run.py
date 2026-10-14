@@ -24,6 +24,9 @@ def _arguments(argv):
     parser.add_argument("--capture-epoch")
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--shadow-slot", type=int)
+    parser.add_argument("--shadow-baseline-slot", type=int)
+    parser.add_argument("--shadow-config-revision")
     parser.add_argument("--job-directory", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", *(f"cuda:{index}" for index in range(8))))
     parser.add_argument("--seed", type=int)
@@ -34,6 +37,13 @@ def _arguments(argv):
     parser.add_argument("--max-wall-seconds", type=float, default=3600)
     parser.add_argument("--poll-ms", type=int, default=1000)
     args = parser.parse_args(argv)
+    shadow_fields = (args.shadow_slot, args.shadow_baseline_slot, args.shadow_config_revision)
+    if any(value is not None for value in shadow_fields) and (
+        args.offline or any(value is None for value in shadow_fields)
+    ):
+        parser.error(
+            "shadow opt-in requires slot, baseline slot, config revision and an online source"
+        )
     integer(args.updates, 1, 1000000)
     integer(args.poll_ms, 100, 60000)
     if not math.isfinite(args.max_wall_seconds) or not 0 < args.max_wall_seconds <= 86400:
@@ -83,7 +93,32 @@ def _open_job(args):
                 seed=42 if args.seed is None else args.seed, device=args.device or "cuda:0"
             ),
         )
+    if args.shadow_slot is not None:
+        configuration = {
+            "shadowSlot": args.shadow_slot,
+            "baselineSlot": args.shadow_baseline_slot,
+            "configRevision": args.shadow_config_revision,
+        }
+        if args.resume:
+            if job.online_metrics.get("configuration") != configuration:
+                raise DistillationContractError("exact resume cannot change shadow configuration")
+        else:
+            job.configure_shadow(
+                args.shadow_slot, args.shadow_baseline_slot, args.shadow_config_revision
+            )
     return job
+
+
+def _candidate_handoff(job, directory):
+    """Persist an immutable diagnostic request before its ordered native activation."""
+    if job.online_metrics:
+        job.stage_pending_shadow()
+        job.save(directory)
+        job.activate_pending_shadow()
+        return job.save(directory)
+    checkpoint = job.save(directory)
+    job.upload_pending_candidates()
+    return checkpoint
 
 
 def run(argv=None):
@@ -103,6 +138,7 @@ def run(argv=None):
                 break
             if job.client is not None and not args.offline and now >= next_fetch:
                 job.ingest(job.client.fetch())
+                job.poll_shadow_metrics()
                 next_fetch = time.monotonic() + args.poll_ms / 1000
             updated = job.update()
             if updated is None:
@@ -117,13 +153,14 @@ def run(argv=None):
                 job.validate()
             if job.pending_candidates and job.client is not None and not args.offline:
                 # Publish the immutable pending handoff before attempting a network receipt.
-                latest = job.save(args.job_directory)
-                job.upload_pending_candidates()
+                latest = _candidate_handoff(job, args.job_directory)
             if job.checkpoint_due():
                 latest = job.save(args.job_directory)
         latest = job.save(args.job_directory)
     except (RuntimeError, MemoryError, DistillationContractError) as error:
         job.status, job.last_error = "paused", str(error)[:1024]
+        if job.checkpoint_allowed:
+            latest = job.save(args.job_directory)
         # Failed partial optimizer state is never published; the last valid boundary survives.
         result = {
             "schemaVersion": 1,
