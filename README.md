@@ -277,3 +277,14 @@ including exact counters and separate delivery/publication steps. They never
 consume a dataset cursor, send gameplay ACKs or rewrite controlling weights.
 `DistillationClient.shadow_metrics`, `activate_shadow` and `stop_shadow` also
 expose these bounded diagnostic routes for explicit library use.
+
+
+The `live-distillation` CI job runs the cross-repository qualification host against
+real Rust v4/v2 capture over HTTP. It trains with the default 32-window batch,
+32-step burn-in and 64-step BPTT, saves at update 125, and launches a second Python
+process to reproduce update 126's complete numeric witness. Update 250 freezes an
+immutable candidate for Rust validation and four actual shadow slots. The host
+uses a disposable database/spool and admits no actor or controller traffic. Its
+compact reports include process RSS, Torch allocator peaks, native step timing and
+full source identities. Local CUDA runs use the same gate with explicit `cuda:0`;
+CPU CI never silently substitutes for CUDA qualification.
