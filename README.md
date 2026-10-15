@@ -288,3 +288,9 @@ uses a disposable database/spool and admits no actor or controller traffic. Its
 compact reports include process RSS, Torch allocator peaks, native step timing and
 full source identities. Local CUDA runs use the same gate with explicit `cuda:0`;
 CPU CI never silently substitutes for CUDA qualification.
+
+The pinned host also trains a second student matching the active Dense world
+architecture. It saves both trained architectures, verifies graph-mismatched
+spawn rejection, exports the compatible portable original exactly, and deploys
+through Rust. After catalog deletion and cold-file reclamation, the live retained
+brain must keep its distilled origin and produce actual neural inference.
