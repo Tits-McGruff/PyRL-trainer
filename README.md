@@ -207,6 +207,14 @@ CI runs lint, the full suite, and all four marker groups on Python 3.10, 3.11, a
 
 ## Canonical graph distillation tools
 
+Select the canonical job owner with `python -m pyrl_trainer --mode distillation`.
+Its remaining flags go directly to the dedicated distillation runner;
+`python -m pyrl_trainer --mode distillation --help` lists them. The standalone
+`python -m pyrl_trainer.distillation_run` invocation remains available.
+`python -m pyrl_trainer` and `--mode ppo` retain PPO startup from
+`config.toml`/`SLITHER_CONFIG`. Distillation mode does not load that PPO
+configuration or import its actor/learner owners, construct actors, or start a learner queue.
+
 `pyrl_trainer.canonical_graph` provides a separate differentiable representation
 of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
 Rust manifest's exact parameter views, custom recurrent equations, sensor

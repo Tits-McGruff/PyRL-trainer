@@ -1,24 +1,26 @@
-"""Entrypoint for the trainer process."""
+"""Entrypoint selecting independent PPO and canonical distillation owners."""
 
+from __future__ import annotations
+
+import argparse
 import asyncio
 import json
 import os
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
-import torch
-import websockets
+if TYPE_CHECKING:
+    from .sensor_contract import SensorContract
 
-from .agent import ActorClient
-from .checkpointing import load_checkpoint_if_present
-from .config import MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION, load_or_create_config
-from .learner import SharedState, learner_loop
-from .sensor_contract import SensorContract
-
-# pylint: disable=duplicate-code
+# Owner-specific imports stay behind mode selection.
+# pylint: disable=duplicate-code,import-outside-toplevel
 
 
 async def discover_sensor_contract(ws_url: str) -> SensorContract:
     """Connect once and read the exact server sensor contract without joining."""
+    import websockets
+    from .config import MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION
+    from .sensor_contract import SensorContract
+
     async with websockets.connect(ws_url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
         hello = {
             "type": "hello",
@@ -71,7 +73,14 @@ async def _supervise_tasks(tasks: Iterable[asyncio.Task]) -> None:
 
 
 async def main() -> None:
-    """Start the learner and actor tasks."""
+    """Start the PPO learner and actor tasks after explicit/default owner selection."""
+    import torch
+    import websockets
+    from .agent import ActorClient
+    from .checkpointing import load_checkpoint_if_present
+    from .config import load_or_create_config
+    from .learner import SharedState, learner_loop
+
     cfg = load_or_create_config(os.environ.get("SLITHER_CONFIG", "config.toml"))
 
     if str(cfg.train_device).startswith("cuda") and torch.cuda.is_available():
@@ -125,8 +134,31 @@ async def main() -> None:
     await _supervise_tasks(tasks)
 
 
+def run(argv=None):
+    """Select a trainer owner before loading PPO config or starting actors/tasks."""
+    selector = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    selector.add_argument(
+        "--mode", choices=("ppo", "distillation"), default="ppo",
+        help="PPO actors (default) or a canonical graph distillation job",
+    )
+    selected, remaining = selector.parse_known_args(argv)
+    if selected.mode == "distillation":
+        # The dedicated runner owns its arguments, checkpoints and bounded HTTP client.
+        from .distillation_run import run as run_distillation  # pylint: disable=import-outside-toplevel
+
+        return run_distillation(remaining)
+    parser = argparse.ArgumentParser(
+        parents=[selector], allow_abbrev=False,
+        description="Train PPO actors using config.toml/SLITHER_CONFIG, or select "
+        "--mode distillation for the independent canonical graph job runner.",
+    )
+    parser.parse_args(argv)
+    asyncio.run(main())
+    return None
+
+
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        run()
     except KeyboardInterrupt:
         pass
