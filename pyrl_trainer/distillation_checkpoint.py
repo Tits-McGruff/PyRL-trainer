@@ -31,7 +31,9 @@ from .distillation_shadows import online_state
 from .brain_artifact import MAX_ARTIFACT_BYTES, read_raw_brain_artifact
 from .canonical_graph import CanonicalGraphManifest
 from .distillation_client import DistillationClient
-from .distillation_replay import TeacherReplay
+from .distillation_replay import (
+    TeacherReplay, MIN_REPLAY_BYTES, MAX_REPLAY_BYTES, REPLAY_FIXED_BYTES, REPLAY_METADATA_BYTES,
+)
 from .distillation_sampling import WindowIdentity
 from .distillation_transport import (
     DatasetManifest,
@@ -44,7 +46,6 @@ from .distillation_transport import (
 )
 from .sequence_distillation import SequenceTrainingConfig
 
-MAX_CHECKPOINT_BYTES = 512 * 1024 * 1024
 DISK_RESERVE_BYTES = 1024**3
 MAX_CENTRAL_BYTES = 8 * 1024 * 1024
 INDEX_RECORD = struct.Struct("<QI32s")
@@ -66,6 +67,18 @@ MEMBER_LIMITS = {
     "state.f32": 8 * 1024**2,
     "chunks.index": 65536 * INDEX_RECORD.size,
 }
+
+
+def _checkpoint_byte_limit(replay_bytes, chunks, candidates):
+    """Derive a finite on-disk envelope from admitted ownership and bounded fixed roles."""
+    return (
+        replay_bytes + sum(MEMBER_LIMITS.values()) + candidates * MAX_ARTIFACT_BYTES
+        + MAX_CENTRAL_BYTES + 1024 * (chunks + len(BASE_FILES) + candidates)
+    )
+
+
+# Disk artifacts stream chunks one at a time; this is not an in-memory allocation.
+MAX_CHECKPOINT_BYTES = _checkpoint_byte_limit(MAX_REPLAY_BYTES, 65536, 4)
 
 
 def _sha(data):
@@ -129,22 +142,34 @@ def _preflight(path):
         if signature != b"PK\x05\x06" or disk or start_disk or comment or on_disk != count:
             raise DistillationContractError("unsupported job checkpoint ZIP directory")
         boundary = size - 22
-        if count == 65535:
+        locator = b""
+        if size >= 42:
             stream.seek(size - 42)
-            sig, zip_disk, zip_offset, disks = struct.unpack("<4sIQI", stream.read(20))
-            if sig != b"PK\x06\x07" or zip_disk or disks != 1 or zip_offset > size - 98:
+            locator = stream.read(20)
+        if locator[:4] == b"PK\x06\x07":
+            sig, zip_disk, zip_offset, disks = struct.unpack("<4sIQI", locator)
+            if sig != b"PK\x06\x07" or zip_disk or disks != 1 or zip_offset + 56 != size - 42:
                 raise DistillationContractError("unsupported job ZIP64 locator")
             stream.seek(zip_offset)
             values = struct.unpack("<4sQ2H2I4Q", stream.read(56))
             if (
                 values[0] != b"PK\x06\x06"
                 or values[1] != 44
-                or values[4]
-                or values[5]
+                or any(values[4:6])
                 or values[6] != values[7]
+                or any(
+                    value not in (sentinel, wide)
+                    for value, sentinel, wide in (
+                        (count, 65535, values[7]),
+                        (central_size, 0xFFFFFFFF, values[8]),
+                        (offset, 0xFFFFFFFF, values[9]),
+                    )
+                )
             ):
                 raise DistillationContractError("unsupported job ZIP64 directory")
             count, central_size, offset, boundary = values[7], values[8], values[9], zip_offset
+        elif central_size == 0xFFFFFFFF or offset == 0xFFFFFFFF:
+            raise DistillationContractError("missing job ZIP64 locator")
         if (
             not 7 <= count <= 65547
             or central_size > MAX_CENTRAL_BYTES
@@ -197,6 +222,18 @@ def _manifest(path):
         candidates = metadata["candidates"]
         if not isinstance(candidates, list) or len(candidates) > 4:
             raise DistillationContractError("job pending candidate count admission")
+        exact_keys(
+            metadata["replay"],
+            "schemaVersion maxBytes maxChunks cursor evictedChunks evictedSamples lastProposal",
+        )
+        integer(metadata["replay"]["schemaVersion"], 1, 1)
+        replay_budget = integer(metadata["replay"]["maxBytes"], MIN_REPLAY_BYTES, MAX_REPLAY_BYTES)
+        if chunk_count > integer(metadata["replay"]["maxChunks"], 1, 65536):
+            raise DistillationContractError("job replay chunk admission")
+        if Path(path).stat().st_size > _checkpoint_byte_limit(
+            replay_budget, chunk_count, len(candidates)
+        ):
+            raise DistillationContractError("job checkpoint exceeds recorded replay/role admission")
         if count != len(BASE_FILES) + chunk_count + len(candidates):
             raise DistillationContractError("job replay/candidate member count mismatch")
         exact_keys(
@@ -211,6 +248,12 @@ def _manifest(path):
         index = payloads["chunks.index"]
         if len(index) != chunk_count * INDEX_RECORD.size:
             raise DistillationContractError("job replay index byte count mismatch")
+        raw_bytes = sum(
+            INDEX_RECORD.unpack_from(index, position)[1]
+            for position in range(0, len(index), INDEX_RECORD.size)
+        )
+        if raw_bytes + chunk_count * REPLAY_METADATA_BYTES + REPLAY_FIXED_BYTES > replay_budget:
+            raise DistillationContractError("job raw replay exceeds recorded RAM admission")
         expected, previous = set(BASE_FILES), 0
         for position in range(0, len(index), INDEX_RECORD.size):
             sequence, size, digest = INDEX_RECORD.unpack_from(index, position)
@@ -340,8 +383,12 @@ def save_job_checkpoint(job, directory):
     estimated = sum(map(len, payloads.values())) + sum(len(item.raw_bytes) for item in chunks)
     estimated += sum(len(artifact.data) for artifact in job.pending_candidates)
     estimated += len(encoded) + 1024 * (len(chunks) + len(BASE_FILES) + len(job.pending_candidates))
+    byte_limit = min(
+        MAX_CHECKPOINT_BYTES,
+        _checkpoint_byte_limit(job.replay.max_bytes, len(chunks), len(job.pending_candidates)),
+    )
     if (
-        estimated > MAX_CHECKPOINT_BYTES
+        estimated > byte_limit
         or shutil.disk_usage(root).free < estimated + DISK_RESERVE_BYTES
     ):
         raise DistillationContractError("job checkpoint disk/byte admission refused")
@@ -360,7 +407,7 @@ def save_job_checkpoint(job, directory):
                     archive.writestr(f"chunks/{item.sequence:016x}.bin", item.raw_bytes)
                 for artifact in job.pending_candidates:
                     archive.writestr(f"candidates/{artifact.sha256}.slither-brain", artifact.data)
-            if stream.tell() > MAX_CHECKPOINT_BYTES:
+            if stream.tell() > byte_limit:
                 raise DistillationContractError("actual job checkpoint exceeds byte admission")
             stream.flush()
             os.fsync(stream.fileno())
@@ -496,7 +543,7 @@ def load_job_checkpoint(path):
     records, owned = [], 256 * 1024
     with zipfile.ZipFile(path, "r") as archive:
         index = payloads["chunks.index"]
-        maximum = integer(metadata["replay"]["maxBytes"], 2 * 1024**2, 512 * 1024**2)
+        maximum = integer(metadata["replay"]["maxBytes"], MIN_REPLAY_BYTES, MAX_REPLAY_BYTES)
         for position in range(0, len(index), INDEX_RECORD.size):
             identity, size, digest = INDEX_RECORD.unpack_from(index, position)
             data = _read(archive, f"chunks/{identity:016x}.bin", size)

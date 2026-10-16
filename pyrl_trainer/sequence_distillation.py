@@ -31,7 +31,7 @@ class SequenceTrainingConfig:
 
     def __post_init__(self):
         for value, low, high in [
-            (self.batch_size, 1, 128),
+            (self.batch_size, 1, 256),
             (self.bptt_steps, 1, 256),
             (self.burn_in_steps, 0, 255),
         ]:

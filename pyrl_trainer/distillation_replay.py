@@ -26,6 +26,9 @@ PARTITION_REVISION = 1
 PARTITION_DOMAIN = b"slither.distillation-partition.v1\0"
 REPLAY_METADATA_BYTES = 4096
 REPLAY_FIXED_BYTES = 256 * 1024
+# Public job controls admit 64..2048 MiB; small library fixtures retain a 2 MiB floor.
+MIN_REPLAY_BYTES = 2 * 1024**2
+MAX_REPLAY_BYTES = 2048 * 1024**2
 _RECORDED_RESETS = {
     "captureStart": SequenceBoundary.CAPTURE_START,
     "generationStart": SequenceBoundary.GENERATION,
@@ -93,7 +96,7 @@ class TeacherReplay:
     """FIFO whole immutable chunks under independent RAM/object admission ceilings."""
 
     def __init__(self, *, max_bytes=256 * 1024 * 1024, max_chunks=65536):
-        self.max_bytes = integer(max_bytes, 2 * 1024 * 1024, 512 * 1024 * 1024)
+        self.max_bytes = integer(max_bytes, MIN_REPLAY_BYTES, MAX_REPLAY_BYTES)
         self.max_chunks = integer(max_chunks, 1, 65536)
         self.manifest = None
         self.cursor = 0

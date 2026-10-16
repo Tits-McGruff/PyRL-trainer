@@ -56,6 +56,52 @@ def trainer_source_sha256():
     return _LOADED_SOURCE_SHA256
 
 
+def _windows_affinity_cpus():
+    """Read a conservative process-affinity ceiling on Windows, including older Python."""
+    if os.name != "nt":
+        return None
+    # Local read-only Win32 query; no process affinity is changed by the job owner.
+    # https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask
+    import ctypes  # pylint: disable=import-outside-toplevel
+    from ctypes import wintypes  # pylint: disable=import-outside-toplevel
+
+    kernel = getattr(ctypes, "WinDLL")("kernel32", use_last_error=True)
+    current = kernel.GetCurrentProcess
+    current.argtypes, current.restype = [], wintypes.HANDLE
+    query = kernel.GetProcessAffinityMask
+    query.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_size_t),
+                      ctypes.POINTER(ctypes.c_size_t)]
+    query.restype = wintypes.BOOL
+    process_mask, system_mask = ctypes.c_size_t(), ctypes.c_size_t()
+    if not query(current(), ctypes.byref(process_mask), ctypes.byref(system_mask)):
+        return None
+    # This is the primary-group ceiling on large multi-group systems; use it conservatively.
+    return process_mask.value.bit_count() or None
+
+
+def available_trainer_cpus():
+    """Respect the process's CPU affinity and Python's process-aware count where available."""
+    logical_count = os.cpu_count()
+    counts = [logical_count] if logical_count else []
+    windows_count = _windows_affinity_cpus()
+    if windows_count:
+        counts.append(windows_count)
+    process_count = getattr(os, "process_cpu_count", None)
+    if process_count is not None:
+        count = process_count()
+        if count:
+            counts.append(count)
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        try:
+            count = len(affinity(0))
+            if count:
+                counts.append(count)
+        except (OSError, NotImplementedError):
+            pass
+    return max(1, min(counts or [1]))
+
+
 @dataclass(frozen=True)
 class DistillationJobConfig:
     """Isolated process settings; explicitly requested CUDA never falls back to CPU."""
@@ -67,10 +113,23 @@ class DistillationJobConfig:
 
     def __post_init__(self):
         integer(self.seed, 0, (1 << 64) - 1)
-        integer(self.cpu_threads, 1, 256)
+        integer(self.cpu_threads, 1, max(256, available_trainer_cpus()))
         integer(self.device_bytes, 128 * 1024**2, 8 * 1024**3)
         if not isinstance(self.device, str) or not re.fullmatch(r"cpu|cuda:[0-7]", self.device):
             raise DistillationContractError("unsupported explicit trainer device")
+
+
+def admit_job_device(config):
+    """Admit a CUDA device and its budget without reserving the whole ceiling."""
+    device = torch.device(config.device)
+    if device.type == "cuda":
+        if not torch.cuda.is_available() or device.index >= torch.cuda.device_count():
+            raise DistillationContractError("requested CUDA device unavailable")
+        if config.device_bytes > torch.cuda.get_device_properties(device).total_memory:
+            raise DistillationContractError(
+                "requested device budget exceeds physical CUDA capacity"
+            )
+    return device
 
 
 def numerical_environment(device):
@@ -148,12 +207,8 @@ class DistillationJob:
         ):
             raise DistillationContractError("job HTTP/replay identity/cursor mismatch")
         self.config, self.sequence, self.replay, self.client = config, sequence, replay, client
-        self.device = torch.device(config.device)
-        if self.device.type == "cuda" and (
-            not torch.cuda.is_available() or self.device.index >= torch.cuda.device_count()
-        ):
-            raise DistillationContractError("requested CUDA device unavailable")
-        torch.set_num_threads(min(config.cpu_threads, os.cpu_count() or 1))
+        self.device = admit_job_device(config)
+        torch.set_num_threads(min(config.cpu_threads, available_trainer_cpus()))
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         width = sum(

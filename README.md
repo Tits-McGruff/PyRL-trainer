@@ -215,6 +215,37 @@ Its remaining flags go directly to the dedicated distillation runner;
 `config.toml`/`SLITHER_CONFIG`. Distillation mode does not load that PPO
 configuration or import its actor/learner owners, construct actors, or start a learner queue.
 
+New canonical jobs expose the following immutable settings. All ranges are checked
+before source/checkpoint access; unavailable or physically oversized CUDA requests
+fail explicitly. The initial device admission ceiling remains 8 GiB. The selected
+ceiling need not be entirely free: the admitted graph/window estimate must fit free
+VRAM, and actual Torch allocation peaks are checked during updates.
+
+| CLI control | New-job default | Public range |
+|---|---:|---|
+| `--seed` | 1 | UInt32 |
+| `--cpu-threads` | min(2, available process CPUs) | 1..available, respecting affinity |
+| `--device-memory-mib` | 8192 | 512..8192, within physical CUDA capacity |
+| `--replay-ram-mib` | 256 | 64..2048 |
+| `--learning-rate` | 0.0003 | finite 0.000001..0.01 |
+| `--batch-size` | 32 | 1..256 sequence windows |
+| `--bptt` | 64 | 16..256 delivered observations |
+| `--burn-in` | 32 | 0..128 delivered observations |
+
+Burn-in plus BPTT must be at most 256; incompatible combinations are rejected.
+Replay RAM bounds raw/decoded chunks and bookkeeping. It is independent of HTTP
+transfers, sampler tensors, model/optimizer memory and disk checkpoint work. Larger
+quotas do not eagerly allocate their capacity. Full loaded resource/soak qualification
+remains open. `--device cpu` explicitly selects CPU training.
+
+Exact resume requires matching trainer source/numerical environment and preserves
+every saved choice. New-job defaults never replace checkpoint settings; library
+defaults and smaller library-only windows remain supported. Omit settings flags to
+use the checkpoint, or repeat the exact same values. Changing thread/device/replay
+budgets, seed, learning rate or
+sequence settings requires a new job. The runner reports effective choices under
+`settings` in its final JSON result. PPO settings and dependencies remain separate.
+
 `pyrl_trainer.canonical_graph` provides a separate differentiable representation
 of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
 Rust manifest's exact parameter views, custom recurrent equations, sensor

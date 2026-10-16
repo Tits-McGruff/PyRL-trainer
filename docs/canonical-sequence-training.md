@@ -11,7 +11,7 @@ Native shadows, saved-library deployment and integrated resource qualification
 remain open.
 
 Method-v1 defaults are batch 32, burn-in 32, BPTT 64, Adam learning rate 3e-4,
-gradient norm clipping 1.0 and Float32. Explicit configuration allows up to 128
+gradient norm clipping 1.0 and Float32. Explicit configuration allows up to 256
 windows and a combined burn-in/training length of at most 256 deliveries.
 Learning rate and clip are finite, positive and at most 1. Short full-sequence
 BPTT is supported by zero burn-in within the same bounds. Unbounded whole-life
@@ -64,7 +64,7 @@ bounded termination policy.
 `TeacherReplay` owns whole decoded chunks with a default 256 MiB RAM ceiling
 and 65,536-object ceiling. Admission charges raw bytes, decoded arrays, per-object
 metadata headroom and a fixed 256 KiB bookkeeping reserve. The configurable byte
-ceiling is 2..512 MiB. This bounds replay ownership; HTTP transfers, tensors,
+library ceiling is 2..2048 MiB; the public runner admits 64..2048 MiB. This bounds replay ownership; HTTP transfers, tensors,
 optimizer/device memory and durable checkpoint work need separate job admission.
 The job consumes segment views before the next replay mutation.
 
@@ -120,7 +120,9 @@ New-job inputs must match the captured structural sensor bytes/digest and cadenc
 Use `--device cpu` explicitly for CPU training. The runner has finite update and
 wall limits, validates every 50 successful updates, checkpoints every 60 wall
 seconds or 1,000 updates, and saves start/final recovery boundaries. Resume rejects
-explicit changed source, device, seed or sequence settings. Offline resume never
+explicit changed source, device, seed, CPU threads, device/replay budgets, learning
+rate or sequence settings. New CLI jobs use training seed 1 and expose the bounded
+controls in the README; library defaults and resumed settings keep their meanings. Offline resume never
 fetches data or joins a controller.
 
 A `.distill-job` checkpoint is a bounded, uncompressed, self-contained ZIP,
@@ -136,7 +138,14 @@ those local trainer payloads are never a deployable candidate.
 
 Publication flushes the complete file, creates an exclusive final hard link,
 flushes publication where supported and retains the newest three valid containers.
-The disk reserve is 1 GiB and checkpoint ceiling is 512 MiB. Missing required
+The disk reserve remains 1 GiB. A finite on-disk ceiling is derived from the recorded
+replay quota, bounded fixed roles, at most four portable candidates and ZIP overhead;
+it is not a memory allocation. Raw chunk bytes stream individually, and fixed-role,
+8 MiB central-directory and 65,536-chunk limits remain independently enforced.
+Readers validate ZIP64 locators for both count and size cases, with consistent
+classic/wide counts and offsets; classic ZIP permits exactly 65,535 entries without
+a locator when its sizes fit. Replay raw-byte admission precedes chunk reads, then
+full decoded ownership is charged during restore. Missing required
 replay data, trainer-source mismatch or numerical-environment mismatch rejects
 exact restart; no observations are refetched or silently reconstructed. CPU/CUDA
 regressions compare the very next weight bytes, Adam tensors, private RNG draws,
