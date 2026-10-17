@@ -28,6 +28,7 @@ SOURCE_FILES = (
     "sequence_distillation.py",
     "distillation_transport.py",
     "distillation_client.py",
+    "distillation_storage.py",
     "distillation_replay.py",
     "distillation_sampling.py",
     "distillation_job.py",

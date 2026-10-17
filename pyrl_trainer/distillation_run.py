@@ -30,6 +30,7 @@ def _validate_job_controls(parser, args):
         ("cpu_threads", 1, available_trainer_cpus()),
         ("device_memory_mib", 512, 8192),
         ("replay_ram_mib", 64, 2048),
+        ("spool_gib", 1, 64),
         ("batch_size", 1, 256),
         ("burn_in", 0, 128),
         ("bptt", 16, 256),
@@ -74,6 +75,10 @@ def _arguments(argv):
         "--replay-ram-mib", type=int, help="64..2048 MiB owned replay ceiling (default: 256)",
     )
     parser.add_argument(
+        "--spool-gib", type=int,
+        help="require the producer's admitted global disk quota, 1..64 GiB (default: observe)",
+    )
+    parser.add_argument(
         "--learning-rate", type=float, help="finite Adam rate 1e-6..1e-2 (default: 3e-4)",
     )
     parser.add_argument("--updates", type=int, default=1000)
@@ -111,6 +116,12 @@ def _open_job(args):
     """Construct a new admitted owner or restore its exact configuration."""
     if args.resume:
         job = load_job_checkpoint(args.resume)
+        if args.spool_gib is not None:
+            policy = None if job.client is None else job.client.producer_storage
+            if policy is None or policy.max_bytes != args.spool_gib * 1024**3:
+                raise DistillationContractError(
+                    "exact resume cannot change or infer producer spool budget"
+                )
         for supplied, expected in (
             (args.device, job.config.device),
             (args.seed, job.config.seed),
@@ -144,7 +155,10 @@ def _open_job(args):
         manifest = CanonicalGraphManifest.read(args.manifest)
         with args.weights.open("rb") as stream:
             weights = stream.read(4 * manifest.total_parameters + 1)
-        client = DistillationClient(args.origin, args.capture_epoch)
+        client = DistillationClient(
+            args.origin, args.capture_epoch,
+            expected_spool_bytes=None if args.spool_gib is None else args.spool_gib * 1024**3,
+        )
         fetched = client.fetch()
         replay = TeacherReplay(
             max_bytes=(256 if args.replay_ram_mib is None else args.replay_ram_mib) * MIB
@@ -189,7 +203,10 @@ def _candidate_handoff(job, directory):
 
 def _job_settings(job):
     """Report effective admitted choices, including unchanged historical resume settings."""
+    policy = None if job.client is None else job.client.producer_storage
     return {
+        "spoolGiB": None if policy is None else policy.max_bytes / 1024**3,
+        "producerStoragePolicy": None if policy is None else policy.to_object(),
         "seed": job.config.seed,
         "cpuThreads": job.environment["threads"],
         "deviceMemoryMiB": job.config.device_bytes // MIB,

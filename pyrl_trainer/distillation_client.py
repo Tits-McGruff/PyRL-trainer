@@ -10,6 +10,7 @@ import math
 from urllib import error, parse, request
 
 from .distillation_shadows import shadow_metrics, shadow_receipt
+from .distillation_storage import ProducerStoragePolicy
 
 from .distillation_transport import (
     DatasetManifest,
@@ -67,6 +68,7 @@ class DistillationClient:
         timeout=10.0,
         lease_ms=60000,
         checkpoint=None,
+        expected_spool_bytes=None,
     ):
         if not isinstance(base_url, str):
             raise DistillationContractError("distillation base URL must be text")
@@ -97,13 +99,25 @@ class DistillationClient:
         self.opener = request.build_opener(_NoRedirect())
         self.cursor = 0
         self.manifest = None
+        self.producer_storage = None
+        self._storage_observed = False
+        self._expected_spool_bytes = (
+            None if expected_spool_bytes is None
+            else integer(expected_spool_bytes, 1, 64 * 1024**3)
+        )
         self._restore_identity = None
         if checkpoint is not None:
-            exact_keys(
-                checkpoint,
-                "schemaVersion origin captureEpoch cursor contract runSeed sensorContractJson",
-            )
-            integer(checkpoint["schemaVersion"], 1, 1)
+            if not isinstance(checkpoint, dict):
+                raise DistillationContractError("invalid source checkpoint")
+            version = integer(checkpoint.get("schemaVersion"), 1, 2)
+            exact_keys(checkpoint, "schemaVersion origin captureEpoch cursor contract runSeed "
+                       "sensorContractJson" + (" storagePolicy" if version == 2 else ""))
+            if version == 2 and checkpoint["storagePolicy"] is not None:
+                self.producer_storage = ProducerStoragePolicy.from_object(
+                    checkpoint["storagePolicy"]
+                )
+            self._storage_observed = True
+            self._validate_storage_expectation(self.producer_storage)
             if (
                 checkpoint["origin"] != self.base_url
                 or checkpoint["captureEpoch"] != self.capture_epoch
@@ -154,6 +168,29 @@ class DistillationClient:
         data, _headers = self._http(path, **kwargs)
         return bounded_json(data)
 
+    def _validate_storage_expectation(self, policy):
+        """An explicit quota requires reported admission, including after restart."""
+        if self._expected_spool_bytes is not None and (
+            policy is None or policy.max_bytes != self._expected_spool_bytes
+        ):
+            raise DistillationContractError(
+                "producer storage quota does not match requested spool budget"
+            )
+
+    def refresh_storage_policy(self):
+        """Bind producer policy before fetching; legacy 404 is explicitly unreported."""
+        try:
+            policy = ProducerStoragePolicy.from_object(self._json("storage", limit=4096))
+        except DistillationHTTPError as exc:
+            if exc.status != 404:
+                raise
+            policy = None
+        self._validate_storage_expectation(policy)
+        if self._storage_observed and policy != self.producer_storage:
+            raise DistillationContractError("producer storage policy changed; create a new job")
+        self.producer_storage, self._storage_observed = policy, True
+        return policy
+
     def _accept_manifest(self, raw):
         """Bind immutable identity before accepting progress or allocating row arrays."""
         manifest = DatasetManifest.from_object(raw)
@@ -186,6 +223,7 @@ class DistillationClient:
     def fetch(self):
         # pylint: disable=too-many-branches,too-many-statements
         """Propose only settled objects/gaps; failures leave the local cursor unchanged."""
+        self.refresh_storage_policy()
         cursor = self.cursor
         page = self._json(
             f"datasets/{self.capture_epoch}/chunks?after={cursor:016x}&limit={self.page_size}"
@@ -297,7 +335,9 @@ class DistillationClient:
         if self.manifest is None:
             raise DistillationContractError("no validated dataset for checkpoint")
         return {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
+            "storagePolicy": (None if self.producer_storage is None
+                              else self.producer_storage.to_object()),
             "origin": self.base_url,
             "captureEpoch": self.capture_epoch,
             "cursor": f"{self.cursor:016x}",

@@ -40,6 +40,7 @@ def local_source_fixture(monkeypatch):
     replay = HELPERS.replay_fixture()
 
     def fetch(client):
+        client.refresh_storage_policy()
         # A real fetch binds the manifest before producing its bounded immutable proposal.
         manifest = client._accept_manifest(replay.manifest.raw)  # pylint: disable=protected-access
         return DistillationFetch(
@@ -47,6 +48,12 @@ def local_source_fixture(monkeypatch):
             tuple(chunk for chunk in replay.chunks if chunk.sequence > client.cursor), (),
         )
 
+    monkeypatch.setattr(runner.DistillationClient, "_json", lambda _client, _path, **_kwargs: {
+        "schemaVersion": 1, "scope": "producer-global", "maxBytes": "0000000100000000",
+        "maxChunks": 65536, "maxDatasets": 256, "maxLeases": 64, "maxPinnedChunks": 1024,
+        "maxPinnedBytes": "0000000020000000", "maxLeaseMs": 300000,
+        "diskReserveBytes": "0000000040000000",
+    })
     monkeypatch.setattr(runner.DistillationClient, "fetch", fetch)
     return replay
 
@@ -75,6 +82,8 @@ def test_new_cli_defaults_are_normalized_and_reported(tmp_path, monkeypatch, loc
     job = load_job_checkpoint(result["checkpoint"])
     assert result["updates"] == 1 and job.trainer.completed_updates == 1
     assert result["settings"] == {
+        "spoolGiB": 4.0,
+        "producerStoragePolicy": job.client.producer_storage.to_object(),
         "seed": 1, "cpuThreads": min(2, process_cpus), "deviceMemoryMiB": 8192,
         "replayRamMiB": 256, "learningRate": 3e-4, "batchSequences": 32,
         "sequenceLength": 64, "burnIn": 32,
@@ -393,3 +402,58 @@ print("available=1")
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "available=1"
+
+
+@pytest.mark.parametrize("quota", [0, 65])
+def test_public_spool_range_rejects_before_owner_or_files(tmp_path, monkeypatch, quota):
+    """A bad operator resource choice never reaches the source/device/checkpoint owner."""
+    monkeypatch.setattr(runner, "_open_job", lambda _args: pytest.fail("owner opened"))
+    with pytest.raises(SystemExit):
+        runner.run(new_arguments(tmp_path / "missing") + ["--spool-gib", str(quota)])
+    assert not list(tmp_path.iterdir())
+
+
+def test_requested_policy_is_recorded_and_exact_resume_cannot_change_it(tmp_path, local_source):
+    """Observed source policy survives a real update/save/load without fetching on restore."""
+    result = runner.run(new_arguments(tmp_path) + ["--spool-gib", "4"])
+    job = load_job_checkpoint(result["checkpoint"])
+    assert job.client.producer_storage.max_bytes == 4 * 1024**3
+    assert (job.client.checkpoint_fields()["storagePolicy"]
+            == result["settings"]["producerStoragePolicy"])
+    with pytest.raises(DistillationContractError, match="exact resume"):
+        runner.run(["--resume", result["checkpoint"], "--job-directory", str(tmp_path),
+                    "--offline", "--spool-gib", "8", "--updates", "1"])
+    assert job.replay.cursor == local_source.cursor
+
+
+def test_requested_quota_mismatch_never_creates_a_job(tmp_path, local_source):
+    """Producer admission must match an explicit choice before initial snapshot publication."""
+    with pytest.raises(DistillationContractError, match="requested spool"):
+        runner.run(new_arguments(tmp_path / "unpublished") + ["--spool-gib", "8"])
+    assert not (tmp_path / "unpublished").exists()
+    assert local_source.cursor > 0
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("quota", [1, 64])
+def test_disk_budget_endpoints_survive_update_checkpoint_and_offline_resume(
+    tmp_path, monkeypatch, local_source, device, quota
+):
+    """Record observed disk admission on CPU/CUDA without reserving that disk capacity."""
+    policy = {"schemaVersion": 1, "scope": "producer-global", "maxBytes": f"{quota * 1024**3:016x}",
+              "maxChunks": 65536, "maxDatasets": 256, "maxLeases": 64, "maxPinnedChunks": 1024,
+              "maxPinnedBytes": "0000000020000000", "maxLeaseMs": 300000,
+              "diskReserveBytes": "0000000040000000"}
+    monkeypatch.setattr(runner.DistillationClient, "_json", lambda *_args, **_kwargs: policy)
+    result = runner.run(new_arguments(tmp_path, device) + ["--spool-gib", str(quota)])
+    saved = Path(result["checkpoint"])
+    assert saved.stat().st_size < MIB
+    restored = load_job_checkpoint(saved)
+    assert restored.client.producer_storage.to_object() == policy
+    assert restored.replay.cursor == local_source.cursor
+    monkeypatch.setattr(runner.DistillationClient, "_json",
+                        lambda *_args, **_kwargs: pytest.fail("offline resume made HTTP request"))
+    resumed = runner.run(["--resume", str(saved), "--job-directory", str(tmp_path),
+                          "--offline", "--spool-gib", str(quota), "--updates", "1"])
+    assert resumed["updates"] == result["updates"] + 1
+    assert resumed["settings"]["producerStoragePolicy"] == policy

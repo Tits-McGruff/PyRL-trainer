@@ -19,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "teacher_chunk_v1"
 REFERENCE = json.loads((ROOT / "reference.json").read_text(encoding="utf-8"))
 DATA = (ROOT / "chunk.bin").read_bytes()
 EPOCH = REFERENCE["contract"]["captureEpoch"]
+POLICY = {"schemaVersion": 1, "scope": "producer-global", "maxBytes": "0000000100000000",
+          "maxChunks": 65536, "maxDatasets": 256, "maxLeases": 64, "maxPinnedChunks": 1024,
+          "maxPinnedBytes": "0000000020000000", "maxLeaseMs": 300000,
+          "diskReserveBytes": "0000000040000000"}
+
 
 
 @pytest.fixture(name="endpoint")
@@ -26,6 +31,8 @@ def endpoint_fixture():
     """Serve only dedicated metadata/pin/download routes and record every request."""
     state = {
         "requests": [],
+        "storage": deepcopy(POLICY),
+        "storage_status": 200,
         "has_more": False,
         "resolved": 9,
         "production": 9,
@@ -45,7 +52,9 @@ def endpoint_fixture():
             """Reject all non-dataset paths, including actor/player control."""
             state["requests"].append(("GET", self.path))
             path = urlsplit(self.path).path
-            if path.endswith("/chunks"):
+            if path == "/api/distillation/v1/storage":
+                self.respond(state["storage_status"], state["storage"])
+            elif path.endswith("/chunks"):
                 manifest = {
                     "schemaVersion": 1,
                     "runSeed": 42,
@@ -150,7 +159,9 @@ def test_http_cursor_proposals_gaps_pin_cleanup_and_exact_local_commit(endpoint)
     restored = DistillationClient(origin, EPOCH, checkpoint=client.checkpoint_fields())
     assert restored.cursor == 9
     assert all(path.startswith("/api/distillation/v1/") for _method, path in state["requests"])
-    assert [method for method, _path in state["requests"]] == ["GET", "POST", "GET", "DELETE"]
+    assert [method for method, _path in state["requests"]] == [
+        "GET", "GET", "POST", "GET", "DELETE"
+    ]
     assert not any(
         "join" in path or "action" in path or "resume" in path
         for _method, path in state["requests"]
@@ -172,7 +183,7 @@ def test_unsettled_object_does_not_skip_a_pending_predecessor(endpoint):
     client = DistillationClient(origin, EPOCH)
     fetched = client.fetch()
     assert not fetched.chunks and fetched.next_cursor == 1 and fetched.gaps == ((1, 1),)
-    assert [method for method, _path in state["requests"]] == ["GET"]
+    assert [method for method, _path in state["requests"]] == ["GET", "GET"]
 
 
 @pytest.mark.parametrize("failure", ["corrupt", "expired", "redirect"])
@@ -225,3 +236,68 @@ def test_checkpoint_binds_source_seed_and_full_native_contract(endpoint):
     with pytest.raises(DistillationContractError, match="identity mismatch"):
         foreign.fetch()
     assert foreign.cursor == 9
+
+
+def test_storage_policy_is_immutable_checkpoint_provenance_and_changes_precede_data(endpoint):
+    """Restart and later fetches preserve recorded ceilings before reading new chunks."""
+    origin, state = endpoint
+    client = DistillationClient(origin, EPOCH, expected_spool_bytes=4 * 1024**3)
+    fetched = client.fetch()
+    client.commit(fetched)
+    saved = client.checkpoint_fields()
+    assert saved["schemaVersion"] == 2 and saved["storagePolicy"] == POLICY
+    restored = DistillationClient(origin, EPOCH, checkpoint=saved)
+    assert restored.producer_storage == client.producer_storage
+    assert restored.cursor == client.cursor == 9
+    state["requests"].clear()
+    state["storage"]["maxChunks"] = 32768
+    with pytest.raises(DistillationContractError, match="policy changed"):
+        restored.fetch()
+    assert restored.cursor == 9
+    assert state["requests"] == [("GET", "/api/distillation/v1/storage")]
+    state["requests"].clear()
+    with pytest.raises(DistillationContractError, match="requested spool"):
+        DistillationClient(origin, EPOCH, checkpoint=saved, expected_spool_bytes=8 * 1024**3)
+    assert not state["requests"]
+
+
+@pytest.mark.parametrize("change", [
+    {"schemaVersion": True}, {"scope": "job-local"}, {"maxBytes": "0000000000000000"},
+    {"maxBytes": "0000001000000001"}, {"maxBytes": 4 * 1024**3}, {"maxChunks": 65537},
+    {"maxLeases": True}, {"maxPinnedBytes": "0000000020000001"}, {"maxLeaseMs": 300001},
+    {"diskReserveBytes": "0020000000000000"}, {"unknown": 1},
+])
+def test_malformed_storage_policy_rejects_before_pages_leases_or_rows(endpoint, change):
+    """Untrusted producer metadata cannot alter counters or allocation admission."""
+    origin, state = endpoint
+    state["storage"].update(change)
+    client = DistillationClient(origin, EPOCH)
+    with pytest.raises(DistillationContractError):
+        client.fetch()
+    assert client.cursor == 0 and client.manifest is None
+    assert state["requests"] == [("GET", "/api/distillation/v1/storage")]
+
+
+def test_requested_spool_budget_and_storage_unavailability_do_not_guess_legacy_defaults(endpoint):
+    """Only legacy 404 means unreported; errors and explicit mismatches remain failures."""
+    origin, state = endpoint
+    with pytest.raises(DistillationContractError, match="requested spool"):
+        DistillationClient(origin, EPOCH, expected_spool_bytes=8 * 1024**3).fetch()
+    assert state["requests"] == [("GET", "/api/distillation/v1/storage")]
+    state["requests"].clear()
+    state["storage_status"] = 503
+    with pytest.raises(DistillationHTTPError) as unavailable:
+        DistillationClient(origin, EPOCH).fetch()
+    assert unavailable.value.status == 503
+    state["requests"].clear()
+    state["storage_status"] = 404
+    client = DistillationClient(origin, EPOCH)
+    client.commit(client.fetch())
+    assert client.producer_storage is None and client.checkpoint_fields()["storagePolicy"] is None
+    legacy = client.checkpoint_fields()
+    legacy.pop("storagePolicy")
+    legacy["schemaVersion"] = 1
+    restored = DistillationClient(origin, EPOCH, checkpoint=legacy)
+    assert restored.refresh_storage_policy() is None
+    with pytest.raises(DistillationContractError, match="requested spool"):
+        DistillationClient(origin, EPOCH, expected_spool_bytes=4 * 1024**3).fetch()

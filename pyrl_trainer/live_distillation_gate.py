@@ -127,7 +127,8 @@ def _train_phase(args, deadline):
     _artifact, manifest, _provenance = read_raw_brain_artifact(artifact_data)
     metadata_bytes = HEADER.unpack_from(artifact_data)[1]
     weights = artifact_data[HEADER.size + metadata_bytes:]
-    client = DistillationClient(args.origin, args.capture_epoch)
+    client = DistillationClient(args.origin, args.capture_epoch,
+                                expected_spool_bytes=args.spool_gib * 1024**3)
     replay = _ready_replay(client, deadline)
     job = DistillationJob(manifest, weights, replay, client=client,
                           config=DistillationJobConfig(device=args.device),
@@ -136,7 +137,9 @@ def _train_phase(args, deadline):
     checkpoint = job.save(args.directory / "checkpoints")
     updated = _update_to(job, 126, deadline)
     metadata_path.write_text(json.dumps({"checkpoint": str(checkpoint),
-                                        "witness": _witness(job, updated)}, sort_keys=True),
+                                        "witness": _witness(job, updated),
+                                        "storagePolicy": client.producer_storage.to_object()},
+                                       sort_keys=True),
                              encoding="utf-8")
     report = {"phase": "train", "updates": job.trainer.completed_updates,
               "retainedChunks": job.replay.retained_chunks,
@@ -152,6 +155,10 @@ def _resume_phase(args, deadline):
     if (str(job.device) != args.device
             or job.client.capture_epoch != args.capture_epoch):
         raise RuntimeError("qualification restart source/device mismatch")
+    if (job.client.producer_storage is None
+            or job.client.producer_storage.max_bytes != args.spool_gib * 1024**3
+            or job.client.producer_storage.to_object() != expected["storagePolicy"]):
+        raise RuntimeError("qualification restart producer storage policy mismatch")
     updated = _update_to(job, 126, deadline)
     if _witness(job, updated) != expected["witness"]:
         raise RuntimeError("cross-process next optimizer/RNG/sampler/recurrence witness differs")
@@ -194,15 +201,19 @@ def run(argv=None):
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
+    parser.add_argument("--spool-gib", type=int, default=4)
     parser.add_argument("--max-wall-seconds", type=float, default=180)
     args = parser.parse_args(argv)
     if not np.isfinite(args.max_wall_seconds) or not 1 <= args.max_wall_seconds <= 600:
         parser.error("wall deadline must be finite and between one and 600 seconds")
+    if not 1 <= args.spool_gib <= 64:
+        parser.error("spool budget must be 1..64 GiB")
     args.directory.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     deadline = started + args.max_wall_seconds
     job, report = (_train_phase if args.phase == "train" else _resume_phase)(args, deadline)
     report.update({"schemaVersion": 1, "device": str(job.device), "environment": job.environment,
+                   "producerStoragePolicy": job.client.producer_storage.to_object(),
                    "sequence": asdict(job.sequence), "replayBytes": job.replay.owned_bytes,
                    "peakDeviceBytes": job.peak_device_bytes, "peakRssBytes": _peak_rss(),
                    "trainerSourceSha256": trainer_source_sha256(),

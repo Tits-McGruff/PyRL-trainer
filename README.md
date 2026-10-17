@@ -227,6 +227,7 @@ VRAM, and actual Torch allocation peaks are checked during updates.
 | `--cpu-threads` | min(2, available process CPUs) | 1..available, respecting affinity |
 | `--device-memory-mib` | 8192 | 512..8192, within physical CUDA capacity |
 | `--replay-ram-mib` | 256 | 64..2048 |
+| `--spool-gib` | Observe producer (4 GiB by default) | Require matching 1..64 GiB producer disk quota |
 | `--learning-rate` | 0.0003 | finite 0.000001..0.01 |
 | `--batch-size` | 32 | 1..256 sequence windows |
 | `--bptt` | 64 | 16..256 delivered observations |
@@ -245,6 +246,18 @@ use the checkpoint, or repeat the exact same values. Changing thread/device/repl
 budgets, seed, learning rate or
 sequence settings requires a new job. The runner reports effective choices under
 `settings` in its final JSON result. PPO settings and dependencies remain separate.
+
+The HTTP consumer reads the producer's admitted global storage policy before rows.
+Its byte/count/lease ceilings are immutable source provenance in version-2 client
+checkpoints, saved atomically with replay, cursors, sampler, optimizer and RNG.
+Select the producer quota with Slither's `--distillation-spool-gib N`, then use
+`--spool-gib N` to require that value. A policy change stops the fetch before new
+rows or cursor advancement and requires a new job. Offline exact resume retains
+the saved policy without network access. Legacy providers that return 404 for
+`GET /api/distillation/v1/storage` are recorded as unreported, with no guessed
+quota; explicit budget requests require reported admission. Other errors remain
+failures. The ceiling does not reserve that amount of disk or RAM, and loaded
+storage-capacity qualification remains open.
 
 `pyrl_trainer.canonical_graph` provides a separate differentiable representation
 of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
@@ -325,7 +338,10 @@ process to reproduce update 126's complete numeric witness. Update 250 freezes a
 immutable candidate for Rust validation and four actual shadow slots. The host
 uses a disposable database/spool and admits no actor or controller traffic. Its
 compact reports include process RSS, Torch allocator peaks, native step timing and
-full source identities. Local CUDA runs use the same gate with explicit `cuda:0`;
+full source identities, plus matching producer storage policy across the fresh
+trainer process. CPU CI exercises 4/64 GiB ceilings with one/three Rust workers;
+these are admission/provenance checks, not full-disk allocation benchmarks.
+Local CUDA runs use the same gate with explicit `cuda:0`;
 CPU CI never silently substitutes for CUDA qualification.
 
 The pinned host also trains a second student matching the active Dense world
