@@ -194,3 +194,12 @@ def test_current_rust_encoder_matches_frozen_sample_semantics():
         "strata",
     ):
         assert getattr(current, field).tobytes() == getattr(frozen, field).tobytes()
+
+
+@pytest.mark.parametrize("retained", [4 * 1024**3 + 1, 64 * 1024**3])
+def test_manifest_accepts_the_protocol_storage_ceiling_as_metadata_only(retained):
+    """Large advertised inventories remain bounded metadata, without allocating their bytes."""
+    value = manifest(retainedChunks=65536, retainedBytes=f"{retained:016x}")
+    assert DatasetManifest.from_object(value).raw["retainedBytes"] == f"{retained:016x}"
+    with pytest.raises(DistillationContractError, match="watermarks"):
+        DatasetManifest.from_object(manifest(retainedBytes=f"{64 * 1024**3 + 1:016x}"))

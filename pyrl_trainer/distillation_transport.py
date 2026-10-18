@@ -14,6 +14,7 @@ import struct
 import numpy as np
 
 MAX_CHUNK_BYTES = 1024 * 1024
+MAX_PRODUCER_STORAGE_BYTES = 64 * 1024**3
 MAX_JSON_BYTES = 1024 * 1024
 START_REASONS = ("captureStart", "physicalLifeStart", "continuation", "gap", "generationStart")
 END_REASONS = (
@@ -491,7 +492,7 @@ class DatasetManifest:
             words["storageWatermark"] > words["productionWatermark"]
             or words["resolvedThrough"] > words["productionWatermark"]
             or words["retentionFloor"] == 0
-            or words["retainedBytes"] > 4 * 1024**3
+            or words["retainedBytes"] > MAX_PRODUCER_STORAGE_BYTES
         ):
             raise DistillationContractError("incoherent dataset watermarks")
         integer(raw["retainedChunks"], 0, 65536)

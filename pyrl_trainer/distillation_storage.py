@@ -1,7 +1,9 @@
 """Bounded producer storage provenance, independent of world and trainer RAM."""
 from dataclasses import dataclass
 
-from .distillation_transport import DistillationContractError, exact_keys, hex_identity, integer
+from .distillation_transport import (
+    MAX_PRODUCER_STORAGE_BYTES, DistillationContractError, exact_keys, hex_identity, integer,
+)
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,7 @@ class ProducerStoragePolicy:
             """Read one admitted exact unsigned byte word."""
             return integer(int(hex_identity(value[name], 16, True), 16), low, high)
         return cls(
-            word("maxBytes", 1, 64 * 1024**3),
+            word("maxBytes", 1, MAX_PRODUCER_STORAGE_BYTES),
             integer(value["maxChunks"], 1, 65536),
             integer(value["maxDatasets"], 1, 256),
             integer(value["maxLeases"], 1, 64),

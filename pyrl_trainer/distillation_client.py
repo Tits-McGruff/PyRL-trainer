@@ -13,6 +13,7 @@ from .distillation_shadows import shadow_metrics, shadow_receipt
 from .distillation_storage import ProducerStoragePolicy
 
 from .distillation_transport import (
+    MAX_PRODUCER_STORAGE_BYTES,
     DatasetManifest,
     DistillationContractError,
     TeacherChunk,
@@ -103,7 +104,7 @@ class DistillationClient:
         self._storage_observed = False
         self._expected_spool_bytes = (
             None if expected_spool_bytes is None
-            else integer(expected_spool_bytes, 1, 64 * 1024**3)
+            else integer(expected_spool_bytes, 1, MAX_PRODUCER_STORAGE_BYTES)
         )
         self._restore_identity = None
         if checkpoint is not None:
@@ -194,6 +195,11 @@ class DistillationClient:
     def _accept_manifest(self, raw):
         """Bind immutable identity before accepting progress or allocating row arrays."""
         manifest = DatasetManifest.from_object(raw)
+        if self.producer_storage is not None and (
+            int(manifest.raw["retainedBytes"], 16) > self.producer_storage.max_bytes
+            or manifest.raw["retainedChunks"] > self.producer_storage.max_chunks
+        ):
+            raise DistillationContractError("dataset inventory exceeds admitted producer storage")
         if (
             manifest.contract.capture_epoch != self.capture_epoch
             or manifest.production_watermark < self.cursor

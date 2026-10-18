@@ -37,6 +37,7 @@ def endpoint_fixture():
         "resolved": 9,
         "production": 9,
         "descriptors": [deepcopy(REFERENCE["descriptor"])],
+        "manifest_updates": {},
         "corrupt": False,
         "expired": False,
         "redirect": False,
@@ -73,6 +74,7 @@ def endpoint_fixture():
                     "retainedBytes": f"{len(DATA):016x}",
                     "error": None,
                 }
+                manifest.update(state["manifest_updates"])
                 descriptors = state["descriptors"]
                 self.respond(
                     200,
@@ -301,3 +303,46 @@ def test_requested_spool_budget_and_storage_unavailability_do_not_guess_legacy_d
     assert restored.refresh_storage_policy() is None
     with pytest.raises(DistillationContractError, match="requested spool"):
         DistillationClient(origin, EPOCH, expected_spool_bytes=4 * 1024**3).fetch()
+
+
+def test_larger_advertised_inventory_obeys_the_actual_storage_policy(endpoint):
+    """Synthetic large metadata can accompany a bounded real-codec page; no bulk allocation."""
+    origin, state = endpoint
+    state["storage"]["maxBytes"] = f"{64 * 1024**3:016x}"
+    state["manifest_updates"] = {"retainedBytes": f"{64 * 1024**3:016x}",
+                                 "retainedChunks": 65536}
+    client = DistillationClient(origin, EPOCH, expected_spool_bytes=64 * 1024**3)
+    fetched = client.fetch()
+    assert len(fetched.chunks) == 1 and fetched.chunks[0].raw_bytes == DATA
+    assert client.manifest.raw["retainedBytes"] == f"{64 * 1024**3:016x}"
+    assert client.cursor == 0  # Fetch is still a proposal, never a simulation/storage ACK.
+    saved = client.checkpoint_fields()
+    restored = DistillationClient(origin, EPOCH, checkpoint=saved)
+    # Checkpoint loading uses the same intake method without HTTP or decoder allocation.
+    restored._accept_manifest(client.manifest.raw)  # pylint: disable=protected-access
+    assert restored.manifest.raw["retainedBytes"] == f"{64 * 1024**3:016x}"
+    smaller = deepcopy(saved)
+    smaller["storagePolicy"]["maxBytes"] = f"{4 * 1024**3:016x}"
+    rejected = DistillationClient(origin, EPOCH, checkpoint=smaller)
+    with pytest.raises(DistillationContractError, match="inventory exceeds"):
+        rejected._accept_manifest(client.manifest.raw)  # pylint: disable=protected-access
+    assert rejected.manifest is None and rejected.cursor == client.cursor
+
+
+@pytest.mark.parametrize("inventory,policy", [
+    ({"retainedBytes": f"{4 * 1024**3 + 1:016x}"}, {}),
+    ({"retainedChunks": 2}, {"maxChunks": 1}),
+])
+def test_inventory_over_reported_policy_rejects_before_binding_pins_or_rows(
+    endpoint, inventory, policy
+):
+    """Global protocol limits cannot override a smaller selected producer quota."""
+    origin, state = endpoint
+    state["storage"].update(policy)
+    state["manifest_updates"] = inventory
+    client = DistillationClient(origin, EPOCH)
+    with pytest.raises(DistillationContractError, match="inventory exceeds"):
+        client.fetch()
+    assert client.manifest is None and client.cursor == 0
+    assert all(method == "GET" for method, _path in state["requests"])
+    assert not any("/leases" in path or "/chunks/" in path for _method, path in state["requests"])

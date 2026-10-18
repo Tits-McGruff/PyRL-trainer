@@ -374,3 +374,11 @@ RAM, HTTP, trainer checkpoints, live game contention, shadows and the integrated
 soak. The device budget is an admission ceiling; successful probes do not imply
 that the ceiling was allocated or that every graph within a parameter count has
 the same memory cost.
+
+Dataset metadata admits the protocol's 64-GiB producer ceiling while every intake
+and restored manifest must fit the producer's observed byte and object policy.
+This avoids an obsolete 4-GiB parser limit blocking a larger explicitly selected
+spool. Reading a large inventory does not allocate its advertised bytes: chunk
+fetching, decoding and replay retain their independent bounds. Legacy endpoints
+without a reported policy remain explicitly unreported; the client does not guess
+their selected quota.
