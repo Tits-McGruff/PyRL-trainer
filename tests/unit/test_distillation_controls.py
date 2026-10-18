@@ -457,3 +457,14 @@ def test_disk_budget_endpoints_survive_update_checkpoint_and_offline_resume(
                           "--offline", "--spool-gib", str(quota), "--updates", "1"])
     assert resumed["updates"] == result["updates"] + 1
     assert resumed["settings"]["producerStoragePolicy"] == policy
+
+
+def test_capacity_estimate_matches_the_running_job(local_source, tmp_path):
+    """The qualification host prices the exact same bound as the production job."""
+    result = runner.run(new_arguments(tmp_path))
+    job = load_job_checkpoint(result["checkpoint"])
+    assert job.replay.cursor == local_source.cursor
+    estimated = owner.estimate_training_device_bytes(job.model.manifest, job.sequence)
+    assert estimated == job.device_estimate
+    wider = owner.SequenceTrainingConfig(batch_size=64)
+    assert owner.estimate_training_device_bytes(job.model.manifest, wider) > job.device_estimate

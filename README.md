@@ -349,3 +349,28 @@ architecture. It saves both trained architectures, verifies graph-mismatched
 spawn rejection, exports the compatible portable original exactly, and deploys
 through Rust. After catalog deletion and cold-file reclamation, the live retained
 brain must keep its distilled origin and produce actual neural inference.
+
+### Canonical TBPTT capacity probe
+
+Use an explicitly Rust-compiled manifest and initialized flat weights to measure
+actual canonical model, Adam and full-window TBPTT allocation:
+
+```powershell
+python -m pyrl_trainer.distillation_capacity_gate --manifest PATH/manifest.json --weights PATH/weights.f32 --device cuda:0 --output capacity.json
+```
+
+The probe shares the running job's conservative memory estimate and rejects an
+oversized request before model/device allocation. Select `--device cpu` explicitly
+for CPU measurement. `--batch-sequences`, `--sequence-length`, `--burn-in`,
+`--cpu-threads` and `--device-memory-mib` use the public job bounds; the combined
+window remains at most 256 deliveries. Reports are create-new and include exact
+source/input identities, completed optimizer work, process RSS and CUDA allocated
+and reserved peaks. An admitted run must complete all requested updates within
+its budget. A rejected case reports `qualificationComplete: false`.
+
+Inputs are synthetic Float32 windows with fully active rows and rare-event weight
+four. This measures training allocation independently of teacher encoding, replay
+RAM, HTTP, trainer checkpoints, live game contention, shadows and the integrated
+soak. The device budget is an admission ceiling; successful probes do not imply
+that the ceiling was allocated or that every graph within a parameter count has
+the same memory cost.

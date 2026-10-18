@@ -184,6 +184,24 @@ def numerical_environment(device):
     return result
 
 
+def estimate_training_device_bytes(manifest, sequence):
+    """Price canonical Adam/TBPTT storage before model or sequence allocation.
+
+    This is the existing conservative job bound, shared by capacity qualification.
+    It is not a promise that arbitrary graphs or the whole process fit this budget.
+    """
+    width = sum(
+        sum(node.output_sizes) + sum(node.hidden_sizes) + (node.hidden_size or 0) * 8
+        for node in manifest.nodes
+    )
+    return (
+        128 * 1024**2
+        + manifest.total_parameters * 48
+        + width * sequence.batch_size * sequence.bptt_steps * 96
+        + manifest.total_state_size * sequence.batch_size * 16
+    )
+
+
 class DistillationJob:
     """Private RNG, bounded canonical training and independent durable snapshots."""
 
@@ -212,16 +230,7 @@ class DistillationJob:
         torch.set_num_threads(min(config.cpu_threads, available_trainer_cpus()))
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        width = sum(
-            sum(node.output_sizes) + sum(node.hidden_sizes) + (node.hidden_size or 0) * 8
-            for node in manifest.nodes
-        )
-        self.device_estimate = (
-            128 * 1024**2
-            + manifest.total_parameters * 48
-            + width * sequence.batch_size * sequence.bptt_steps * 96
-            + manifest.total_state_size * sequence.batch_size * 16
-        )
+        self.device_estimate = estimate_training_device_bytes(manifest, sequence)
         if self.device_estimate > config.device_bytes:
             raise DistillationContractError("canonical training estimate exceeds device admission")
         if self.device.type == "cuda":
