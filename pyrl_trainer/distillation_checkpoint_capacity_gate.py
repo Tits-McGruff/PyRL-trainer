@@ -41,7 +41,10 @@ def _arguments():
     parser.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
     parser.add_argument("--ram-mib", type=int, required=True)
     parser.add_argument("--deadline-seconds", type=int, default=600)
+    parser.add_argument("--checkpoint-saves", type=int, default=1)
     args = parser.parse_args()
+    if not 1 <= args.checkpoint_saves <= 4:
+        parser.error("checkpoint saves 1..4 required")
     if not 64 <= args.ram_mib <= 2048 or not 1 <= args.deadline_seconds <= 1800:
         parser.error("RAM 64..2048 MiB and deadline 1..1800 seconds required")
     if args.workspace.exists() or args.output.exists():
@@ -78,6 +81,21 @@ def exact_next_update(job, checkpoint):
     return restored, received
 
 
+def save_checkpoints(job, directory, count):
+    """Exercise exclusive publication and real three-file rotation without changing Adam state."""
+    records, paths = [], []
+    for _ in range(count):
+        checkpoint = job.save(directory)
+        paths.append(checkpoint)
+        records.append({"serial": job.serial, "bytes": checkpoint.stat().st_size})
+        retained = sorted(checkpoint.parent.glob("job-*.distill-job"))
+        assert retained == paths[-3:]
+        assert all(not old.exists() for old in paths[:-3])
+    return checkpoint, {"saves": records, "retained": len(retained),
+                        "retainedBytes": sum(path.stat().st_size for path in retained),
+                        "oldestRotated": count == 4 and not paths[0].exists()}
+
+
 def _save_report(path, report):
     """Publish a complete exclusive report and fsync before disposable checkpoint cleanup."""
     with path.open("x", encoding="utf-8", newline="\n") as stream:
@@ -111,7 +129,7 @@ def run():
         "scope": ("Rust-encoded synthetic teacher chunks and canonical initialized graph; "
                   "actual loaded replay, Adam, fsynced job checkpoint and exact next update. "
                   "Original and restored jobs coexist. No HTTP, live game contention, "
-                  "candidate backlog, checkpoint rotation or integrated soak is qualified."),
+                  "candidate backlog or integrated soak is qualified."),
         "hostSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "trainerSourceSha256": trainer_source_sha256(),
         "referenceSha256": hashlib.sha256(reference_bytes).hexdigest(),
@@ -120,7 +138,8 @@ def run():
         "nativeSourceSha256": reference["sourceSha256"],
         "fixtureHostCanonicalLfSha256": reference["hostCanonicalLfSha256"],
         "bundleSha256": reference["bundleSha256"],
-        "options": {"ramMiB": args.ram_mib, "device": args.device},
+        "options": {"ramMiB": args.ram_mib, "device": args.device,
+                    "checkpointSaves": args.checkpoint_saves},
         "parameters": manifest.total_parameters, "inputSize": manifest.input_size,
         "baselinePeakRssBytes": _peak_rss(), "status": "failed",
         "qualificationComplete": False, "workspaceRemoved": False,
@@ -175,9 +194,9 @@ def run():
         report.update({"firstUpdateMs": (time.perf_counter() - phase) * 1000,
                        "trainedPeakRssBytes": _peak_rss()})
         phase = time.perf_counter()
-        checkpoint = job.save(args.workspace)
+        checkpoint, rotation = save_checkpoints(job, args.workspace, args.checkpoint_saves)
         deadline()
-        report.update({"checkpointBytes": checkpoint.stat().st_size,
+        report.update({"checkpointBytes": checkpoint.stat().st_size, "rotation": rotation,
                        "saveMs": (time.perf_counter() - phase) * 1000,
                        "savedPeakRssBytes": _peak_rss()})
         phase = time.perf_counter()

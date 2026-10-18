@@ -7,7 +7,7 @@ import pytest
 
 from test_distillation_job import DEVICES, make_job
 
-from pyrl_trainer.distillation_checkpoint_capacity_gate import exact_next_update
+from pyrl_trainer.distillation_checkpoint_capacity_gate import exact_next_update, save_checkpoints
 
 pytestmark = pytest.mark.unit
 
@@ -34,3 +34,17 @@ def test_capacity_rejects_disabled_assertions_before_input_access():
     )
     assert result.returncode != 0
     assert "requires Python assertions enabled" in result.stderr
+
+
+def test_capacity_four_publications_rotate_only_the_oldest_complete_checkpoint(tmp_path):
+    """Real publication retains three files and exact latest continuation."""
+    job = make_job("cpu")
+    job.update()
+    latest, rotation = save_checkpoints(job, tmp_path, 4)
+    assert [item["serial"] for item in rotation["saves"]] == [1, 2, 3, 4]
+    assert rotation["retained"] == 3 and rotation["oldestRotated"]
+    assert rotation["retainedBytes"] == sum(
+        path.stat().st_size for path in latest.parent.glob("job-*.distill-job")
+    )
+    restored, _ = exact_next_update(job, latest)
+    assert restored.serial == 4 and restored.trainer.completed_updates == 2

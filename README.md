@@ -431,5 +431,12 @@ uses the existing explicit device admission; `--device cpu` runs the CPU alterna
 The output must be new and outside the new workspace. A complete progress report is
 fsynced before success cleanup; failures retain the checkpoint workspace. The
 fixture is never edited. This offline test does not qualify HTTP, live game
-contention, pending candidate backlog, three-checkpoint rotation or the integrated
+contention, pending candidate backlog or the integrated
 soak. It rejects disabled Python assertions before input access.
+
+
+Use `--checkpoint-saves 4` to exercise production retention of the latest three
+complete files. The host verifies serial progression, exact retained inventory,
+oldest-file removal and retained physical bytes after every publication, then
+requires exact next-update restore from the latest checkpoint. The default remains
+one publication; reports state the selected publication count explicitly.
