@@ -382,3 +382,27 @@ spool. Reading a large inventory does not allocate its advertised bytes: chunk
 fetching, decoding and replay retain their independent bounds. Legacy endpoints
 without a reported policy remain explicitly unreported; the client does not guess
 their selected quota.
+
+### Loaded replay RAM probe
+
+Generate a synthetic fixture with Slither's standalone Rust
+`scripts/qualification/teacher-replay-fixture` harness, which calls the production
+teacher encoder and checks each native roundtrip. Then run:
+
+```powershell
+python -m pyrl_trainer.distillation_replay_capacity_gate --fixture PATH --ram-mib 2048 --output replay-capacity.json
+```
+
+Select 64..2048 MiB explicitly. The fixture must load through rotation at the
+selected ceiling; a partial load cannot qualify. The host checks the exact bundle
+hash, genuine decoded chunk identities, per-batch RAM accounting, whole-chunk
+retention, exact-retry idempotence and independent-decode replay restore. It records
+actual process RSS both after filling and while the original and restored replay
+owners coexist. Their combined restore peak is distinct from one buffer's retained
+RAM budget. Reports are create-new; fixture files remain read-only for reuse.
+
+The fixture is length-framed Rust TeacherSampleV1 data, with no Python sample
+encoder. This probe covers decoder/replay/restore memory independently of HTTP,
+optimizer work, durable trainer checkpoint peaks, live game contention and the
+integrated soak. Large synthetic inputs are disposable and should be removed after
+required cross-platform reports are retained.
