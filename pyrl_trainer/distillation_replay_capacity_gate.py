@@ -8,8 +8,13 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import platform
+import sys
 import struct
 import time
+
+import numpy as np
+import torch
 
 from .distillation_client import DistillationFetch
 from .distillation_job import trainer_source_sha256
@@ -21,6 +26,8 @@ from .live_distillation_gate import _peak_rss
 def _arguments():
     """Bound every selected resource and require immutable input/create-new output."""
     parser = argparse.ArgumentParser(description=__doc__)
+    if sys.flags.optimize:
+        parser.error("qualification requires Python assertions enabled")
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--ram-mib", type=int, required=True)
@@ -91,6 +98,11 @@ def run():
               "bundleSha256": reference["bundleSha256"],
               "options": {"ramMiB": args.ram_mib},
               "baselinePeakRssBytes": initial_rss,
+              "environment": {"python": platform.python_version(), "platform": platform.platform(),
+                              "machine": platform.machine(), "numpy": np.__version__,
+                              "torch": torch.__version__, "pointerBytes": struct.calcsize("P"),
+                              "pythonOptimized": bool(sys.flags.optimize),
+                              "torchCpuThreads": torch.get_num_threads()},
               "status": "failed", "qualificationComplete": False}
     failure = None
     try:

@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import sys
+import subprocess
 
 import pytest
 
@@ -52,3 +53,17 @@ def test_capacity_rejects_over_budget_before_device_or_tensor_allocation(tmp_pat
     assert report["status"] == "rejected"
     assert not report["admitted"] and not report["qualificationComplete"]
     assert not report["updates"] and "exceeds device admission" in report["rejection"]
+
+
+@pytest.mark.parametrize("module", ["distillation_capacity_gate",
+                                    "distillation_replay_capacity_gate"])
+def test_capacity_cannot_qualify_with_disabled_assertions(tmp_path, module):
+    """An optimized interpreter rejects before inputs/output or device admission."""
+    result = subprocess.run(
+        [sys.executable, "-B", "-O", "-m", "pyrl_trainer." + module],
+        capture_output=True, text=True, check=False, timeout=30,
+        cwd=Path(__file__).resolve().parents[2],
+    )
+    assert result.returncode != 0
+    assert "qualification requires Python assertions enabled" in result.stderr
+    assert not list(tmp_path.iterdir())

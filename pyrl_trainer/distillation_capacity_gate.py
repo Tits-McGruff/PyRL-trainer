@@ -9,6 +9,7 @@ from dataclasses import asdict, fields
 import hashlib
 import json
 from pathlib import Path
+import sys
 import time
 
 import torch
@@ -25,6 +26,8 @@ from .sequence_distillation import CanonicalSequenceTrainer, SequenceBatch, Sequ
 def _arguments():
     """Require an explicit device/immutable Rust inputs and a create-new report."""
     parser = argparse.ArgumentParser(description=__doc__)
+    if sys.flags.optimize:
+        parser.error("qualification requires Python assertions enabled")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

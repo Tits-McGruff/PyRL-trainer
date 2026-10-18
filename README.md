@@ -406,3 +406,7 @@ encoder. This probe covers decoder/replay/restore memory independently of HTTP,
 optimizer work, durable trainer checkpoint peaks, live game contention and the
 integrated soak. Large synthetic inputs are disposable and should be removed after
 required cross-platform reports are retained.
+
+Capacity probes require Python assertions enabled and reject `python -O` before
+fixture/output or device admission. Replay reports include interpreter, platform,
+NumPy/Torch versions, pointer width and CPU-thread facts alongside measured RSS.
