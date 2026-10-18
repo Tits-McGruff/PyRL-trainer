@@ -410,3 +410,26 @@ required cross-platform reports are retained.
 Capacity probes require Python assertions enabled and reject `python -O` before
 fixture/output or device admission. Replay reports include interpreter, platform,
 NumPy/Torch versions, pointer width and CPU-thread facts alongside measured RSS.
+
+
+### Loaded durable trainer checkpoint probe
+
+Use the same Rust replay fixture and a compatible Rust-produced canonical manifest
+and initialized weights. Keep the new workspace separate from the read-only inputs:
+
+```powershell
+python -m pyrl_trainer.distillation_checkpoint_capacity_gate --fixture PATH --manifest PATH/manifest.json --weights PATH/weights.f32 --ram-mib 2048 --device cuda:0 --workspace NEW_DIRECTORY --output checkpoint-capacity.json
+```
+
+The probe fills the selected 64..2048 MiB replay through retention, completes a real
+default-window Adam update, and saves through the production fsynced job serializer.
+It restores an independent job and requires the next windows, loss, weights, Adam
+moments, recurrent state and private RNG to match exactly. Reports include checkpoint
+bytes and save/restore process peaks while both replay/model owners coexist. CUDA
+uses the existing explicit device admission; `--device cpu` runs the CPU alternative.
+
+The output must be new and outside the new workspace. A complete progress report is
+fsynced before success cleanup; failures retain the checkpoint workspace. The
+fixture is never edited. This offline test does not qualify HTTP, live game
+contention, pending candidate backlog, three-checkpoint rotation or the integrated
+soak. It rejects disabled Python assertions before input access.
