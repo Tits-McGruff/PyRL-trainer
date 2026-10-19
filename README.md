@@ -325,7 +325,9 @@ candidate in a self-contained checkpoint before issuing the ordered native
 activation. Lost replies retry the same process/request/observed-slot identity;
 a changed process or replaced segment fails explicitly. Exact job resume cannot
 change shadow configuration. Metrics are Rust-computed unweighted summaries,
-including exact counters and separate delivery/publication steps. They never
+including exact counters and separate delivery/publication steps. After activation,
+job polling returns no snapshot while the separate native mailbox still holds
+the exact prior slot; after the new segment is observed, interruptions fail. They never
 consume a dataset cursor, send gameplay ACKs or rewrite controlling weights.
 `DistillationClient.shadow_metrics`, `activate_shadow` and `stop_shadow` also
 expose these bounded diagnostic routes for explicit library use.

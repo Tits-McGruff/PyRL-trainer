@@ -494,7 +494,36 @@ def test_shadow_metrics_bind_immutable_segment_and_preserve_exact_large_counters
     metrics = {"schemaVersion": 1, "processEpoch": "13" * 16, "slots": [snapshot, None, None, None]}
     monkeypatch.setattr(client, "_json", lambda *_args, **_kwargs: copy.deepcopy(metrics))
     weights, cursor = job.model.export_weights(), client.cursor
+    # A durable activation receipt can win the race with the separately
+    # published mailbox, including replacement of an existing slot.
+    metrics["slots"][0] = None
+    assert job.poll_shadow_metrics() is None
+    assert job.online_metrics["snapshot"] is None
+    receipt["previousActivationSequence"] = "0000000000000001"
+    with pytest.raises(DistillationContractError, match="replaced/interrupted"):
+        job.poll_shadow_metrics()
+    stale = copy.deepcopy(snapshot)
+    stale["activationSequence"] = receipt["previousActivationSequence"]
+    metrics["slots"][0] = stale
+    assert job.poll_shadow_metrics() is None
+    assert job.model.export_weights() == weights and client.cursor == cursor
+    stale["activationSequence"] = "0000000000000003"
+    with pytest.raises(DistillationContractError, match="replaced/interrupted"):
+        job.poll_shadow_metrics()
+    metrics["processEpoch"] = "19" * 16
+    stale["activationSequence"] = receipt["previousActivationSequence"]
+    with pytest.raises(DistillationContractError, match="replaced/interrupted"):
+        job.poll_shadow_metrics()
+    metrics["processEpoch"] = receipt["processEpoch"]
+    metrics["slots"][0] = snapshot
     assert job.poll_shadow_metrics()["totals"]["samples"] == "0020000000000001"
+    metrics["slots"][0] = stale
+    with pytest.raises(DistillationContractError, match="replaced/interrupted"):
+        job.poll_shadow_metrics()
+    metrics["slots"][0] = None
+    with pytest.raises(DistillationContractError, match="replaced/interrupted"):
+        job.poll_shadow_metrics()
+    metrics["slots"][0] = snapshot
     assert job.model.export_weights() == weights and client.cursor == cursor
     snapshot["totals"] = {**total, "samples": "0000000000000001"}
     with pytest.raises(DistillationContractError, match="regressed"):

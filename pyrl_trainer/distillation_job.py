@@ -537,6 +537,16 @@ class DistillationJob:
         metrics = self.client.shadow_metrics()
         receipt = self.online_metrics["receipt"]
         snapshot = metrics["slots"][receipt["shadowSlot"]]
+        old = self.online_metrics["snapshot"]
+        if metrics["processEpoch"] == receipt["processEpoch"] and old is None:
+            # The reliable command receipt can precede the nonblocking native
+            # diagnostic mailbox. Only the exact prior activation may be stale;
+            # once this segment is observed, every interruption remains fatal.
+            previous = receipt["previousActivationSequence"]
+            if (snapshot is None and previous == "0" * 16) or (
+                snapshot is not None and snapshot["activationSequence"] == previous
+            ):
+                return None
         if (
             metrics["processEpoch"] != receipt["processEpoch"]
             or snapshot is None
@@ -546,7 +556,6 @@ class DistillationJob:
             )
         ):
             raise DistillationContractError("online shadow segment replaced/interrupted")
-        old = self.online_metrics["snapshot"]
         if old and (
             snapshot["completedStep"] < old["completedStep"]
             or snapshot["totals"]["samples"] < old["totals"]["samples"]
