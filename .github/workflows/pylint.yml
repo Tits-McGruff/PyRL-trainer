@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: cc7d3bfc8b990c35dc0cd9b76671734e71b23848
+          ref: bd007aab0755fe723a0bead7e90935ee02d273fd
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -83,6 +83,15 @@ jobs:
           assert corpus.observations.shape[1] == 264
           print({"nativeSourceSha256": corpus.source_sha256, "rows": len(corpus.steps), "sequences": len(corpus.sequences)})
           PY
+      - name: Paired canonical ablations and actual native student physics
+        run: >-
+          python -m pyrl_trainer.tactical_ablation_gate
+          --corpus native-tactical-corpus
+          --canonical-runner .canonical-rust/native/target/release/canonical-training-graph
+          --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification
+          --directory tactical-ablation-smoke --device cpu --updates 2
+          --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12
+          --validation-seed 2
       - name: Native teacher codec interoperability
         run: |
           .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
@@ -103,6 +112,7 @@ jobs:
             canonical-roundtrip-cpu.json
             tactical-report.json
             native-tactical-corpus/
+            tactical-ablation-smoke/
           if-no-files-found: error
 
 
