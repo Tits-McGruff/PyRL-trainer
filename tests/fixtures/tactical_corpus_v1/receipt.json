@@ -1,0 +1,23 @@
+{
+  "nativeSourceSha256": "26856aac6de2acd96b665c0b1f6bb358ab3a97e217a0da3a1192d7c70584ef96",
+  "rows": 216,
+  "files": {
+    "corpus.json": {
+      "sha256": "1a7c417ac29aed0caf8a52b9a634be14be303b8d42008eb21175045c90813bce",
+      "gzipSha256": "03282b69036b0cd8048990df822e65a6c48e43f465aadc5bd366067a7ba64a80"
+    },
+    "observations.f32": {
+      "sha256": "4cc1dab2d40abed63cd5fd03fb94e7aeea68faca619d8d8e8d9b6216ca554244",
+      "gzipSha256": "68d313d1751acd5c1083451cb1dfe207ab102100da13cd98cdec7d39c64c71f1"
+    },
+    "actions.f32": {
+      "sha256": "3973e54082fb4f6df474588052ecc1b6bef112af5bf13ebd6a0d8e5661835c88",
+      "gzipSha256": "8cd0f030c47611b549c4be0eb9b886d6192e1eb763a68df5fdf0f5c620d9e478"
+    },
+    "steps.u32": {
+      "sha256": "a9c97315b7ca09325e5bd349d820efb816a9caa588c9bfa657a0f9f334be1d6f",
+      "gzipSha256": "67c97e4d2e0e98c720b7c60421f1d1a153eb0264860a40ba59bc9432ba7322dc"
+    }
+  },
+  "producerCommit": "cc7d3bfc8b990c35dc0cd9b76671734e71b23848"
+}

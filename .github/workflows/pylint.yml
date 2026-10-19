@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: d6c1defd73b1ad2fe7cc0f01e41ddc18f55cce2a
+          ref: cc7d3bfc8b990c35dc0cd9b76671734e71b23848
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -71,7 +71,18 @@ jobs:
           python -m pip install -c constraints.txt numpy pytest pytest-asyncio
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
       - name: Build the deployed whole-graph runner
-        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate
+        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate --bin baseline-v2-qualification
+      - name: Fresh committed native tactical corpus interoperability
+        run: |
+          .canonical-rust/native/target/release/baseline-v2-qualification --seed-count 2 --steps 12 --workers 1 --output tactical-report.json --corpus-directory native-tactical-corpus
+          python - <<'PY'
+          from pyrl_trainer.tactical_corpus import load_tactical_corpus
+          corpus = load_tactical_corpus("native-tactical-corpus")
+          training, validation = corpus.split_by_seed({2})
+          assert len(training) == len(validation) == 28
+          assert corpus.observations.shape[1] == 264
+          print({"nativeSourceSha256": corpus.source_sha256, "rows": len(corpus.steps), "sequences": len(corpus.sequences)})
+          PY
       - name: Native teacher codec interoperability
         run: |
           .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
@@ -88,7 +99,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: canonical-roundtrip-cpu
-          path: canonical-roundtrip-cpu.json
+          path: |
+            canonical-roundtrip-cpu.json
+            tactical-report.json
+            native-tactical-corpus/
           if-no-files-found: error
 
 
