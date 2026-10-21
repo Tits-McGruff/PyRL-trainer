@@ -297,3 +297,16 @@ parity (output/state maximum errors 2.84e-7 / 8.05e-7). The capsule retains exac
 measured sources, experiment, receipts and links to the already-retained input
 corpus/artifact. These measurements qualify this bounded path; they do not
 establish maturity, native real-time performance or a six-hour integrated soak.
+
+
+The live qualification helper also has an explicit six-hour sustain mode:
+`--phase sustain --soak-hours 6 --seconds 21600 --max-wall-seconds 21900` with the
+existing matching capture/checkpoint arguments. Other phases and ordinary windows
+keep their previous bounds. Every minute must advance both optimizer and live
+intake counters, with at most 120 seconds between progress receipts. The helper
+records bounded progress and saves ordinary durable snapshots every ten minutes,
+using the existing three-file rotation. Progress files are atomic observations;
+the `.distill-job` files remain the exact restart authority. The Slither host
+supplies the persistent workspace, native clock and generation-barrier evidence.
+This mode provides the harness for a long measurement; it does not itself claim
+that a six-hour or full-capacity qualification has passed.

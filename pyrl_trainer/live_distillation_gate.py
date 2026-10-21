@@ -194,6 +194,73 @@ def _resume_phase(args, deadline):
     return job, report
 
 
+def qualification_timing(phase, seconds, max_wall_seconds, soak_hours=None):
+    """Keep ordinary deadlines unchanged; long work requires an exact explicit contract."""
+    if soak_hours is not None:
+        if (soak_hours != 6 or phase != "sustain" or seconds != 21600
+                or max_wall_seconds != 21900):
+            raise ValueError("six-hour sustain requires 21600 active and 21900 outer seconds")
+    elif (not np.isfinite(max_wall_seconds) or not 1 <= max_wall_seconds <= 600
+          or not 60 <= seconds <= 300):
+        raise ValueError("ordinary wall deadline is 1..600 and sustain window is 60..300 seconds")
+    if phase == "sustain" and max_wall_seconds < seconds + 30:
+        raise ValueError("sustained window requires at least 30 seconds of outer startup allowance")
+
+
+def _write_progress(directory, progress):
+    """Replace one bounded observation receipt; this file is not a durable job checkpoint."""
+    temporary = directory / "sustain-progress.tmp"
+    temporary.write_text(json.dumps(progress, sort_keys=True, allow_nan=False) + "\n",
+                         encoding="utf-8")
+    temporary.replace(directory / "sustain-progress.json")
+
+
+class _SustainProgress:
+    """Bounded six-hour liveness observations and ordinary durable checkpoint rotation."""
+
+    def __init__(self, directory, job, started):
+        self.directory = directory
+        self.started = started
+        self.previous = (started, job.trainer.completed_updates, job.client.cursor)
+        self.next_progress, self.next_save = started + 60, started + 600
+        self.windows = []
+        self.snapshots = 0
+
+    def observe(self, now, job, fetches, peak_replay, peak_reserved):
+        """Include checkpoint work in elapsed time and require both live work streams."""
+        if now >= self.next_save:
+            checkpoint = job.save(self.directory / "checkpoints")
+            temporary = self.directory / "sustain-checkpoint.tmp"
+            temporary.write_text(json.dumps({"checkpoint": str(checkpoint)}) + "\n",
+                                 encoding="utf-8")
+            temporary.replace(self.directory / "sustain-checkpoint.json")
+            self.snapshots += 1
+            now = time.monotonic()
+            self.next_save = now + 600
+        if now >= self.next_progress:
+            if (now - self.previous[0] > 120 or
+                    job.trainer.completed_updates <= self.previous[1] or
+                    job.client.cursor <= self.previous[2]):
+                raise RuntimeError("six-hour progress requires fresh intake and optimizer work "
+                                   "in every bounded interval")
+            observation = {"activeWallSeconds": now - self.started,
+                           "updates": job.trainer.completed_updates, "cursor": job.client.cursor,
+                           "fetches": fetches, "snapshots": self.snapshots,
+                           "peakReplayBytes": peak_replay, "peakReservedBytes": peak_reserved}
+            self.windows.append(observation)
+            if len(self.windows) > 362:
+                raise RuntimeError("six-hour progress observation admission exceeded")
+            _write_progress(self.directory,
+                            {"schemaVersion": 1, "status": "running", **observation})
+            self.previous = (now, job.trainer.completed_updates, job.client.cursor)
+            self.next_progress = now + 60
+
+    def report(self):
+        """Return bounded receipts, never the mutable checkpoint payloads."""
+        return {"sixHourWindow": True, "progressWindows": self.windows,
+                "durableSnapshots": self.snapshots}
+
+
 def _sustain_phase(args, deadline):
     """Consume new live chunks while actual optimizer work contends with four native shadows."""
     pointer = json.loads((args.directory / "sustain-checkpoint.json").read_text(encoding="utf-8"))
@@ -209,6 +276,8 @@ def _sustain_phase(args, deadline):
     fetches = 0
     peak_replay = job.replay.owned_bytes
     peak_reserved = 0
+    progress = (_SustainProgress(args.directory, job, started)
+                if getattr(args, "soak_hours", None) == 6 else None)
     while time.monotonic() - started < args.seconds:
         if time.monotonic() >= deadline:
             raise TimeoutError("sustained trainer exceeded its outer deadline")
@@ -224,6 +293,8 @@ def _sustain_phase(args, deadline):
             raise RuntimeError("sustained trainer did not update trainable outputs")
         if job.device.type == "cuda":
             peak_reserved = max(peak_reserved, torch.cuda.max_memory_reserved(job.device))
+        if progress is not None:
+            progress.observe(time.monotonic(), job, fetches, peak_replay, peak_reserved)
     if job.trainer.completed_updates <= initial_updates or job.client.cursor <= initial_cursor:
         raise RuntimeError("sustained trainer requires both optimizer and live intake progress")
     report = {"phase": "sustain", "updates": job.trainer.completed_updates,
@@ -236,7 +307,8 @@ def _sustain_phase(args, deadline):
               "peakReplayBytes": peak_replay,
               "pendingCandidates": len(job.pending_candidates),
               "droppedCandidates": job.dropped_candidates,
-              "peakReservedInWindowBytes": peak_reserved}
+              "peakReservedInWindowBytes": peak_reserved,
+              **(progress.report() if progress is not None else {})}
     return job, report
 
 
@@ -251,14 +323,13 @@ def run(argv=None):
     parser.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
     parser.add_argument("--spool-gib", type=int, default=4)
     parser.add_argument("--seconds", type=int, default=60)
+    parser.add_argument("--soak-hours", type=int, choices=(6,))
     parser.add_argument("--max-wall-seconds", type=float, default=180)
     args = parser.parse_args(argv)
-    if not np.isfinite(args.max_wall_seconds) or not 1 <= args.max_wall_seconds <= 600:
-        parser.error("wall deadline must be finite and between one and 600 seconds")
-    if not 60 <= args.seconds <= 300:
-        parser.error("sustained window must be 60..300 seconds")
-    if args.phase == "sustain" and args.max_wall_seconds < args.seconds + 30:
-        parser.error("sustained window requires at least 30 seconds of outer startup allowance")
+    try:
+        qualification_timing(args.phase, args.seconds, args.max_wall_seconds, args.soak_hours)
+    except ValueError as error:
+        parser.error(str(error))
     if not 1 <= args.spool_gib <= 64:
         parser.error("spool budget must be 1..64 GiB")
     args.directory.mkdir(parents=True, exist_ok=True)
@@ -277,6 +348,11 @@ def run(argv=None):
                    "elapsedWallSeconds": time.monotonic() - started})
     (args.directory / (args.phase + "-report.json")).write_text(
         json.dumps(report, sort_keys=True, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    if args.soak_hours == 6:
+        _write_progress(args.directory, {"schemaVersion": 1, "status": "measured",
+                                        "activeWallSeconds": report["activeWallSeconds"],
+                                        "updates": report["updates"],
+                                        "durableSnapshots": report["durableSnapshots"]})
     print(json.dumps({key: report[key] for key in (
         "phase", "device", "updates", "elapsedWallSeconds")}))
     return report

@@ -83,3 +83,62 @@ def test_sustained_window_revalidates_restored_source_and_deadline(sustained):
     job.client.capture_epoch = args.capture_epoch
     with pytest.raises(TimeoutError, match="outer deadline"):
         gate._sustain_phase(args, 1)  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("phase,seconds,wall,soak", [
+    ("sustain", 21600, 21900, None), ("sustain", 300, 21900, None),
+    ("train", 21600, 21900, 6), ("sustain", 60, 21900, 6),
+    ("sustain", 21600, 21901, 6), ("sustain", 21600, 21900, 5),
+    ("sustain", 60, 89, None), ("train", 60, float("nan"), None),
+])
+def test_long_timing_requires_explicit_exact_sustain_contract(phase, seconds, wall, soak):
+    """A larger timeout or seconds flag cannot silently enter six-hour mode."""
+    with pytest.raises(ValueError):
+        gate.qualification_timing(phase, seconds, wall, soak)
+
+
+def test_ordinary_and_explicit_six_hour_timing_are_separate():
+    """Explicit long admission does not relax ordinary commands."""
+    gate.qualification_timing("train", 60, 180)
+    gate.qualification_timing("sustain", 300, 600)
+    gate.qualification_timing("sustain", 21600, 21900, 6)
+
+
+def test_six_hour_loop_keeps_bounded_live_progress_and_real_snapshot_calls(sustained):
+    """A fake clock exercises the full duration without claiming measured six-hour evidence."""
+    args, job = sustained
+    args.seconds, args.soak_hours = 21600, 6
+    saves = []
+    def save(directory):
+        saves.append(directory)
+        return directory / "actual-durable-save.distill-job"
+    job.save = save
+    returned, report = gate._sustain_phase(args, 21900)  # pylint: disable=protected-access
+    assert returned is job and report["sixHourWindow"]
+    assert 1 <= report["durableSnapshots"] == len(saves) <= 36
+    assert 170 <= len(report["progressWindows"]) <= 362
+    previous_time, previous_update, previous_cursor = 0, 250, 10
+    for observation in report["progressWindows"]:
+        assert 0 < observation["activeWallSeconds"] - previous_time <= 120
+        assert observation["updates"] > previous_update and observation["cursor"] > previous_cursor
+        previous_time = observation["activeWallSeconds"]
+        previous_update, previous_cursor = observation["updates"], observation["cursor"]
+    assert (args.directory / "sustain-progress.json").is_file()
+    assert not (args.directory / "sustain-progress.tmp").exists()
+    assert "actual-durable-save" in (args.directory / "sustain-checkpoint.json").read_text()
+
+
+@pytest.mark.parametrize("stalled", ["intake", "optimizer"])
+def test_six_hour_window_rejects_stalls_after_initial_valid_progress(sustained, stalled):
+    """Positive lifetime totals cannot conceal a later loss of one required workload."""
+    args, job = sustained
+    args.seconds, args.soak_hours = 21600, 6
+    ingest, update = job.ingest, job.update
+    if stalled == "intake":
+        job.ingest = lambda proposal: (ingest(proposal)
+                                       if job.trainer.completed_updates < 350 else None)
+    else:
+        job.update = lambda: update() if job.trainer.completed_updates < 350 else SimpleNamespace(
+            optimizer_updated=True)
+    with pytest.raises(RuntimeError, match="every bounded interval"):
+        gate._sustain_phase(args, 21900)  # pylint: disable=protected-access
