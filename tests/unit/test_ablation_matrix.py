@@ -221,3 +221,79 @@ def test_boolean_cell_identity_and_changed_holdout_exposure_reject():
         SCENARIOS[0] + "/" + POLICIES[0]]["rows"] += 1
     with pytest.raises(ValueError, match="reconcile"):
         combine_studies(values, spec)
+
+
+
+def with_curves(values):
+    """Attach small consistent checkpoint statistics; these remain test-only metadata."""
+    for report, _ in values:
+        report["config"]["validationUpdates"] = [100, 250]
+        for variant in report["variants"]:
+            points = []
+            variant["before"]["sequences"] = variant["after"]["sequences"] = 28
+            for update in (0, 100, 250):
+                if update == 0:
+                    measured = variant["before"]
+                    weights = variant["initialWeightsSha256"]
+                elif update == 250:
+                    measured = variant["after"]
+                    weights = variant["trainedWeightsSha256"]
+                else:
+                    measured = {**evaluation(variant["after"]["turnMae"] + 0.05),
+                                "sequences": 28}
+                    weights = digest((report["config"]["seed"], variant["variant"], update))
+                points.append({key: copy.deepcopy(value) for key, value in {
+                    **measured, "update": update, "weightsSha256": weights,
+                    "torchEvaluationWallMs": 1.0}.items() if key != "perScenarioPolicy"})
+            variant["training"]["validationCurve"] = points
+    return values
+
+
+def test_complete_curves_preserve_paired_updates_and_both_teacher_strata():
+    """Learning efficiency is reported by checkpoint, without manufacturing a maturity pass."""
+    spec = MatrixSpec((1, 2, 3), (2, 4, 6), 250)
+    result = combine_studies(with_curves(records(spec)), spec)
+    assert result["maturityQualified"] is False
+    points = result["variants"]["no-bearing"]["heldOutLearningCurve"]
+    assert [point["update"] for point in points] == [0, 100, 250]
+    assert points[0]["measurements"]["turnMae"]["mean"] == 0.5
+    assert points[-1]["pairedDifferenceFromFull"]["turnMae"]["mean"] == pytest.approx(0.01)
+    assert points[1]["measurements"][POLICIES[0] + "/turnMae"]["count"] == 9
+    assert points[1]["measurements"][POLICIES[1] + "/turnMae"]["count"] == 9
+    legacy = combine_studies(records(spec), spec)
+    assert "heldOutLearningCurve" not in legacy["variants"]["full"]
+
+
+@pytest.mark.parametrize("mutate,reason", [
+    (lambda value: value["training"]["validationCurve"].pop(1), "complete declared"),
+    (lambda value: value["training"]["validationCurve"][1].update(update=99), "chronology"),
+    (lambda value: value["training"]["validationCurve"][1].update(update=True), "integer"),
+    (lambda value: value["training"]["validationCurve"][1].update(sequences=29), "exposure"),
+    (lambda value: value["training"]["validationCurve"][1].update(turnMae=float("nan")), "finite"),
+    (lambda value: value["training"]["validationCurve"][0].update(
+        weightsSha256=digest("other")), "weights"),
+    (lambda value: value["training"]["validationCurve"][-1].update(
+        weightsSha256=digest("other")), "weights"),
+    (lambda value: value["training"]["validationCurve"][1]["perPolicy"].pop(POLICIES[0]),
+     "policy strata"),
+])
+def test_partial_or_unpaired_curves_cannot_be_pooled(mutate, reason):
+    """A valid final model cannot excuse fabricated curve identity or missing observations."""
+    spec = MatrixSpec((1,), (2,), 250)
+    values = with_curves(records(spec))
+    mutate(values[0][0]["variants"][0])
+    with pytest.raises(ValueError, match=reason):
+        combine_studies(values, spec)
+
+
+def test_curve_declaration_requires_final_update_and_same_coverage_for_all_cells():
+    """An enabled curve is a complete paired schedule rather than selected favorable updates."""
+    spec = MatrixSpec((1,), (2, 3), 250)
+    values = with_curves(records(spec))
+    values[0][0]["config"]["validationUpdates"] = [100]
+    with pytest.raises(ValueError, match="omits final"):
+        combine_studies(values, spec)
+    values = with_curves(records(spec))
+    values[1][0]["config"]["validationUpdates"] = []
+    with pytest.raises(ValueError, match="hyperparameters"):
+        combine_studies(values, spec)

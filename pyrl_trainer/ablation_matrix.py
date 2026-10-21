@@ -177,12 +177,13 @@ def read_study(directory):
     return report, digest
 
 
-def _policy_metrics(evaluation):
+def _policy_metrics(evaluation, compact=False):
     groups = evaluation["perPolicy"]
     _require(set(groups) == set(POLICIES), "both teacher policy strata required")
-    _require(set(evaluation["perScenarioPolicy"]) == {
-        scenario + "/" + policy for scenario in SCENARIOS for policy in POLICIES},
-        "complete scenario/policy strata required")
+    if not compact:
+        _require(set(evaluation["perScenarioPolicy"]) == {
+            scenario + "/" + policy for scenario in SCENARIOS for policy in POLICIES},
+            "complete scenario/policy strata required")
     result = {}
     for policy, group in groups.items():
         rows = _integer(group["rows"], 1, 1_000_000)
@@ -193,17 +194,18 @@ def _policy_metrics(evaluation):
                           "boostDisagreement": disagreements / rows}
     _require(sum(group["rows"] for group in groups.values()) == evaluation["rows"],
              "policy rows do not partition held-out data")
-    for policy, group in groups.items():
-        selected = [evaluation["perScenarioPolicy"][scenario + "/" + policy]
-                    for scenario in SCENARIOS]
-        for value in selected:
-            size = _integer(value["rows"], 1, 1_000_000)
-            _integer(value["boostDisagreements"], 0, size)
-        for key in ("rows", "turnAbsoluteError", "turnSquaredError",
-                    "boostDisagreements", "lossSum"):
-            total = sum(_number(value[key]) for value in selected)
-            _require(math.isclose(total, _number(group[key]), rel_tol=1e-9, abs_tol=1e-9),
-                     "scenario/policy measurements do not reconcile")
+    if not compact:
+        for policy, group in groups.items():
+            selected = [evaluation["perScenarioPolicy"][scenario + "/" + policy]
+                        for scenario in SCENARIOS]
+            for value in selected:
+                size = _integer(value["rows"], 1, 1_000_000)
+                _integer(value["boostDisagreements"], 0, size)
+            for key in ("rows", "turnAbsoluteError", "turnSquaredError",
+                        "boostDisagreements", "lossSum"):
+                total = sum(_number(value[key]) for value in selected)
+                _require(math.isclose(total, _number(group[key]), rel_tol=1e-9, abs_tol=1e-9),
+                         "scenario/policy measurements do not reconcile")
     rows = _integer(evaluation["rows"], 1, 1_000_000)
     absolute = sum(_number(group["turnAbsoluteError"]) for group in groups.values()) / rows
     disagreements = sum(group["boostDisagreements"] for group in groups.values()) / rows
@@ -227,6 +229,56 @@ def _measurements(variant):
     return result
 
 
+def _curve_updates(config):
+    """Legacy final-only studies remain readable; enabled curves close at the full budget."""
+    updates = config.get("validationUpdates", [])
+    _require(isinstance(updates, list) and len(updates) <= 16,
+             "bounded validation update declaration required")
+    for value in updates:
+        _integer(value, 1, config["updates"])
+    _require(updates == sorted(set(updates)), "canonical distinct validation updates required")
+    if updates:
+        _require(updates[-1] == config["updates"], "validation curve omits final update")
+    return [0, *updates] if updates else []
+
+
+def _curve_values(point):
+    """Only aggregate and separate policy agreement enters intermediate curve summaries."""
+    values = {key: _number(point[key]) for key in
+              ("turnMae", "turnMse", "loss", "boostDisagreement")}
+    for policy, metrics in _policy_metrics(point, compact=True).items():
+        values.update({policy + "/" + key: value for key, value in metrics.items()})
+    return values
+
+
+def _checked_curve(variant, updates):
+    """Bind every compact point to the same held-out exposure and real endpoint weights."""
+    points = variant["training"].get("validationCurve", [])
+    _require(isinstance(points, list) and len(points) == len(updates),
+             "complete declared validation curve required")
+    result = {}
+    for expected, point in zip(updates, points):
+        _require(_integer(point["update"], 0, variant["training"]["updates"]) == expected,
+                 "validation curve chronology changed")
+        _sha(point["weightsSha256"])
+        _number(point["torchEvaluationWallMs"])
+        _require(point["rows"] == variant["after"]["rows"]
+                 and _integer(point["sequences"], 1, 1_000_000) == variant["after"]["sequences"],
+                 "validation curve held-out exposure changed")
+        result[expected] = _curve_values(point)
+        if expected in (0, variant["training"]["updates"]):
+            initial = expected == 0
+            _require(point["weightsSha256"] == variant[
+                "initialWeightsSha256" if initial else "trainedWeightsSha256"],
+                "validation endpoint weights changed")
+            evaluation = variant["before" if initial else "after"]
+            _require(all(point[key] == evaluation[key] for key in
+                         ("rows", "sequences", "turnMae", "turnMse", "loss",
+                          "boostDisagreement", "perPolicy")),
+                     "validation endpoint metrics changed")
+    return result
+
+
 def _distribution(values):
     return {"count": len(values), "mean": statistics.fmean(values), "minimum": min(values),
             "maximum": max(values), "negative": sum(value < 0 for value in values),
@@ -234,10 +286,29 @@ def _distribution(values):
             "positive": sum(value > 0 for value in values)}
 
 
+def _summarize_curves(curves, spec, name):
+    """Keep paired cell distributions at each measured optimizer checkpoint."""
+    points = []
+    for update in curves[spec.cells[0], name]:
+        absolute, paired = {}, {}
+        for cell in spec.cells:
+            values = curves[cell, name][update]
+            full = curves[cell, "full"][update]
+            for key, value in values.items():
+                absolute.setdefault(key, []).append(value)
+                paired.setdefault(key, []).append(value - full[key])
+        points.append({"update": update,
+                       "measurements": {key: _distribution(value)
+                                        for key, value in absolute.items()},
+                       "pairedDifferenceFromFull": {key: _distribution(value)
+                                                    for key, value in paired.items()}})
+    return points
+
+
 def combine_studies(studies, spec):
     """Reject missing/unpaired cells and preserve per-cell differences from the Full graph."""
     _require(len(studies) == len(spec.cells), "complete balanced seed/fold matrix required")
-    cells, common, initial, parameters = {}, None, {}, {}
+    cells, common, initial, parameters, curves = {}, None, {}, {}, {}
     for report, digest in studies:
         _sha(digest)
         _require(report.get("measurementComplete") is True and report.get("status") == "measured"
@@ -249,6 +320,7 @@ def combine_studies(studies, spec):
         _require(cell in spec.cells and cell not in cells, "duplicate or foreign seed/fold cell")
         _require(_integer(config["updates"], 1, 10000) == spec.updates,
                  "optimizer budget differs from requested matrix")
+        curve_updates = _curve_updates(config)
         fixed_config = {key: value for key, value in config.items()
                         if key not in ("seed", "validationSeed")}
         identity = (fixed_config, report["corpusManifestSha256"],
@@ -263,6 +335,7 @@ def combine_studies(studies, spec):
         exposure = None
         for name, value in variants.items():
             training = value["training"]
+            curves[cell, name] = _checked_curve(value, curve_updates)
             _require(_integer(training["updates"], 1, 10000) == spec.updates
                      and _integer(training["trainingRows"], 1, 1_000_000_000) > 0,
                      "missing actual optimizer work")
@@ -307,6 +380,8 @@ def combine_studies(studies, spec):
                                           for key, value in absolute.items()},
                          "pairedDifferenceFromFull": {key: _distribution(value)
                                                       for key, value in paired.items()}}
+        if curves[spec.cells[0], name]:
+            results[name]["heldOutLearningCurve"] = _summarize_curves(curves, spec, name)
     return {"schemaVersion": 1, "kind": "paired-ablation-matrix-v1", "measurementComplete": True,
             "releaseQualified": False, "maturityQualified": False, "profileChoice": None,
             "replicatedSeedFoldCoverage": len(spec.seeds) >= 3 and len(spec.validation_seeds) >= 3,

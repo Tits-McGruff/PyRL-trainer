@@ -493,3 +493,14 @@ performance. CI verifies a real two-update child study as a one-cell smoke.
 Exact job source identity also includes `sensor_contract.py`; a changed sensor
 parser cannot retain the identity of a cold exact trainer restart. Checkpoint files
 remain untouched and exact restoration still requires matching trainer source.
+
+
+For held-out learning curves, add repeated `--validation-update 250 --validation-update 500 --validation-update 1000` flags to each child study. The
+final requested optimizer update is included automatically; checkpoint work is
+bounded at sixteen positive points plus the initial model. Checkpoints evaluate
+the same held-out native lives without changing packed weights, CPU/CUDA RNG or
+the paired Adam trajectory. The matrix reader validates complete matching curves
+and reports per-update cell distributions and differences from Full, including
+both teacher-policy strata. Final-only studies remain supported. Agreement curves
+provide maturity evidence alongside the existing native gameplay and performance
+gates; they do not automatically choose production sensor defaults.

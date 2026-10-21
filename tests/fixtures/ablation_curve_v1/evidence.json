@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "nativeSourceSha256": "b2828e0390c51138627616d705ba7f59369ee73c39115e17031426bf52d32b8d",
+  "nativeCommit": "e8673ff9dd05926f497c73fdc36de5160ed9e51d",
+  "files": {
+    "manifest.json": {
+      "sha256": "a91d5915053650bc7874ac288901b4a116e0d97b07dd6017e5988db76d4d0b53",
+      "gzipSha256": "b46f861edfa1a28c48d96bce5805714d756e19e689026054db5ccd48155b5456"
+    },
+    "weights.f32": {
+      "sha256": "9f37db17fd49cd2fd1ddcf131208a1b35ff73773c3da21af047a321dd8da254e",
+      "gzipSha256": "9a18f937aae87233a1ba54471a5366fd6a2ecfd11ff67f4d08d581d19e2f8bd6"
+    },
+    "receipt.json": {
+      "sha256": "1cc3dffc66e003299343faf0dbd96a16e41246ed308862d501231e944d0c0bcb",
+      "gzipSha256": "4a90a941b3ac10e91d840200ccac34d84e74adec986bb0029f10dcc39a03ccd4"
+    }
+  }
+}

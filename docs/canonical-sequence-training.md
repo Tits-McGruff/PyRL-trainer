@@ -226,3 +226,32 @@ native binary fingerprints, initialized/trained artifacts, per-scenario agreemen
 and actual gameplay outcomes. Negative quality remains measured data; a completed
 study never sets `releaseQualified` true. Representative populations, native
 performance, sensor freeze and integrated soak are separate acceptance gates.
+
+
+### Held-out agreement checkpoints
+
+Pass repeated `--validation-update` flags to `tactical_ablation_gate` to measure
+learning rather than only initialized/final quality. For example, an explicit
+2,000-update study can request updates 250, 500, 1,000 and 1,500; the final 2,000
+point is included automatically. At most sixteen distinct positive checkpoints
+are admitted, plus the initial update-zero point. Omit the flags for the existing
+final-only study. Every variant uses the same checkpoints and paired training
+window schedule.
+
+Each checkpoint evaluates the same complete held-out native lives with separate
+student recurrent state. Its compact receipt records packed-weight identity,
+row/sequence exposure, aggregate error/loss, both teacher-policy sufficient
+statistics and descriptive evaluation time. Full scenario/policy strata remain in
+the initialized/final records. Evaluation must preserve packed parameters and
+CPU/CUDA RNG state. Regression checks use a frozen Rust-compiled recurrent graph
+and real Adam/TBPTT to require identical final packed weights, optimizer tensors,
+window-schedule digest and update trace with checkpoints enabled or disabled.
+
+`ablation_matrix` rejects partial or reordered curves, changed exposure or endpoint
+weights, and unreconciled policy statistics. Enabled matrices include a
+`heldOutLearningCurve` per variant: cellwise distributions and paired differences
+from Full at each measured update. Older final-only studies stay readable.
+Intermediate agreement curves do not include native gameplay evaluations and do
+not automatically declare convergence, model maturity, a winning profile or a
+release pass. Those decisions require the retained curves and remaining gameplay,
+representative-population, capacity and real-time evidence.

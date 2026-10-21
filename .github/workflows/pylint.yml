@@ -91,12 +91,24 @@ jobs:
           --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification
           --directory tactical-ablation-smoke --device cpu --updates 2
           --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12
-          --validation-seed 2
+          --validation-seed 2 --validation-update 1
       - name: Verify paired ablation grid receipts and teacher policy strata
         run: >-
           python -m pyrl_trainer.ablation_matrix --study tactical-ablation-smoke
           --initialization-seed 1 --validation-seed 2 --updates 2
           --output tactical-ablation-matrix-smoke.json
+      - name: Verify real held-out checkpoint coverage
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("tactical-ablation-matrix-smoke.json").read_bytes())
+          assert report["maturityQualified"] is False
+          for variant in report["variants"].values():
+              points = variant["heldOutLearningCurve"]
+              assert [point["update"] for point in points] == [0, 1, 2]
+              assert all(point["measurements"]["turnMae"]["count"] == 1 for point in points)
+          PY
       - name: Native teacher codec interoperability
         run: |
           .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference

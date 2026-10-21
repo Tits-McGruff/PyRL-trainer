@@ -63,11 +63,31 @@ def _write_json(path, value):
     _write(path, (json.dumps(value, indent=2, allow_nan=False) + "\n").encode())
 
 
+def validation_updates(values, updates):
+    """Admit at most sixteen explicit held-out checkpoints, always closing at the final update."""
+    _require(isinstance(updates, int) and not isinstance(updates, bool)
+             and 1 <= updates <= 10000, "invalid curve update budget")
+    values = () if values is None else values
+    _require(isinstance(values, (tuple, list)) and len(values) <= 16
+             and all(isinstance(value, int) and not isinstance(value, bool)
+                     and 1 <= value <= updates for value in values)
+             and len(set(values)) == len(values),
+             "validation updates require distinct integers within the optimizer budget")
+    if not values:
+        return ()
+    result = tuple(sorted({*values, updates}))
+    _require(len(result) <= 16, "validation curve including final update exceeds sixteen points")
+    return result
+
+
 def _arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("corpus", "canonical-runner", "tactical-runner", "directory"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--variant", action="append", choices=VARIANTS)
+    parser.add_argument("--validation-update", type=int, action="append",
+                        help=("Record held-out agreement after this update; "
+                              "maximum 16 including the automatic final point"))
     parser.add_argument("--device", choices=("cpu", "cuda:0"), default="cuda:0")
     for name, default in [("updates", 250), ("seed", 1), ("validation-seed", 2),
                           ("batch-sequences", 32), ("sequence-length", 64), ("burn-in", 32),
@@ -86,6 +106,10 @@ def _arguments():
             parser.error("out of range " + name)
     if args.sequence_length + args.burn_in > 256:
         parser.error("burn-in plus BPTT exceeds 256 deliveries")
+    try:
+        args.validation_update = validation_updates(args.validation_update, args.updates)
+    except ValueError as error:
+        parser.error(str(error))
     args.variant = args.variant or list(VARIANTS)
     if len(set(args.variant)) != len(args.variant):
         parser.error("duplicate ablation variant")
@@ -101,6 +125,8 @@ class AblationStudy:
     """One isolated, finite experiment; every variant receives identical native windows."""
 
     def __init__(self, args):
+        args.validation_update = validation_updates(
+            getattr(args, "validation_update", ()), args.updates)
         self.args = args
         self.started = time.perf_counter()
         self.corpus = load_tactical_corpus(args.corpus)
@@ -129,7 +155,8 @@ class AblationStudy:
                        "config": {**asdict(self.config), "seed": args.seed,
                                   "updates": args.updates, "validationSeed": args.validation_seed,
                                   "nativeSteps": args.native_steps,
-                                  "nativeWorkers": args.native_workers},
+                                  "nativeWorkers": args.native_workers,
+                                  "validationUpdates": list(args.validation_update)},
                        "scope": (
                            'Synthetic native tactical teacher lives; same data/seeds/windows '
                            'across canonical graph-input ablations. Split/Concat removes inputs '
@@ -234,7 +261,38 @@ class AblationStudy:
                 "foodEarned": sum(trial["foodEarned"] for trial in value["trials"]),
                 "kills": sum(trial["kills"] for trial in value["trials"])}
 
-    def _train(self, model):
+    def _curve_point(self, model, update, agreement=None):
+        """Observe complete held-out lives without advancing model parameters or trainer RNGs."""
+        self._remaining()
+        weights = hashlib.sha256(model.export_weights()).hexdigest()
+        cpu_rng = torch.random.get_rng_state().clone()
+        device = model.flat_parameters.device
+        cuda_rng = torch.cuda.get_rng_state(device).clone() if device.type == "cuda" else None
+        agreement = (evaluate_agreement(model, self.corpus, self.validation)
+                     if agreement is None else agreement)
+        _require(hashlib.sha256(model.export_weights()).hexdigest() == weights,
+                 "held-out evaluation changed packed weights")
+        _require(torch.equal(cpu_rng, torch.random.get_rng_state()),
+                 "held-out evaluation advanced CPU RNG")
+        if cuda_rng is not None:
+            _require(torch.equal(cuda_rng, torch.cuda.get_rng_state(device)),
+                     "held-out evaluation advanced CUDA RNG")
+        self._remaining()
+        # Sufficient statistics for both teacher policies keep sixteen checkpoints bounded.
+        # Full per-scenario strata remain in the initial/final agreement records.
+        point = {"update": update, "weightsSha256": weights, **{key: agreement[key] for key in
+                 ("rows", "sequences", "turnMse", "turnMae", "boostDisagreement", "loss",
+                  "perPolicy", "torchEvaluationWallMs")}}
+        return point, agreement
+
+    def _train(self, model, before=None):
+        """Train one paired schedule, optionally observing independent held-out lives."""
+        checkpoints = validation_updates(
+            getattr(self.args, "validation_update", ()), self.args.updates)
+        curve, last_validation = [], None
+        if checkpoints:
+            initial, _ = self._curve_point(model, 0, before)
+            curve.append(initial)
         trainer = CanonicalSequenceTrainer(model, self.config)
         schedule = hashlib.sha256(b"native-tactical-window-schedule-v1\0")
         trace, rows, burn_rows, unknown = [], 0, 0, 0
@@ -257,9 +315,13 @@ class AblationStudy:
                 trace.append({"update": update, "loss": result.loss,
                               "turnMse": result.turn_mse,
                               "boostDisagreement": result.boost_disagreement})
+            if update in checkpoints:
+                point, last_validation = self._curve_point(model, update)
+                curve.append(point)
         return {"updates": trainer.completed_updates, "trainingRows": rows,
                 "burnInRows": burn_rows, "unknownStateStarts": unknown,
-                "scheduleSha256": schedule.hexdigest(), "trace": trace}
+                "scheduleSha256": schedule.hexdigest(), "trace": trace,
+                "validationCurve": curve}, last_validation
 
     def _parity(self, root, model, request, source):
         sequence = self.validation[0]
@@ -301,8 +363,9 @@ class AblationStudy:
         native_before = self._native(
             root, "native-before", initial_path, initial, receipt["sourceSha256"]
         )
-        training = self._train(model)
-        after = evaluate_agreement(model, self.corpus, self.validation)
+        training, after = self._train(model, before)
+        if after is None:
+            after = evaluate_agreement(model, self.corpus, self.validation)
         parity = self._parity(root, model, request, receipt["sourceSha256"])
         trained_path, trained = self._artifact(root, variant, model, self.args.updates)
         _require(trained.weights_sha256 != initial.weights_sha256,
