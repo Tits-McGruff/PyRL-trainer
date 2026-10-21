@@ -238,8 +238,14 @@ class DistillationJob:
             free, _total = torch.cuda.mem_get_info(self.device)
             if free < self.device_estimate:
                 raise DistillationContractError("insufficient free CUDA memory for admitted job")
+            # One distillation process owns this device policy, including private
+            # compiler graph pools; no eager/compiled CUDA path may exceed it.
+            torch.cuda.set_per_process_memory_fraction(
+                config.device_bytes / torch.cuda.get_device_properties(self.device).total_memory,
+                self.device)
         self.model = CanonicalGraph(manifest, weights, self.device)
-        self.trainer = CanonicalSequenceTrainer(self.model, sequence)
+        self.trainer = CanonicalSequenceTrainer(
+            self.model, sequence, cuda_graphs=self.device.type == "cuda")
         self.sampler = ReplayWindowSampler(replay, manifest, sequence, seed=config.seed ^ 0x5A17)
         self.sampler.checkpoint_fields()  # Prove sensor/cadence identity before any training.
         self.python_rng = random.Random(config.seed ^ 0x7171)
@@ -250,6 +256,8 @@ class DistillationJob:
             else None
         )
         self.environment = numerical_environment(self.device)
+        self.environment["sequenceExecution"] = (
+            "bounded-cuda-window-v1" if self.device.type == "cuda" else "eager-v1")
         self.job_id = uuid.uuid4().hex
         self.serial = 0
         self.attempted_updates = 0

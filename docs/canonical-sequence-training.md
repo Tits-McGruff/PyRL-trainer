@@ -259,8 +259,10 @@ representative-population, capacity and real-time evidence.
 
 `CanonicalSequenceTrainer(..., cuda_graphs=True)` is an opt-in qualification
 path for whole-window `torch.compile(backend="cudagraphs")` execution. The tactical
-ablation CLI exposes it as `--cuda-graphs --device cuda:0`. Ordinary jobs and
-checkpoints retain eager execution. This option preserves custom canonical gate
+ablation CLI exposes it as `--cuda-graphs --device cuda:0`. Durable CUDA jobs select this bounded path automatically, while CPU jobs stay
+eager. Their numerical restart environment records `sequenceExecution` as
+`bounded-cuda-window-v1` or `eager-v1`, and their allocator policy includes private
+graph pools within the existing device budget. This option preserves custom canonical gate
 equations, explicit state, delivered resets, padding and the burn-in detach;
 loss, finite checks, clipping and Adam remain outside the compiled window.
 Returned continuations own their storage across subsequent graph replays.
@@ -283,8 +285,11 @@ PyTorch captured every backend call. Compilation and warmup are included in stud
 wall time; a warmed microbenchmark is not a throughput or maturity gate. The
 qualification process caps the CUDA caching allocator at its declared device
 budget, including private graph pools. Compiler caches are derived state and are
-not serialized. This option does not yet change the standalone job/checkpoint
-contract or establish an exact compiled job restart guarantee.
+not serialized. Compiler state remains derived: durable restart restores canonical parameters,
+Adam, sampler and private RNG, then compiles the next eligible CUDA window afresh.
+The exact next-update job regression covers this path when CUDA is available;
+full GPU process-restart and live-contention measurements are still required
+for integration qualification.
 
 The retained [RTX 4080 qualification](performance/canonical_graph/cuda-window-windows-v1/evidence.json)
 compares 32 paired native-corpus windows at batch 32 / burn-in 32 / BPTT 64.

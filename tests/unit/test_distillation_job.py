@@ -65,6 +65,9 @@ def assert_optimizer_equal(left, right):
 def test_exact_job_restart_reproduces_optimizer_rng_next_sample_and_update(tmp_path, device):
     """One restored owner reproduces the very next update, including Adam and recurrence bits."""
     job = make_job(device)
+    expected_execution = "bounded-cuda-window-v1" if device.startswith("cuda") else "eager-v1"
+    assert job.environment["sequenceExecution"] == expected_execution
+    assert job.trainer.window_execution.enabled == device.startswith("cuda")
     job.update()
     job.validate()
     job.python_rng.random()
@@ -82,7 +85,15 @@ def test_exact_job_restart_reproduces_optimizer_rng_next_sample_and_update(tmp_p
         None if job.cuda_rng is None else torch.rand(5, generator=job.cuda_rng, device=job.device)
     )
     restored = load_job_checkpoint(saved)
+    # A restart restores canonical/optimizer/RNG state, never compiler buffers or
+    # output aliases from the former process. Its first next update compiles anew.
+    assert restored.environment["sequenceExecution"] == expected_execution
+    assert restored.trainer.window_execution is not job.trainer.window_execution
+    assert restored.trainer.window_execution.compiled is None
+    assert restored.trainer.window_execution.signature is None
     actual = restored.update()
+    if device.startswith("cuda"):
+        assert restored.trainer.window_execution.statistics()["compiledWindowCalls"] == 1
     assert restored.model.export_weights() == expected_weights
     assert_optimizer_equal(restored.trainer.optimizer.state_dict(), expected_optimizer)
     assert restored.sampler.checkpoint_fields() == expected_sampler
