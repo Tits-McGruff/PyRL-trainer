@@ -340,6 +340,7 @@ def run(argv=None):
     report.update({"schemaVersion": 1, "device": str(job.device), "environment": job.environment,
                    "producerStoragePolicy": job.client.producer_storage.to_object(),
                    "sequence": asdict(job.sequence), "replayBytes": job.replay.owned_bytes,
+                   "windowExecution": job.trainer.window_execution.statistics(),
                    "peakDeviceBytes": job.peak_device_bytes, "peakRssBytes": _peak_rss(),
                    "trainerSourceSha256": trainer_source_sha256(),
                    "trainingSamples": job.training_samples, "burnInSamples": job.burn_in_samples,

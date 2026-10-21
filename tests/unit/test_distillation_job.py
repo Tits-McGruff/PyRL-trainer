@@ -265,6 +265,8 @@ def test_offline_cli_runs_actual_updates_and_publishes_a_restartable_boundary(tm
         ]
     )
     assert result["updates"] == 2 and result["reason"] == "update_limit"
+    assert result["windowExecution"] == {"requested": "eager", "compiledWindowCalls": 0,
+                                         "eagerWindowCalls": 2, "compiledSignatures": 0}
     assert load_job_checkpoint(result["checkpoint"]).trainer.completed_updates == 2
     assert '"device": "cpu"' in capsys.readouterr().out
 

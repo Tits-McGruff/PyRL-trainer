@@ -268,6 +268,7 @@ def run(argv=None):
             "checkpoint": str(latest),
             "updates": job.trainer.completed_updates,
             "settings": _job_settings(job),
+            "windowExecution": job.trainer.window_execution.statistics(),
         }
         print(json.dumps(result, sort_keys=True))
         raise
@@ -282,6 +283,7 @@ def run(argv=None):
         "device": str(job.device),
         "settings": _job_settings(job),
         "peakDeviceBytes": job.peak_device_bytes,
+        "windowExecution": job.trainer.window_execution.statistics(),
         "training": job.last_training,
         "validation": job.last_validation,
         "candidateDue": job.candidate_due,

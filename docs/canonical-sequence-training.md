@@ -315,3 +315,11 @@ the `.distill-job` files remain the exact restart authority. The Slither host
 supplies the persistent workspace, native clock and generation-barrier evidence.
 This mode provides the harness for a long measurement; it does not itself claim
 that a six-hour or full-capacity qualification has passed.
+
+
+CLI and live qualification reports include `windowExecution` dispatch counts for
+the current process. Those counters restart at zero after loading a job; they are
+not serialized compiler state or lifetime optimizer counts. The separate-process
+restart regression saves a warm owner, starts a fresh interpreter and compares
+its next update's parameters, Adam state, recurrence, sampled windows and private
+RNG witnesses. CUDA cases run only on a real available device.
