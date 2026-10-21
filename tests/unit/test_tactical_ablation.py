@@ -246,8 +246,8 @@ def test_held_out_curve_preserves_real_optimizer_parameters_schedule_and_rng(cor
                                                                           device):
     """Actual recurrent Adam/TBPTT ends identically with and without intermediate observations."""
     trainers = []
-    def tracked(model, config):
-        trainer = CanonicalSequenceTrainer(model, config)
+    def tracked(model, config, **kwargs):
+        trainer = CanonicalSequenceTrainer(model, config, **kwargs)
         trainers.append(trainer)
         return trainer
     monkeypatch.setattr("pyrl_trainer.tactical_ablation_gate.CanonicalSequenceTrainer", tracked)
@@ -256,6 +256,7 @@ def test_held_out_curve_preserves_real_optimizer_parameters_schedule_and_rng(cor
     study.training, study.validation = corpus.split_by_seed({2})
     study.config = SequenceTrainingConfig(batch_size=2, bptt_steps=2, burn_in_steps=1)
     study.args = SimpleNamespace(updates=3, seed=7, validation_update=())
+    study.cuda_graphs = False
     study._remaining = lambda: 900  # pylint: disable=protected-access
     source = corpus.observations.tobytes()
     rng = torch.random.get_rng_state().clone()

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from enum import IntEnum
 import math
+from types import FunctionType
 
 import torch
 
@@ -154,13 +155,15 @@ class SequenceUpdate:
 
 def _before_delivery(state, boundary, active, life_rule):
     """Apply declared resets; transport/capture gaps always terminate unknown history."""
+    # Dynamo must compare tensors with primitive integers: IntEnum operands can
+    # otherwise fold to a Python False and silently remove a delivered reset.
     reset = (
-        (boundary == SequenceBoundary.GENERATION)
-        | (boundary == SequenceBoundary.GAP)
-        | (boundary == SequenceBoundary.CAPTURE_START)
+        (boundary == int(SequenceBoundary.GENERATION))
+        | (boundary == int(SequenceBoundary.GAP))
+        | (boundary == int(SequenceBoundary.CAPTURE_START))
     )
     if life_rule == "reset":
-        reset = reset | (boundary == SequenceBoundary.LIFE)
+        reset = reset | (boundary == int(SequenceBoundary.LIFE))
     return torch.where((reset & active).unsqueeze(-1), torch.zeros_like(state), state)
 
 
@@ -174,11 +177,118 @@ def _delivery(model, batch, index, state):
     return output, torch.where(active.unsqueeze(-1), proposed, state)
 
 
+def _sequence_forward(model, data, burn_in):
+    """Unroll one entire window, preserving canonical equations and TBPTT cuts."""
+    state = data.initial_state
+    with torch.no_grad():
+        for index in range(burn_in):
+            _output, state = _delivery(model, data, index, state)
+    state = state.detach()
+    predictions = []
+    for index in range(burn_in, data.observations.shape[0]):
+        output, state = _delivery(model, data, index, state)
+        predictions.append(output)
+    return torch.stack(predictions), state
+
+
+@dataclass(frozen=True)
+class _ForwardWindow:
+    """Inference-only storage; inactive prefix/suffix padding consumes no deliveries."""
+
+    observations: torch.Tensor
+    active: torch.Tensor
+    boundaries: torch.Tensor
+    initial_state: torch.Tensor
+
+
+def _pad_forward_window(data, burn_in, capacity):
+    """Align real burn-in to one fixed detach boundary without advancing padded state."""
+    prefix = capacity.burn_in_steps - burn_in
+    suffix = capacity.bptt_steps - (data.observations.shape[0] - burn_in)
+    def padded(value):
+        return torch.cat((value.new_zeros((prefix, *value.shape[1:])), value,
+                          value.new_zeros((suffix, *value.shape[1:]))))
+    return _ForwardWindow(padded(data.observations), padded(data.active),
+                          padded(data.boundaries), data.initial_state)
+
+
+class _WindowExecution:
+    """Optional qualification accelerator with one bounded compiled signature per owner.
+
+    Shorter burn-in/training windows use inactive padding. Other signatures keep
+    using eager CUDA. A separate code object isolates
+    Dynamo's per-code cache across independent graph/ablation owners; no global
+    compiler reset affects other trainers. Loss, finite checks and Adam stay eager.
+    These counters describe dispatch, not proof that a backend captured every call.
+    """
+
+    def __init__(self, enabled, capacity=SequenceTrainingConfig()):
+        if not isinstance(enabled, bool):
+            raise CanonicalGraphError("cuda_graphs must be an explicit boolean")
+        self.enabled = enabled
+        self.capacity = capacity
+        self.signature = None
+        self.compiled = None
+        self.compiled_calls = 0
+        self.eager_calls = 0
+
+    @staticmethod
+    def _admitted(model, data):
+        """Bound FX unrolling and private graph-pool work before invoking the compiler."""
+        time, batch, _width = data.observations.shape
+        nodes = model.manifest.nodes
+        work = sum(8 + 8 * (len(node.parameters) + len(node.hidden_sizes)) for node in nodes)
+        return (time <= 96 and batch <= 32 and len(nodes) <= 8
+                and model.manifest.total_parameters <= 65536
+                and model.manifest.total_state_size <= 256 and time * work <= 32768)
+
+    def __call__(self, model, data, burn_in):
+        training_steps = data.observations.shape[0] - burn_in
+        if (not self.enabled or burn_in > self.capacity.burn_in_steps
+                or training_steps > self.capacity.bptt_steps
+                or self.capacity.burn_in_steps + self.capacity.bptt_steps > 96
+                or not self._admitted(model, data)):
+            self.eager_calls += 1
+            return _sequence_forward(model, data, burn_in)
+        window = _pad_forward_window(data, burn_in, self.capacity)
+        if not self._admitted(model, window):
+            self.eager_calls += 1
+            return _sequence_forward(model, data, burn_in)
+        tensors = (window.observations, window.active, window.boundaries, window.initial_state)
+        signature = tuple((tuple(value.shape), value.stride(), value.dtype,
+                           value.device) for value in tensors)
+        if self.signature is not None and self.signature != signature:
+            self.eager_calls += 1
+            return _sequence_forward(model, data, burn_in)
+        if self.compiled is None:
+            # torch.compile caches on code objects. Own one cache for this model,
+            # rather than exhausting a shared frame's recompile limit across jobs.
+            isolated = FunctionType(_sequence_forward.__code__.replace(), globals())
+            self.compiled = torch.compile(isolated, backend="cudagraphs",
+                                          fullgraph=True, dynamic=False)
+            self.signature = signature
+        torch.compiler.cudagraph_mark_step_begin()
+        outputs, state = self.compiled(model, window, self.capacity.burn_in_steps)
+        self.compiled_calls += 1
+        return outputs[:training_steps], state
+
+    def statistics(self):
+        """Return bounded diagnostics without serializing derived compiler state."""
+        return {"requested": "cudagraphs" if self.enabled else "eager",
+                "compiledWindowCalls": self.compiled_calls, "eagerWindowCalls": self.eager_calls,
+                "compiledSignatures": int(self.compiled is not None)}
+
+
 class CanonicalSequenceTrainer:
     # pylint: disable=too-few-public-methods
     """Adam/TBPTT owner for independent canonical windows, beside existing PPO."""
 
-    def __init__(self, model: CanonicalGraph, config=SequenceTrainingConfig()):
+    def __init__(
+        self, model: CanonicalGraph, config=SequenceTrainingConfig(), *, cuda_graphs=False
+    ):
+        self.window_execution = _WindowExecution(cuda_graphs, config)
+        if cuda_graphs and model.flat_parameters.device.type != "cuda":
+            raise CanonicalGraphError("CUDA window execution requires a CUDA model")
         self.model = model
         self.config = config
         self.optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -188,16 +298,7 @@ class CanonicalSequenceTrainer:
         """Burn in without gradients, train one bounded segment, and detach its continuation."""
         batch.validate(self.model, self.config)
         data = batch.on_device(self.model.flat_parameters.device)
-        state = data.initial_state
-        with torch.no_grad():
-            for index in range(self.config.burn_in_steps):
-                _output, state = _delivery(self.model, data, index, state)
-        state = state.detach()
-        predictions = []
-        for index in range(self.config.burn_in_steps, data.observations.shape[0]):
-            output, state = _delivery(self.model, data, index, state)
-            predictions.append(output)
-        outputs = torch.stack(predictions)
+        outputs, state = self.window_execution(self.model, data, self.config.burn_in_steps)
         start = self.config.burn_in_steps
         active = data.active[start:]
         count = int(active.sum().item())
@@ -244,7 +345,7 @@ class CanonicalSequenceTrainer:
                 int(unknown.sum().item()),
                 gradient_norm,
                 updated,
-                state.detach(),
+                state.detach().clone(),
             )
 
     def evaluate(self, batch: SequenceBatch):

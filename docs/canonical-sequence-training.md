@@ -255,3 +255,45 @@ Intermediate agreement curves do not include native gameplay evaluations and do
 not automatically declare convergence, model maturity, a winning profile or a
 release pass. Those decisions require the retained curves and remaining gameplay,
 representative-population, capacity and real-time evidence.
+
+
+`CanonicalSequenceTrainer(..., cuda_graphs=True)` is an opt-in qualification
+path for whole-window `torch.compile(backend="cudagraphs")` execution. The tactical
+ablation CLI exposes it as `--cuda-graphs --device cuda:0`. Ordinary jobs and
+checkpoints retain eager execution. This option preserves custom canonical gate
+equations, explicit state, delivered resets, padding and the burn-in detach;
+loss, finite checks, clipping and Adam remain outside the compiled window.
+Returned continuations own their storage across subsequent graph replays.
+
+Each trainer compiles at most one tensor-shape/stride/device signature. Shorter
+burn-in prefixes are right-aligned with inactive padding before the fixed detach
+boundary; shorter training suffixes use inactive padding after their last real
+row. Padding never advances recurrence or contributes loss. The initial sequence
+configuration bounds this storage. Other signatures execute eagerly on the same
+CUDA device. Compilation admits at
+most 96 deliveries, 32 lanes, eight nodes, 65,536 parameters, 256 recurrent state
+values and 32,768 conservative unrolled operator units. Larger admitted training
+windows stay eager. Each owner has an isolated compiler code cache; the trainer
+never resets process-wide compiler caches. Unsupported compilation fails rather
+than concealing an error. CPU models reject an explicit CUDA-graph request.
+
+Qualification reports add `config.cudaGraphs` and training `windowExecution`
+dispatch counts when requested. Compiled dispatch counts alone do not prove that
+PyTorch captured every backend call. Compilation and warmup are included in study
+wall time; a warmed microbenchmark is not a throughput or maturity gate. The
+qualification process caps the CUDA caching allocator at its declared device
+budget, including private graph pools. Compiler caches are derived state and are
+not serialized. This option does not yet change the standalone job/checkpoint
+contract or establish an exact compiled job restart guarantee.
+
+The retained [RTX 4080 qualification](performance/canonical_graph/cuda-window-windows-v1/evidence.json)
+compares 32 paired native-corpus windows at batch 32 / burn-in 32 / BPTT 64.
+Loss, gradients, parameters, recurrent continuation and both Adam moment tensors
+matched eager CUDA exactly in this run. The final 16 updates averaged 26.86 ms
+compiled versus 278.42 ms eager; total measured update time, including compilation,
+was 33.26 seconds compiled versus 9.24 seconds eager. A separate 100-update run
+used the compiled path for every window and passed 256-delivery native export
+parity (output/state maximum errors 2.84e-7 / 8.05e-7). The capsule retains exact
+measured sources, experiment, receipts and links to the already-retained input
+corpus/artifact. These measurements qualify this bounded path; they do not
+establish maturity, native real-time performance or a six-hour integrated soak.

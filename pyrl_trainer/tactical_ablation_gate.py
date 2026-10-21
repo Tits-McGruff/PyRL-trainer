@@ -89,6 +89,8 @@ def _arguments():
                         help=("Record held-out agreement after this update; "
                               "maximum 16 including the automatic final point"))
     parser.add_argument("--device", choices=("cpu", "cuda:0"), default="cuda:0")
+    parser.add_argument("--cuda-graphs", action="store_true",
+                        help="Qualify bounded whole-window CUDA compilation; CPU is rejected")
     for name, default in [("updates", 250), ("seed", 1), ("validation-seed", 2),
                           ("batch-sequences", 32), ("sequence-length", 64), ("burn-in", 32),
                           ("cpu-threads", min(2, available_trainer_cpus())),
@@ -96,6 +98,8 @@ def _arguments():
                           ("native-workers", 1), ("deadline-seconds", 1800)]:
         parser.add_argument("--" + name, type=int, default=default)
     args = parser.parse_args()
+    if args.cuda_graphs and args.device == "cpu":
+        parser.error("--cuda-graphs requires --device cuda:0")
     bounds = {"updates": (1, 10000), "seed": (0, 0xffffffff), "validation_seed": (1, 64),
               "batch_sequences": (1, 256), "sequence_length": (16, 256), "burn_in": (0, 128),
               "cpu_threads": (1, available_trainer_cpus()), "device_memory_mib": (512, 65536),
@@ -127,6 +131,7 @@ class AblationStudy:
     def __init__(self, args):
         args.validation_update = validation_updates(
             getattr(args, "validation_update", ()), args.updates)
+        self.cuda_graphs = getattr(args, "cuda_graphs", False)
         self.args = args
         self.started = time.perf_counter()
         self.corpus = load_tactical_corpus(args.corpus)
@@ -138,6 +143,11 @@ class AblationStudy:
                                         cpu_threads=args.cpu_threads,
                                         device_bytes=args.device_memory_mib * 1024**2)
         self.device = admit_job_device(self.job)
+        if self.cuda_graphs:
+            _require(self.device.type == "cuda", "CUDA graphs require a CUDA device")
+            torch.cuda.set_per_process_memory_fraction(
+                self.job.device_bytes / torch.cuda.get_device_properties(self.device).total_memory,
+                self.device)
         torch.set_num_threads(args.cpu_threads)
         configure_distillation_precision()
         self.runners = {"canonical": args.canonical_runner, "tactical": args.tactical_runner}
@@ -156,7 +166,8 @@ class AblationStudy:
                                   "updates": args.updates, "validationSeed": args.validation_seed,
                                   "nativeSteps": args.native_steps,
                                   "nativeWorkers": args.native_workers,
-                                  "validationUpdates": list(args.validation_update)},
+                                  "validationUpdates": list(args.validation_update),
+                                  **({"cudaGraphs": True} if self.cuda_graphs else {})},
                        "scope": (
                            'Synthetic native tactical teacher lives; same data/seeds/windows '
                            'across canonical graph-input ablations. Split/Concat removes inputs '
@@ -295,7 +306,7 @@ class AblationStudy:
         if checkpoints:
             initial, _ = self._curve_point(model, 0, before)
             curve.append(initial)
-        trainer = CanonicalSequenceTrainer(model, self.config)
+        trainer = CanonicalSequenceTrainer(model, self.config, cuda_graphs=self.cuda_graphs)
         schedule = hashlib.sha256(b"native-tactical-window-schedule-v1\0")
         trace, rows, burn_rows, unknown = [], 0, 0, 0
         windows = paired_windows(self.corpus, self.training, self.config,
@@ -323,7 +334,9 @@ class AblationStudy:
         return {"updates": trainer.completed_updates, "trainingRows": rows,
                 "burnInRows": burn_rows, "unknownStateStarts": unknown,
                 "scheduleSha256": schedule.hexdigest(), "trace": trace,
-                "validationCurve": curve}, last_validation
+                "validationCurve": curve,
+                **({"windowExecution": trainer.window_execution.statistics()}
+                   if self.cuda_graphs else {})}, last_validation
 
     def _parity(self, root, model, request, source):
         sequence = self.validation[0]
