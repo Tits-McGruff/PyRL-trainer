@@ -125,7 +125,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 19889936f4b9177f91b9f7c36c46fb45afcd0b3a
+          ref: 55376ef264beb165b486ab9af04e1156b4b758d3
           path: .live-slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -161,10 +161,34 @@ jobs:
               --device cpu --workers "$workers" --spool-gib "$spool_gib" \
               --report "${{ github.workspace }}/live-distillation-cpu-w${workers}.json"
           done
+      - name: Live P0 trainer and four-shadow contention
+        working-directory: .live-slither
+        run: |
+          python - <<'PY'
+          import gzip, hashlib, json
+          from pathlib import Path
+          study = Path("docs/performance/sensor-v4/tactical-ablation-windows-v1")
+          inventory = json.loads((study / "evidence.json").read_bytes())
+          record = next(item for item in inventory["files"] if item["path"] == "full/trained.slither-brain")
+          encoded = (study / record["archive"]).read_bytes()
+          assert hashlib.sha256(encoded).hexdigest() == record["gzipSha256"]
+          original = gzip.decompress(encoded)
+          assert len(original) == record["bytes"]
+          assert hashlib.sha256(original).hexdigest() == record["sha256"]
+          with Path("native/target/contention-student.slither-brain").open("xb") as output:
+              output.write(original)
+          PY
+          node node_modules/tsx/dist/cli.mjs scripts/qualification/live-distillation.ts \
+            --pyrl-root "${{ github.workspace }}" --python "$(command -v python)" \
+            --device cpu --workers 3 --workload P0 --contention-seconds 60 \
+            --student-artifact native/target/contention-student.slither-brain \
+            --report "${{ github.workspace }}/live-distillation-contention-cpu-P0.json"
       - name: Retain live pipeline evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: live-distillation-cpu
-          path: live-distillation-cpu-w*.json
+          path: |
+            live-distillation-cpu-w*.json
+            live-distillation-contention-cpu-P0.json
           if-no-files-found: warn

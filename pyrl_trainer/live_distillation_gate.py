@@ -182,6 +182,8 @@ def _resume_phase(args, deadline):
     if metrics is None or int(metrics["totals"]["samples"], 16) == 0:
         raise RuntimeError("trained candidate produced no actual Rust shadow evaluations")
     checkpoint = job.save(args.directory / "checkpoints")
+    (args.directory / "sustain-checkpoint.json").write_text(
+        json.dumps({"checkpoint": str(checkpoint)}), encoding="utf-8")
     report = {"phase": "resume", "updates": job.trainer.completed_updates,
               "restartExact": True, "candidateSha256": candidate.sha256,
               "candidateWeightsSha256": candidate.weights_sha256,
@@ -192,26 +194,78 @@ def _resume_phase(args, deadline):
     return job, report
 
 
+def _sustain_phase(args, deadline):
+    """Consume new live chunks while actual optimizer work contends with four native shadows."""
+    pointer = json.loads((args.directory / "sustain-checkpoint.json").read_text(encoding="utf-8"))
+    job = load_job_checkpoint(Path(pointer["checkpoint"]))
+    if (str(job.device) != args.device or job.client.capture_epoch != args.capture_epoch
+            or job.client.producer_storage.max_bytes != args.spool_gib * 1024**3):
+        raise RuntimeError("sustained trainer source/device/storage mismatch")
+    started = time.monotonic()
+    initial_updates = job.trainer.completed_updates
+    initial_cursor = job.client.cursor
+    initial_samples = job.training_samples
+    next_fetch = started
+    fetches = 0
+    peak_replay = job.replay.owned_bytes
+    peak_reserved = 0
+    while time.monotonic() - started < args.seconds:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("sustained trainer exceeded its outer deadline")
+        if time.monotonic() >= next_fetch:
+            job.ingest(job.client.fetch())
+            fetches += 1
+            next_fetch = time.monotonic() + 1
+            peak_replay = max(peak_replay, job.replay.owned_bytes)
+        updated = job.update()
+        if updated is None:
+            time.sleep(0.01)
+        elif not updated.optimizer_updated:
+            raise RuntimeError("sustained trainer did not update trainable outputs")
+        if job.device.type == "cuda":
+            peak_reserved = max(peak_reserved, torch.cuda.max_memory_reserved(job.device))
+    if job.trainer.completed_updates <= initial_updates or job.client.cursor <= initial_cursor:
+        raise RuntimeError("sustained trainer requires both optimizer and live intake progress")
+    report = {"phase": "sustain", "updates": job.trainer.completed_updates,
+              "initialUpdates": initial_updates,
+              "optimizerUpdates": job.trainer.completed_updates - initial_updates,
+              "trainingSamplesInWindow": job.training_samples - initial_samples,
+              "initialCursor": initial_cursor, "finalCursor": job.client.cursor,
+              "fetches": fetches, "requestedSeconds": args.seconds,
+              "activeWallSeconds": time.monotonic() - started,
+              "peakReplayBytes": peak_replay,
+              "pendingCandidates": len(job.pending_candidates),
+              "droppedCandidates": job.dropped_candidates,
+              "peakReservedInWindowBytes": peak_reserved}
+    return job, report
+
+
 def run(argv=None):
     """First process saves update 125; the second proves update 126 then hands off 250."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=("train", "resume"), required=True)
+    parser.add_argument("--phase", choices=("train", "resume", "sustain"), required=True)
     parser.add_argument("--origin", required=True)
     parser.add_argument("--capture-epoch", required=True)
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
     parser.add_argument("--spool-gib", type=int, default=4)
+    parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--max-wall-seconds", type=float, default=180)
     args = parser.parse_args(argv)
     if not np.isfinite(args.max_wall_seconds) or not 1 <= args.max_wall_seconds <= 600:
         parser.error("wall deadline must be finite and between one and 600 seconds")
+    if not 60 <= args.seconds <= 300:
+        parser.error("sustained window must be 60..300 seconds")
+    if args.phase == "sustain" and args.max_wall_seconds < args.seconds + 30:
+        parser.error("sustained window requires at least 30 seconds of outer startup allowance")
     if not 1 <= args.spool_gib <= 64:
         parser.error("spool budget must be 1..64 GiB")
     args.directory.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     deadline = started + args.max_wall_seconds
-    job, report = (_train_phase if args.phase == "train" else _resume_phase)(args, deadline)
+    phase = {"train": _train_phase, "resume": _resume_phase, "sustain": _sustain_phase}[args.phase]
+    job, report = phase(args, deadline)
     report.update({"schemaVersion": 1, "device": str(job.device), "environment": job.environment,
                    "producerStoragePolicy": job.client.producer_storage.to_object(),
                    "sequence": asdict(job.sequence), "replayBytes": job.replay.owned_bytes,

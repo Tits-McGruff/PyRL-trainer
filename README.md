@@ -352,6 +352,20 @@ spawn rejection, exports the compatible portable original exactly, and deploys
 through Rust. After catalog deletion and cold-file reclamation, the live retained
 brain must keep its distilled origin and produce actual neural inference.
 
+The host also accepts `--workload P0|P1 --student-artifact PATH --contention-seconds 60`
+for a sustained contention window. Supply an independently Rust-validated Motion/B16
+portable student with the matching 1/60-second teacher cadence. The disposable world
+uses the modest native graph with 55/300 random evolved individuals and ten stochastic
+v2 teachers. After exact trainer restart and four-shadow activation, a third Python
+process restores the saved job and runs real Adam updates while fetching new live
+chunks for 60..300 seconds. Both optimizer progress and fresh source-cursor progress
+are required. Reports preserve failed real-time gates, replay/RSS/VRAM peaks, capture
+settlement/drops and each shadow's sample progress. The window includes Python startup
+and restore; active optimizer-window duration is reported separately. This does not
+qualify a mature population, crowded geometry, a long soak or production defaults.
+The live CI job includes a 60-second P0 CPU contention smoke and retains its
+measured timing result even when the real-time performance gate fails.
+
 ### Canonical TBPTT capacity probe
 
 Use an explicitly Rust-compiled manifest and initialized flat weights to measure
