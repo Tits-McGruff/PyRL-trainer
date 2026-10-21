@@ -313,3 +313,23 @@ def test_checkpoint_refuses_evaluation_that_mutates_parameters(corpus, monkeypat
     monkeypatch.setattr("pyrl_trainer.tactical_ablation_gate.evaluate_agreement", changing)
     with pytest.raises(ValueError, match="changed packed weights"):
         study._curve_point(curve_model(corpus, "cpu"), 1)  # pylint: disable=protected-access
+
+
+
+def test_foreign_native_initializer_rejects_before_model_allocation(corpus, tmp_path, monkeypatch):
+    """A canonical tool from another build cannot consume hours before the matrix rejects it."""
+    study = AblationStudy.__new__(AblationStudy)
+    study.corpus = corpus
+    study.args = SimpleNamespace(directory=tmp_path, seed=1)
+    def emit(_name, arguments):
+        root = Path(arguments[-1])
+        root.mkdir()
+        fixture = FIXTURE.parent / "ablation_curve_v1"
+        for name in ("manifest.json", "receipt.json", "weights.f32"):
+            (root / name).write_bytes(gzip.decompress((fixture / (name + ".gz")).read_bytes()))
+    study._invoke = emit  # pylint: disable=protected-access
+    allocate = Mock()
+    monkeypatch.setattr("pyrl_trainer.tactical_ablation_gate.CanonicalGraph", allocate)
+    with pytest.raises(ValueError, match="initializer source differs"):
+        study.variant("full")
+    allocate.assert_not_called()

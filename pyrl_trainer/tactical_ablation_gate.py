@@ -218,6 +218,8 @@ class AblationStudy:
         manifest = CanonicalGraphManifest.from_bytes(
             (root / "initialized/manifest.json").read_bytes())
         receipt = _json(root / "initialized/receipt.json")
+        _require(receipt["sourceSha256"] == self.corpus.source_sha256,
+                 "native initializer source differs from corpus")
         _require(manifest.sensor_sha256 == self.corpus.sensor.structural_sha256
                  and manifest.control_interval_seconds == self.corpus.control_interval_seconds,
                  "native manifest differs from corpus deployment")
