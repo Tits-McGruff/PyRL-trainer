@@ -25,6 +25,7 @@ from .sequence_distillation import CanonicalSequenceTrainer, SequenceTrainingCon
 
 SOURCE_FILES = (
     "canonical_graph.py",
+    "sensor_contract.py",
     "sequence_distillation.py",
     "distillation_transport.py",
     "distillation_client.py",

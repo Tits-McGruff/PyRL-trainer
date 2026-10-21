@@ -8,13 +8,9 @@ import torch
 
 from .canonical_graph import CanonicalGraphError, distillation_loss
 from .sequence_distillation import SequenceBatch, SequenceBoundary
+from .tactical_contract import VARIANTS
 
-# Split port zero is the scalar prefix; subsequent ports are canonical Motion channels.
-VARIANTS = {
-    "full": (), "no-bearing": (8,), "no-heading": (10, 11),
-    "no-velocity": (12, 13), "no-urgency": (14,), "no-density": (15,),
-    "core-only": tuple(range(7, 16)),
-}
+
 
 
 def ablation_graph(variant):
@@ -136,6 +132,8 @@ def evaluate_agreement(model, corpus, sequences):
     totals = {"rows": 0, "turnSquaredError": 0.0, "turnAbsoluteError": 0.0,
               "boostDisagreements": 0, "lossSum": 0.0}
     per_scenario = {}
+    per_policy = {}
+    per_scenario_policy = {}
     device = model.flat_parameters.device
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -159,10 +157,14 @@ def evaluate_agreement(model, corpus, sequences):
                       "boostDisagreements": int(((prediction[:, 1] > 0.35)
                                                  != labels[:, 1].bool()).sum().item()),
                       "lossSum": loss.sum().item()}
-            group = per_scenario.setdefault(sequence.scenario, dict.fromkeys(totals, 0))
+            groups = [per_scenario.setdefault(sequence.scenario, dict.fromkeys(totals, 0)),
+                      per_policy.setdefault(sequence.policy, dict.fromkeys(totals, 0)),
+                      per_scenario_policy.setdefault(sequence.scenario + "/" + sequence.policy,
+                                                     dict.fromkeys(totals, 0))]
             for key, value in values.items():
                 totals[key] += value
-                group[key] += value
+                for group in groups:
+                    group[key] += value
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     rows = totals["rows"]
@@ -172,4 +174,5 @@ def evaluate_agreement(model, corpus, sequences):
             "turnMae": totals["turnAbsoluteError"] / rows,
             "boostDisagreement": totals["boostDisagreements"] / rows,
             "loss": totals["lossSum"] / rows, "perScenario": per_scenario,
+            "perPolicy": per_policy, "perScenarioPolicy": per_scenario_policy,
             "torchEvaluationWallMs": (time.perf_counter() - started) * 1000}

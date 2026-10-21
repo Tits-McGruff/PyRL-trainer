@@ -456,3 +456,40 @@ complete files. The host verifies serial progression, exact retained inventory,
 oldest-file removal and retained physical bytes after every publication, then
 requires exact next-update restore from the latest checkpoint. The default remains
 one publication; reports state the selected publication count explicitly.
+
+
+### Replicated tactical ablation evidence
+
+Run `pyrl_trainer.tactical_ablation_gate` separately for each requested initializer
+seed and held-out geometry seed, using one immutable native corpus, runner pair,
+device/environment and optimizer budget. The corpus must contain every held-out
+seed plus training seeds. Each study still trains all seven variants on paired
+windows and performs actual before/after native student trials. Reports now retain
+separate deterministic/stochastic teacher-policy and scenario/policy statistics;
+these strata cannot cancel each other inside one aggregate agreement score.
+
+Combine completed studies with the reader-only `pyrl_trainer.ablation_matrix`:
+
+```text
+python -m pyrl_trainer.ablation_matrix --study SEED1_FOLD2 --study SEED1_FOLD3 --initialization-seed 1 --validation-seed 2 --validation-seed 3 --updates 5000 --output matrix.json
+```
+
+Supply every cell of the requested seed/fold Cartesian grid. A study's `--seed`
+selects initialization/sampling and `--validation-seed` excludes that complete
+native geometry seed from training. Repeated-initialization/fold coverage is
+reported only with at least three distinct identities on each axis; the example
+above intentionally does not meet that coverage. More optimizer updates alone do
+not prove a mature model.
+
+The reader verifies all seven ablations, matched windows within each cell, matching
+initial parameters across folds, unchanged sources/environment/hyperparameters,
+actual native outcome reports and exact portable bytes. It recomputes the trainer
+source identity from the retained source inventory. Results retain per-cell paired
+differences from Full, cell-wise macro averages and both policy strata. The tool
+never chooses a winner, claims independent folds/confidence intervals, promotes a
+sensor profile or qualifies representative populations, sensing cost or real-time
+performance. CI verifies a real two-update child study as a one-cell smoke.
+
+Exact job source identity also includes `sensor_contract.py`; a changed sensor
+parser cannot retain the identity of a cold exact trainer restart. Checkpoint files
+remain untouched and exact restoration still requires matching trainer source.

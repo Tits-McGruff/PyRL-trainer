@@ -143,6 +143,15 @@ def test_agreement_uses_all_held_out_rows_and_resets_only_at_sequence_boundaries
     expected = [index for sequence in validation for index in range(sequence.rows)]
     assert model.seen == expected
     assert result["loss"] >= 0 and result["torchEvaluationWallMs"] > 0
+    for policy in {sequence.policy for sequence in validation}:
+        selected = [row for sequence in validation if sequence.policy == policy
+                    for row in range(sequence.row_offset, sequence.row_offset + sequence.rows)]
+        group = result["perPolicy"][policy]
+        assert group["rows"] == len(selected)
+        assert group["turnAbsoluteError"] == pytest.approx(
+            np.abs(corpus.actions[selected, 0]).sum())
+        assert group["boostDisagreements"] == int((corpus.actions[selected, 1] == 0).sum())
+    assert sum(group["rows"] for group in result["perScenarioPolicy"].values()) == len(indices)
     model.manifest.control_interval_seconds = 0.03
     with pytest.raises(CanonicalGraphError):
         evaluate_agreement(model, corpus, validation)

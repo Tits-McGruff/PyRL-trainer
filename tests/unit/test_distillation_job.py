@@ -531,3 +531,15 @@ def test_shadow_metrics_bind_immutable_segment_and_preserve_exact_large_counters
     metrics["processEpoch"] = "19" * 16
     with pytest.raises(DistillationContractError, match="replaced/interrupted"):
         job.poll_shadow_metrics()
+
+
+def test_exact_trainer_source_identity_includes_sensor_parser(tmp_path, monkeypatch):
+    """Changing the sensor-contract reader must invalidate a cold exact job restart."""
+    from pyrl_trainer import distillation_job as owner  # pylint: disable=import-outside-toplevel
+    assert "sensor_contract.py" in owner.SOURCE_FILES
+    for name in owner.SOURCE_FILES:
+        (tmp_path / name).write_bytes(name.encode())
+    monkeypatch.setattr(owner, "__file__", str(tmp_path / "distillation_job.py"))
+    before = owner._compute_source_sha256()  # pylint: disable=protected-access
+    (tmp_path / "sensor_contract.py").write_bytes(b"changed parser")
+    assert owner._compute_source_sha256() != before  # pylint: disable=protected-access

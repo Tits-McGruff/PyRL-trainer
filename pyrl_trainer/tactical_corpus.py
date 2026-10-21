@@ -10,15 +10,11 @@ import stat
 import numpy as np
 
 from .sensor_contract import SensorContract, SensorContractError
+from .tactical_contract import POLICIES, SCENARIOS
 
 MAX_BYTES = 256 * 1024 * 1024
 WIDTH = 264
-SCENARIOS = (
-    "open-wander", "approaching", "receding", "crossing", "head-on", "corridor",
-    "crowd-opening", "wall-escape", "food-body-trap", "smaller-intercept",
-    "larger-threat", "boost-escape", "predicted-crossing", "saturation",
-)
-POLICIES = ("motion-v2-deterministic", "motion-v2-stochastic")
+
 
 
 class TacticalCorpusError(ValueError):

@@ -150,7 +150,8 @@ class AblationStudy:
         destination = self.args.directory / "sources"
         destination.mkdir()
         names = dict.fromkeys((*SOURCE_FILES, "canonical_parity.py", "tactical_corpus.py",
-                               "tactical_ablation.py", "tactical_ablation_gate.py"))
+                               "tactical_ablation.py", "tactical_ablation_gate.py",
+                               "tactical_contract.py"))
         records = {}
         for name in names:
             value = (Path(__file__).parent / name).read_bytes()

@@ -92,6 +92,11 @@ jobs:
           --directory tactical-ablation-smoke --device cpu --updates 2
           --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12
           --validation-seed 2
+      - name: Verify paired ablation grid receipts and teacher policy strata
+        run: >-
+          python -m pyrl_trainer.ablation_matrix --study tactical-ablation-smoke
+          --initialization-seed 1 --validation-seed 2 --updates 2
+          --output tactical-ablation-matrix-smoke.json
       - name: Native teacher codec interoperability
         run: |
           .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
@@ -113,6 +118,7 @@ jobs:
             tactical-report.json
             native-tactical-corpus/
             tactical-ablation-smoke/
+            tactical-ablation-matrix-smoke.json
           if-no-files-found: error
 
 
