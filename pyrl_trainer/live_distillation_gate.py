@@ -8,6 +8,7 @@ import argparse
 from dataclasses import asdict
 import hashlib
 import json
+import stat
 from pathlib import Path
 import struct
 import sys
@@ -222,6 +223,47 @@ def _write_progress(directory, progress):
     temporary.replace(directory / "sustain-progress.json")
 
 
+def _native_completion_path(args):
+    """Admit the private host receipt only for an explicitly bounded six-hour sustain."""
+    if not getattr(args, "wait_for_native_work", False):
+        return None
+    if (args.phase != "sustain" or args.soak_hours != 6 or args.seconds != 21600):
+        raise ValueError("native work completion requires explicit six-hour sustain")
+    path = args.directory / "native-work-complete.json"
+    if path.exists() or path.is_symlink():
+        raise ValueError("native work completion receipt must not predate the trainer window")
+    return path
+
+
+def _native_work_receipt(path, capture_epoch):
+    """Read a bounded host counter receipt; the trainer never derives simulation progress."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+        raise ValueError("invalid native work completion receipt file")
+    with path.open("rb") as stream:
+        encoded = stream.read(4097)
+    if len(encoded) > 4096:
+        raise ValueError("oversized native work completion receipt")
+    receipt = json.loads(encoded)
+    if not isinstance(receipt, dict) or set(receipt) != {
+            "schemaVersion", "captureEpoch", "requiredSteps", "completedSteps"}:
+        raise ValueError("native work completion receipt fields mismatch")
+    if (isinstance(receipt["schemaVersion"], bool) or receipt["schemaVersion"] != 1
+            or not isinstance(receipt["schemaVersion"], int)
+            or receipt["captureEpoch"] != capture_epoch or receipt["requiredSteps"] != "1296000"):
+        raise ValueError("native work completion receipt identity mismatch")
+    steps = receipt["completedSteps"]
+    if (not isinstance(steps, str) or not steps.isascii() or not steps.isdecimal()
+            or len(steps) > 20):
+        raise ValueError("native work completion receipt counter encoding mismatch")
+    if (len(steps) > 1 and steps.startswith("0")) or not 1296000 <= int(steps) < 2**64 - 1:
+        raise ValueError("native work completion receipt lacks the completed-step floor")
+    return receipt
+
+
 class _SustainProgress:
     """Bounded six-hour liveness observations and ordinary durable checkpoint rotation."""
 
@@ -255,7 +297,7 @@ class _SustainProgress:
                            "fetches": fetches, "snapshots": self.snapshots,
                            "peakReplayBytes": peak_replay, "peakReservedBytes": peak_reserved}
             self.windows.append(observation)
-            if len(self.windows) > 362:
+            if len(self.windows) > 367:
                 raise RuntimeError("six-hour progress observation admission exceeded")
             _write_progress(self.directory,
                             {"schemaVersion": 1, "status": "running", **observation})
@@ -270,6 +312,8 @@ class _SustainProgress:
 
 def _sustain_phase(args, deadline):
     """Consume new live chunks while actual optimizer work contends with four native shadows."""
+    completion_path = _native_completion_path(args)
+    completion_receipt = None
     pointer = json.loads((args.directory / "sustain-checkpoint.json").read_text(encoding="utf-8"))
     job = load_job_checkpoint(Path(pointer["checkpoint"]))
     if (str(job.device) != args.device or job.client.capture_epoch != args.capture_epoch
@@ -285,9 +329,16 @@ def _sustain_phase(args, deadline):
     peak_reserved = 0
     progress = (_SustainProgress(args.directory, job, started)
                 if getattr(args, "soak_hours", None) == 6 else None)
-    while time.monotonic() - started < args.seconds:
-        if time.monotonic() >= deadline:
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
             raise TimeoutError("sustained trainer exceeded its outer deadline")
+        if now - started >= args.seconds:
+            if completion_path is None:
+                break
+            completion_receipt = _native_work_receipt(completion_path, args.capture_epoch)
+            if completion_receipt is not None:
+                break
         if time.monotonic() >= next_fetch:
             job.ingest(job.client.fetch())
             fetches += 1
@@ -315,7 +366,9 @@ def _sustain_phase(args, deadline):
               "pendingCandidates": len(job.pending_candidates),
               "droppedCandidates": job.dropped_candidates,
               "peakReservedInWindowBytes": peak_reserved,
-              **(progress.report() if progress is not None else {})}
+              **(progress.report() if progress is not None else {}),
+              **({"nativeWorkCompletion": completion_receipt}
+                 if completion_path is not None else {})}
     return job, report
 
 
@@ -331,10 +384,13 @@ def run(argv=None):
     parser.add_argument("--spool-gib", type=int, default=4)
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--soak-hours", type=int, choices=(6,))
+    parser.add_argument("--wait-for-native-work", action="store_true",
+                        help="six-hour host must publish the native completed-step receipt")
     parser.add_argument("--max-wall-seconds", type=float, default=180)
     args = parser.parse_args(argv)
     try:
         qualification_timing(args.phase, args.seconds, args.max_wall_seconds, args.soak_hours)
+        _native_completion_path(args)
     except ValueError as error:
         parser.error(str(error))
     if not 1 <= args.spool_gib <= 64:

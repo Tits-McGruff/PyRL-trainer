@@ -1,5 +1,6 @@
 """Sustained qualification must prove both optimizer work and fresh live intake."""
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -142,3 +143,91 @@ def test_six_hour_window_rejects_stalls_after_initial_valid_progress(sustained, 
             optimizer_updated=True)
     with pytest.raises(RuntimeError, match="every bounded interval"):
         gate._sustain_phase(args, 21900)  # pylint: disable=protected-access
+
+
+def _six_hour_host_wait(args, job):
+    """Use the real bounded progress tracker with a fake durable job and clock."""
+    args.phase, args.seconds, args.soak_hours = "sustain", 21600, 6
+    args.wait_for_native_work = True
+    job.save = lambda directory: directory / "actual-durable-save.distill-job"
+
+
+def test_native_floor_wait_keeps_training_after_minimum_duration(sustained, monkeypatch):
+    """A checkpoint hold can delay native work; waiting keeps both real work streams active."""
+    args, job = sustained
+    _six_hour_host_wait(args, job)
+    attempts = []
+    receipt = {"schemaVersion": 1, "captureEpoch": "capture",
+               "requiredSteps": "1296000", "completedSteps": "1296001"}
+    def native_receipt(_path, epoch):
+        assert epoch == "capture"
+        attempts.append((job.trainer.completed_updates, job.client.cursor))
+        return receipt if len(attempts) == 4 else None
+    monkeypatch.setattr(gate, "_native_work_receipt", native_receipt)
+    _, report = gate._sustain_phase(args, 21900)  # pylint: disable=protected-access
+    assert report["activeWallSeconds"] >= 21600
+    assert report["nativeWorkCompletion"] == receipt
+    assert len(attempts) == 4
+    assert all(right[0] > left[0] for left, right in zip(attempts, attempts[1:]))
+    assert report["fetches"] > 0 and report["optimizerUpdates"] > 0
+
+
+def test_missing_native_floor_cannot_extend_existing_outer_deadline(sustained):
+    """Missing host completion fails within the original bound, retaining progress limits."""
+    args, job = sustained
+    _six_hour_host_wait(args, job)
+    with pytest.raises(TimeoutError, match="outer deadline"):
+        gate._sustain_phase(args, 21900)  # pylint: disable=protected-access
+
+
+def test_native_receipt_cannot_shorten_six_hour_training(sustained):
+    """An early valid native receipt still requires six actual trainer hours."""
+    args, job = sustained
+    _six_hour_host_wait(args, job)
+    update = job.update
+    def publish_then_update():
+        (args.directory / "native-work-complete.json").write_text(json.dumps({
+            "schemaVersion": 1, "captureEpoch": "capture", "requiredSteps": "1296000",
+            "completedSteps": "1296000"}), encoding="utf-8")
+        job.update = update
+        return update()
+    job.update = publish_then_update
+    _, report = gate._sustain_phase(args, 21900)  # pylint: disable=protected-access
+    assert report["activeWallSeconds"] >= 21600
+    assert report["nativeWorkCompletion"]["completedSteps"] == "1296000"
+
+
+@pytest.mark.parametrize("change", [
+    {"schemaVersion": True}, {"captureEpoch": "foreign"}, {"requiredSteps": "1"},
+    {"completedSteps": "1295999"}, {"completedSteps": "01296000"},
+    {"completedSteps": 1296000}, {"completedSteps": "18446744073709551615"},
+    {"completedSteps": "１２９６０００"}, {"unexpected": 1},
+])
+def test_native_receipt_rejects_identity_and_counter_damage(tmp_path, change):
+    """The host receipt cannot claim another capture, a partial floor or saturated counter."""
+    receipt = {"schemaVersion": 1, "captureEpoch": "capture",
+               "requiredSteps": "1296000", "completedSteps": "1296000", **change}
+    path = tmp_path / "native-work-complete.json"
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="receipt"):
+        gate._native_work_receipt(path, "capture")  # pylint: disable=protected-access
+
+
+def test_native_receipt_file_admission_and_stale_window(sustained):
+    """Only a newly published, bounded ordinary file can release this trainer window."""
+    args, job = sustained
+    _six_hour_host_wait(args, job)
+    path = args.directory / "native-work-complete.json"
+    assert gate._native_work_receipt(path, "capture") is None  # pylint: disable=protected-access
+    path.write_bytes(b"x" * 4097)
+    with pytest.raises(ValueError, match="file"):
+        gate._native_work_receipt(path, "capture")  # pylint: disable=protected-access
+    with pytest.raises(ValueError, match="predate"):
+        gate._native_completion_path(args)  # pylint: disable=protected-access
+    path.unlink()
+    path.mkdir()
+    with pytest.raises(ValueError, match="file"):
+        gate._native_work_receipt(path, "capture")  # pylint: disable=protected-access
+    args.seconds = 60
+    with pytest.raises(ValueError, match="six-hour"):
+        gate._native_completion_path(args)  # pylint: disable=protected-access

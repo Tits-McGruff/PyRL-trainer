@@ -305,7 +305,9 @@ establish maturity, native real-time performance or a six-hour integrated soak.
 
 
 The live qualification helper also has an explicit six-hour sustain mode:
-`--phase sustain --soak-hours 6 --seconds 21600 --max-wall-seconds 21900` with the
+`--phase sustain --soak-hours 6 --seconds 21600 --max-wall-seconds 21900` (the integrated host also passes
+`--wait-for-native-work`, requiring a new capture-bound receipt for 1,296,000 native
+steps before completion, within the same outer deadline) with the
 existing matching capture/checkpoint arguments. Other phases and ordinary windows
 keep their previous bounds. Every minute must advance both optimizer and live
 intake counters, with at most 120 seconds between progress receipts. The helper
