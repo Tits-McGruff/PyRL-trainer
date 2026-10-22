@@ -33,6 +33,7 @@ SOURCE_FILES = (
     "distillation_replay.py",
     "distillation_sampling.py",
     "distillation_job.py",
+    "distillation_process.py",
     "distillation_checkpoint.py",
     "distillation_run.py",
     "brain_artifact.py",

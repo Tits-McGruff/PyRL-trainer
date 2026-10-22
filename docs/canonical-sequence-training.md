@@ -323,3 +323,13 @@ not serialized compiler state or lifetime optimizer counts. The separate-process
 restart regression saves a warm owner, starts a fresh interpreter and compares
 its next update's parameters, Adam state, recurrence, sampled windows and private
 RNG witnesses. CUDA cases run only on a real available device.
+
+
+Standalone job and live-qualification entry points lower their own CPU scheduling
+priority before importing Torch: Windows Below Normal, or POSIX nice at least 5.
+An already lower owner-selected priority is preserved. Imported library callers
+retain ownership of their process policy. This gives the ordinary native world
+priority under CPU contention while keeping the two-thread trainer bound and
+all clock, debt and determinism gates unchanged. Reports include the observed
+`processPriority`; it is scheduling policy, not serialized optimizer/recurrent
+state. The actual numerical environment and trainer source checks remain strict.

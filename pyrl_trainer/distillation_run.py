@@ -6,6 +6,13 @@ import math
 from pathlib import Path
 import time
 
+# The standalone entry applies its scheduling policy before heavy Torch imports.
+# Library callers retain ownership of their process policy.
+# pylint: disable=wrong-import-position,wrong-import-order
+from .distillation_process import configure_cli_priority, current_process_priority
+if __name__ == "__main__":
+    configure_cli_priority()
+
 from .canonical_graph import CanonicalGraphManifest
 from .distillation_checkpoint import load_job_checkpoint
 from .distillation_client import DistillationClient
@@ -269,6 +276,7 @@ def run(argv=None):
             "updates": job.trainer.completed_updates,
             "settings": _job_settings(job),
             "windowExecution": job.trainer.window_execution.statistics(),
+            "processPriority": current_process_priority(),
         }
         print(json.dumps(result, sort_keys=True))
         raise
@@ -284,6 +292,7 @@ def run(argv=None):
         "settings": _job_settings(job),
         "peakDeviceBytes": job.peak_device_bytes,
         "windowExecution": job.trainer.window_execution.statistics(),
+        "processPriority": current_process_priority(),
         "training": job.last_training,
         "validation": job.last_validation,
         "candidateDue": job.candidate_due,

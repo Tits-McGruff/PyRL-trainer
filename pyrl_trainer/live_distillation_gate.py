@@ -13,6 +13,13 @@ import struct
 import sys
 import time
 
+# The standalone entry applies its scheduling policy before heavy Torch imports.
+# Library callers retain ownership of their process policy.
+# pylint: disable=wrong-import-position,wrong-import-order
+from .distillation_process import configure_cli_priority, current_process_priority
+if __name__ == "__main__":
+    configure_cli_priority()
+
 import numpy as np
 import torch
 
@@ -341,6 +348,7 @@ def run(argv=None):
                    "producerStoragePolicy": job.client.producer_storage.to_object(),
                    "sequence": asdict(job.sequence), "replayBytes": job.replay.owned_bytes,
                    "windowExecution": job.trainer.window_execution.statistics(),
+                   "processPriority": current_process_priority(),
                    "peakDeviceBytes": job.peak_device_bytes, "peakRssBytes": _peak_rss(),
                    "trainerSourceSha256": trainer_source_sha256(),
                    "trainingSamples": job.training_samples, "burnInSamples": job.burn_in_samples,
