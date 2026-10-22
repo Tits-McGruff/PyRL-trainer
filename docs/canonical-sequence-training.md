@@ -315,6 +315,10 @@ records bounded progress and saves ordinary durable snapshots every ten minutes,
 using the existing three-file rotation. Progress files are atomic observations;
 the `.distill-job` files remain the exact restart authority. The Slither host
 supplies the persistent workspace, native clock and generation-barrier evidence.
+The live helper accepts `--replay-mib 64..2048` (default 256); train, cold resume
+and sustain must all request the same persisted ceiling. Reports separate
+`replayCapacityBytes` from actual `replayBytes` and peak window occupancy.
+Selecting the largest ceiling does not establish that replay was filled.
 This mode provides the harness for a long measurement; it does not itself claim
 that a six-hour or full-capacity qualification has passed.
 

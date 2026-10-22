@@ -98,9 +98,9 @@ def _peak_rss():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
-def _ready_replay(client, deadline):
+def _ready_replay(client, deadline, capacity_bytes=256 * 1024**2):
     """Require both held-out and training streams with the complete default window width."""
-    replay = TeacherReplay()
+    replay = TeacherReplay(max_bytes=capacity_bytes)
     while time.monotonic() < deadline:
         fetched = client.fetch()
         replay.admit(fetched)
@@ -128,6 +128,20 @@ def _update_to(job, target, deadline):
     return updated
 
 
+def _replay_capacity_bytes(args):
+    """Admit the same public replay envelope without allocating or resizing a restored owner."""
+    mib = getattr(args, "replay_mib", 256)
+    if isinstance(mib, bool) or not isinstance(mib, int) or not 64 <= mib <= 2048:
+        raise ValueError("qualification replay budget must be 64..2048 MiB")
+    return mib * 1024**2
+
+
+def _require_replay_capacity(job, args):
+    """A restart must retain the requested job ceiling rather than silently changing its owner."""
+    if job.replay.max_bytes != _replay_capacity_bytes(args):
+        raise RuntimeError("qualification restored replay capacity mismatch")
+
+
 def _train_phase(args, deadline):
     """Train on real retained rows and save the exact next-update oracle."""
     metadata_path = args.directory / "restart.json"
@@ -137,7 +151,7 @@ def _train_phase(args, deadline):
     weights = artifact_data[HEADER.size + metadata_bytes:]
     client = DistillationClient(args.origin, args.capture_epoch,
                                 expected_spool_bytes=args.spool_gib * 1024**3)
-    replay = _ready_replay(client, deadline)
+    replay = _ready_replay(client, deadline, _replay_capacity_bytes(args))
     job = DistillationJob(manifest, weights, replay, client=client,
                           config=DistillationJobConfig(device=args.device),
                           sequence=SequenceTrainingConfig())
@@ -160,6 +174,7 @@ def _resume_phase(args, deadline):
     metadata_path = args.directory / "restart.json"
     expected = json.loads(metadata_path.read_text(encoding="utf-8"))
     job = load_job_checkpoint(Path(expected["checkpoint"]))
+    _require_replay_capacity(job, args)
     if (str(job.device) != args.device
             or job.client.capture_epoch != args.capture_epoch):
         raise RuntimeError("qualification restart source/device mismatch")
@@ -316,6 +331,7 @@ def _sustain_phase(args, deadline):
     completion_receipt = None
     pointer = json.loads((args.directory / "sustain-checkpoint.json").read_text(encoding="utf-8"))
     job = load_job_checkpoint(Path(pointer["checkpoint"]))
+    _require_replay_capacity(job, args)
     if (str(job.device) != args.device or job.client.capture_epoch != args.capture_epoch
             or job.client.producer_storage.max_bytes != args.spool_gib * 1024**3):
         raise RuntimeError("sustained trainer source/device/storage mismatch")
@@ -382,6 +398,7 @@ def run(argv=None):
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
     parser.add_argument("--spool-gib", type=int, default=4)
+    parser.add_argument("--replay-mib", type=int, default=256)
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--soak-hours", type=int, choices=(6,))
     parser.add_argument("--wait-for-native-work", action="store_true",
@@ -391,6 +408,7 @@ def run(argv=None):
     try:
         qualification_timing(args.phase, args.seconds, args.max_wall_seconds, args.soak_hours)
         _native_completion_path(args)
+        _replay_capacity_bytes(args)
     except ValueError as error:
         parser.error(str(error))
     if not 1 <= args.spool_gib <= 64:
@@ -403,6 +421,7 @@ def run(argv=None):
     report.update({"schemaVersion": 1, "device": str(job.device), "environment": job.environment,
                    "producerStoragePolicy": job.client.producer_storage.to_object(),
                    "sequence": asdict(job.sequence), "replayBytes": job.replay.owned_bytes,
+                   "replayCapacityBytes": job.replay.max_bytes,
                    "windowExecution": job.trainer.window_execution.statistics(),
                    "processPriority": current_process_priority(),
                    "peakDeviceBytes": job.peak_device_bytes, "peakRssBytes": _peak_rss(),

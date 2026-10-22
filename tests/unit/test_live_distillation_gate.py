@@ -24,7 +24,8 @@ def sustained_fixture(monkeypatch, tmp_path):
         client=SimpleNamespace(capture_epoch="capture", cursor=10,
                                producer_storage=SimpleNamespace(max_bytes=4 * 1024**3)),
         trainer=SimpleNamespace(completed_updates=250), training_samples=100,
-        replay=SimpleNamespace(owned_bytes=4096), pending_candidates=[], dropped_candidates=0)
+        replay=SimpleNamespace(owned_bytes=4096, max_bytes=256 * 1024**2),
+        pending_candidates=[], dropped_candidates=0)
     class Device(str):
         """Torch-compatible device label without a model allocation."""
         type = "cpu"
@@ -231,3 +232,37 @@ def test_native_receipt_file_admission_and_stale_window(sustained):
     args.seconds = 60
     with pytest.raises(ValueError, match="six-hour"):
         gate._native_completion_path(args)  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("mib", [64, 256, 2048])
+def test_restored_live_replay_keeps_requested_capacity(sustained, mib):
+    """Use the existing owner under each admitted ceiling; capacity is separate from occupancy."""
+    args, job = sustained
+    args.replay_mib = mib
+    job.replay.max_bytes = mib * 1024**2
+    returned, report = gate._sustain_phase(args, 1000)  # pylint: disable=protected-access
+    assert returned is job
+    assert job.replay.max_bytes == mib * 1024**2
+    assert report["peakReplayBytes"] < job.replay.max_bytes
+    assert report["optimizerUpdates"] > 0 and report["fetches"] > 0
+
+
+def test_live_replay_capacity_mismatch_rejects_before_training(sustained):
+    """An explicit smaller or larger restart request cannot resize persisted replay implicitly."""
+    args, job = sustained
+    before = job.trainer.completed_updates
+    for mib in (64, 2048):
+        args.replay_mib = mib
+        with pytest.raises(RuntimeError, match="replay capacity mismatch"):
+            gate._sustain_phase(args, 1000)  # pylint: disable=protected-access
+        assert job.trainer.completed_updates == before
+        assert job.client.cursor == 10
+
+
+@pytest.mark.parametrize("mib", [True, 63, 2049, 256.5, "256"])
+def test_live_replay_capacity_rejects_values_outside_public_envelope(sustained, mib):
+    """Qualification cannot bypass ordinary typed public replay admission."""
+    args, _job = sustained
+    args.replay_mib = mib
+    with pytest.raises(ValueError, match="64..2048"):
+        gate._replay_capacity_bytes(args)  # pylint: disable=protected-access
