@@ -4,7 +4,13 @@ import json
 
 import pytest
 
+from test_distillation_job import HELPERS
+
 from pyrl_trainer import live_distillation_gate as gate
+from pyrl_trainer.distillation_client import DistillationFetch
+from pyrl_trainer.distillation_checkpoint import load_job_checkpoint
+from pyrl_trainer.distillation_job import DistillationJob, DistillationJobConfig
+from pyrl_trainer.canonical_graph import CanonicalGraphManifest
 
 pytestmark = pytest.mark.unit
 
@@ -266,3 +272,137 @@ def test_live_replay_capacity_rejects_values_outside_public_envelope(sustained, 
     args.replay_mib = mib
     with pytest.raises(ValueError, match="64..2048"):
         gate._replay_capacity_bytes(args)  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("minimum,seconds", [
+    (True, None), (-1, None), (256, None), (1.5, None), ("1", None),
+    (0, 1800), (1, True), (1, 0), (1, 10801), (1, 2.5),
+])
+def test_replay_fill_rejects_unbounded_or_unreachable_admission(minimum, seconds):
+    """Whole-chunk occupancy must stay below capacity and explicit setup stays bounded."""
+    args = SimpleNamespace(replay_min_mib=minimum, replay_fill_seconds=seconds)
+    with pytest.raises(ValueError, match="replay"):
+        gate._replay_fill_admission(args)  # pylint: disable=protected-access
+
+
+def test_ready_replay_requires_actual_decoded_ownership_after_both_streams_are_ready(monkeypatch):
+    """Real frozen codec chunks cross the requested byte floor only after the second intake."""
+    source = HELPERS.replay_fixture(chunks_per_stream=40)
+    chunks = source.chunks
+    first = DistillationFetch(source.manifest, 0, chunks[-2].sequence, chunks[:-1], ())
+    second = DistillationFetch(source.manifest, chunks[-2].sequence,
+                               chunks[-1].sequence, chunks[-1:], ())
+    proposals = iter((first, second))
+    committed = []
+    client = SimpleNamespace(fetch=lambda: next(proposals), commit=committed.append)
+    monkeypatch.setattr(gate.time, "sleep", lambda _seconds: None)
+    minimum = source.owned_bytes - 1
+    # pylint: disable=protected-access
+    replay = gate._ready_replay(client, gate.time.monotonic() + 10, 64 * 1024**2, minimum)
+    assert committed == [first, second]
+    assert replay.retained_chunks == len(chunks)
+    assert replay.owned_bytes == source.owned_bytes >= minimum
+    assert replay.chunks == chunks
+
+
+@pytest.mark.parametrize("fault", ["occupancy", "windows", "late"])
+def test_ready_replay_keeps_occupancy_windows_and_absolute_deadline(monkeypatch, fault):
+    """Missing bytes, missing complete windows and a fetch that returns late all fail."""
+    source = HELPERS.replay_fixture(chunks_per_stream=40 if fault != "windows" else 1)
+    clock = [0.0]
+    def now():
+        clock[0] += 0.25
+        return clock[0]
+    monkeypatch.setattr(gate.time, "monotonic", now)
+    monkeypatch.setattr(gate.time, "sleep", lambda _seconds: None)
+    cursor = [0]
+    def fetch():
+        start = cursor[0]
+        cursor[0] = source.cursor
+        if fault == "late":
+            clock[0] += 3
+        return DistillationFetch(source.manifest, start, source.cursor,
+                                 source.chunks if not start else (), ())
+    client = SimpleNamespace(fetch=fetch, commit=lambda _proposal: None)
+    minimum = source.owned_bytes + 1 if fault == "occupancy" else 0
+    with pytest.raises(TimeoutError, match="requested replay bytes"):
+        gate._ready_replay(client, 2, 64 * 1024**2, minimum)  # pylint: disable=protected-access
+
+
+@pytest.mark.parametrize("minimum", [0, 1])
+def test_explicit_fill_preserves_optimizer_work_allowance(monkeypatch, minimum):
+    """Explicit setup adds its duration; default qualification retains the old deadline."""
+    replay = HELPERS.replay_fixture(chunks_per_stream=40)
+    calls = []
+    def ready(client, deadline, capacity, target):
+        calls.append((client, deadline, capacity, target))
+        return replay
+    monkeypatch.setattr(gate, "_ready_replay", ready)
+    times = iter((100.0, 135.0))
+    monkeypatch.setattr(gate.time, "monotonic", lambda: next(times))
+    client = SimpleNamespace(capture_epoch="live-epoch")
+    result, deadline, receipt = gate._fill_live_replay(  # pylint: disable=protected-access
+        client, SimpleNamespace(replay_min_mib=minimum), 600)
+    assert result is replay
+    assert deadline == (635 if minimum else 600)
+    assert calls == [(client, 1900 if minimum else 600, 256 * 1024**2, minimum * 1024**2)]
+    assert receipt["elapsedSeconds"] == 35
+    assert receipt["captureEpoch"] == "live-epoch"
+    assert receipt["ownedBytes"] == replay.owned_bytes
+    assert receipt["dataBytes"] == sum(chunk.byte_cost for chunk in replay.chunks)
+    assert receipt["encodedBytes"] == sum(len(chunk.raw_bytes) for chunk in replay.chunks)
+
+
+def test_restart_occupancy_must_reach_requested_floor_before_any_optimizer_work(sustained):
+    """A matching capacity alone cannot admit an under-filled checkpoint."""
+    args, job = sustained
+    args.replay_min_mib = 1
+    before = job.trainer.completed_updates
+    with pytest.raises(RuntimeError, match="occupancy"):
+        gate._sustain_phase(args, 1000)  # pylint: disable=protected-access
+    assert job.trainer.completed_updates == before and job.client.cursor == 10
+
+
+def test_sustained_occupancy_cannot_dip_below_floor_after_live_eviction(sustained):
+    """A healthy cursor and optimizer cannot conceal later replay loss."""
+    args, job = sustained
+    args.replay_min_mib = 1
+    job.replay.owned_bytes = 1024**2
+    ingest = job.ingest
+    def shrink(proposal):
+        ingest(proposal)
+        job.replay.owned_bytes = 1024**2 - 1
+    job.ingest = shrink
+    with pytest.raises(RuntimeError, match="occupancy"):
+        gate._sustain_phase(args, 1000)  # pylint: disable=protected-access
+
+def test_loaded_real_replay_survives_durable_save_and_exact_cpu_next_update(tmp_path):
+    """A small real decoded owner exercises the same occupancy/restart path as the large gate."""
+    replay = HELPERS.replay_fixture(chunks_per_stream=40)
+    job = DistillationJob(
+        CanonicalGraphManifest.read(HELPERS.GRAPH / "manifest.json"),
+        (HELPERS.GRAPH / "weights.f32").read_bytes(), replay,
+        config=DistillationJobConfig(device="cpu"), sequence=HELPERS.config())
+    args = SimpleNamespace(replay_min_mib=1)
+    gate._require_replay_capacity(job, args)  # pylint: disable=protected-access
+    assert job.update().optimizer_updated
+    saved = job.save(tmp_path)
+    restored = load_job_checkpoint(saved)
+    gate._require_replay_capacity(restored, args)  # pylint: disable=protected-access
+    assert restored.replay.owned_bytes == job.replay.owned_bytes >= 1024**2
+    expected = gate._witness(job, job.update())  # pylint: disable=protected-access
+    actual = gate._witness(restored, restored.update())  # pylint: disable=protected-access
+    assert actual == expected
+
+@pytest.mark.parametrize("requested,recorded", [(1, 0), (0, 1)])
+def test_resume_cannot_change_the_recorded_occupancy_request(sustained, requested, recorded):
+    """Lowering a CLI floor cannot relabel an earlier qualification checkpoint."""
+    args, job = sustained
+    args.replay_min_mib = requested
+    job.replay.owned_bytes = 1024**2
+    (args.directory / "restart.json").write_text(json.dumps({
+        "checkpoint": "qualified.job", "replayFill": {"minimumOwnedBytes": recorded * 1024**2}}))
+    before = job.trainer.completed_updates
+    with pytest.raises(RuntimeError, match="occupancy request mismatch"):
+        gate._resume_phase(args, 1000)  # pylint: disable=protected-access
+    assert job.trainer.completed_updates == before

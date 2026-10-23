@@ -98,22 +98,28 @@ def _peak_rss():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
-def _ready_replay(client, deadline, capacity_bytes=256 * 1024**2):
-    """Require both held-out and training streams with the complete default window width."""
+def _ready_replay(client, deadline, capacity_bytes=256 * 1024**2, minimum_bytes=0):
+    """Require actual owned bytes and complete training/held-out windows from this one epoch."""
     replay = TeacherReplay(max_bytes=capacity_bytes)
     while time.monotonic() < deadline:
         fetched = client.fetch()
         replay.admit(fetched)
         client.commit(fetched)
-        counts = {}
-        for segment in replay.segments():
-            key = segment.partition, segment.chunk.baseline_slot, segment.chunk.generation
-            counts[key] = counts.get(key, 0) + len(segment.chunk.steps)
-        if all(any(key[0] == partition and count >= 96 for key, count in counts.items())
-               for partition in ("training", "validation")):
-            return replay
+        if time.monotonic() >= deadline:
+            break
+        if replay.owned_bytes >= minimum_bytes:
+            counts = {}
+            for segment in replay.segments():
+                key = segment.partition, segment.chunk.baseline_slot, segment.chunk.generation
+                counts[key] = counts.get(key, 0) + len(segment.chunk.steps)
+            if all(any(key[0] == partition and count >= 96 for key, count in counts.items())
+                   for partition in ("training", "validation")):
+                if time.monotonic() >= deadline:
+                    break
+                return replay
         time.sleep(0.1)
-    raise TimeoutError("live source did not retain full default training and validation windows")
+    raise TimeoutError("live source did not retain requested replay bytes and "
+                       "full default training and validation windows")
 
 
 def _update_to(job, target, deadline):
@@ -136,10 +142,45 @@ def _replay_capacity_bytes(args):
     return mib * 1024**2
 
 
+def _replay_fill_admission(args):
+    """Explicit occupancy has a separate absolute setup bound; ordinary work keeps its limit."""
+    minimum_mib = getattr(args, "replay_min_mib", 0)
+    capacity = _replay_capacity_bytes(args)
+    if (isinstance(minimum_mib, bool) or not isinstance(minimum_mib, int)
+            or not 0 <= minimum_mib * 1024**2 < capacity):
+        raise ValueError("minimum replay MiB must be a nonnegative integer below replay capacity")
+    seconds = getattr(args, "replay_fill_seconds", None)
+    if seconds is None:
+        seconds = 1800 if minimum_mib else 0
+    elif (not minimum_mib or isinstance(seconds, bool) or not isinstance(seconds, int)
+          or not 1 <= seconds <= 10800):
+        raise ValueError("replay fill requires a positive minimum and 1..10800 whole setup seconds")
+    return minimum_mib * 1024**2, seconds
+
+
+def _fill_live_replay(client, args, deadline):
+    """Finish bounded real intake before the existing optimizer-work deadline starts counting."""
+    minimum, setup_seconds = _replay_fill_admission(args)
+    started = time.monotonic()
+    replay = _ready_replay(client, started + setup_seconds if minimum else deadline,
+                           _replay_capacity_bytes(args), minimum)
+    elapsed = time.monotonic() - started
+    receipt = {"minimumOwnedBytes": minimum, "ownedBytes": replay.owned_bytes,
+               "dataBytes": sum(chunk.byte_cost for chunk in replay.chunks),
+               "encodedBytes": sum(len(chunk.raw_bytes) for chunk in replay.chunks),
+               "captureEpoch": client.capture_epoch, "retainedChunks": replay.retained_chunks,
+               "cursor": replay.cursor,
+               "elapsedSeconds": elapsed, "setupDeadlineSeconds": setup_seconds}
+    return replay, deadline + elapsed if minimum else deadline, receipt
+
+
 def _require_replay_capacity(job, args):
-    """A restart must retain the requested job ceiling rather than silently changing its owner."""
+    """Require the requested owner capacity and occupancy before optimizer work or after intake."""
     if job.replay.max_bytes != _replay_capacity_bytes(args):
         raise RuntimeError("qualification restored replay capacity mismatch")
+    minimum, _seconds = _replay_fill_admission(args)
+    if job.replay.owned_bytes < minimum:
+        raise RuntimeError("qualification replay occupancy below requested minimum")
 
 
 def _train_phase(args, deadline):
@@ -151,7 +192,7 @@ def _train_phase(args, deadline):
     weights = artifact_data[HEADER.size + metadata_bytes:]
     client = DistillationClient(args.origin, args.capture_epoch,
                                 expected_spool_bytes=args.spool_gib * 1024**3)
-    replay = _ready_replay(client, deadline, _replay_capacity_bytes(args))
+    replay, deadline, fill = _fill_live_replay(client, args, deadline)
     job = DistillationJob(manifest, weights, replay, client=client,
                           config=DistillationJobConfig(device=args.device),
                           sequence=SequenceTrainingConfig())
@@ -160,11 +201,12 @@ def _train_phase(args, deadline):
     updated = _update_to(job, 126, deadline)
     metadata_path.write_text(json.dumps({"checkpoint": str(checkpoint),
                                         "witness": _witness(job, updated),
-                                        "storagePolicy": client.producer_storage.to_object()},
+                                        "storagePolicy": client.producer_storage.to_object(),
+                                        "replayFill": fill},
                                        sort_keys=True),
                              encoding="utf-8")
     report = {"phase": "train", "updates": job.trainer.completed_updates,
-              "retainedChunks": job.replay.retained_chunks,
+              "retainedChunks": job.replay.retained_chunks, "replayFill": fill,
               "sourceRows": sum(len(chunk.steps) for chunk in job.replay.chunks)}
     return job, report
 
@@ -175,6 +217,9 @@ def _resume_phase(args, deadline):
     expected = json.loads(metadata_path.read_text(encoding="utf-8"))
     job = load_job_checkpoint(Path(expected["checkpoint"]))
     _require_replay_capacity(job, args)
+    minimum, _setup_seconds = _replay_fill_admission(args)
+    if expected.get("replayFill", {}).get("minimumOwnedBytes", 0) != minimum:
+        raise RuntimeError("qualification restart replay occupancy request mismatch")
     if (str(job.device) != args.device
             or job.client.capture_epoch != args.capture_epoch):
         raise RuntimeError("qualification restart source/device mismatch")
@@ -342,6 +387,7 @@ def _sustain_phase(args, deadline):
     next_fetch = started
     fetches = 0
     peak_replay = job.replay.owned_bytes
+    minimum_replay = job.replay.owned_bytes
     peak_reserved = 0
     progress = (_SustainProgress(args.directory, job, started)
                 if getattr(args, "soak_hours", None) == 6 else None)
@@ -360,6 +406,8 @@ def _sustain_phase(args, deadline):
             fetches += 1
             next_fetch = time.monotonic() + 1
             peak_replay = max(peak_replay, job.replay.owned_bytes)
+            minimum_replay = min(minimum_replay, job.replay.owned_bytes)
+            _require_replay_capacity(job, args)
         updated = job.update()
         if updated is None:
             time.sleep(0.01)
@@ -379,6 +427,7 @@ def _sustain_phase(args, deadline):
               "fetches": fetches, "requestedSeconds": args.seconds,
               "activeWallSeconds": time.monotonic() - started,
               "peakReplayBytes": peak_replay,
+              "minimumReplayBytes": minimum_replay,
               "pendingCandidates": len(job.pending_candidates),
               "droppedCandidates": job.dropped_candidates,
               "peakReservedInWindowBytes": peak_reserved,
@@ -399,6 +448,10 @@ def run(argv=None):
     parser.add_argument("--device", choices=("cpu", "cuda:0"), required=True)
     parser.add_argument("--spool-gib", type=int, default=4)
     parser.add_argument("--replay-mib", type=int, default=256)
+    parser.add_argument("--replay-min-mib", type=int, default=0,
+                        help="actual replay occupancy below capacity; no synthetic padding")
+    parser.add_argument("--replay-fill-seconds", type=int,
+                        help="separate absolute intake setup bound, 1..10800 seconds")
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--soak-hours", type=int, choices=(6,))
     parser.add_argument("--wait-for-native-work", action="store_true",
@@ -408,7 +461,7 @@ def run(argv=None):
     try:
         qualification_timing(args.phase, args.seconds, args.max_wall_seconds, args.soak_hours)
         _native_completion_path(args)
-        _replay_capacity_bytes(args)
+        _replay_fill_admission(args)
     except ValueError as error:
         parser.error(str(error))
     if not 1 <= args.spool_gib <= 64:

@@ -333,6 +333,17 @@ consume a dataset cursor, send gameplay ACKs or rewrite controlling weights.
 expose these bounded diagnostic routes for explicit library use.
 
 
+The live qualification gate accepts `--replay-min-mib` below the selected
+`--replay-mib` capacity to require actual retained ownership before training.
+For a near-capacity 2-GiB case, use `--replay-mib 2048 --replay-min-mib 2040`.
+The floor uses the ordinary replay accounting; its receipt separates raw/decoded
+data bytes from total charged ownership. Only validated samples from the active
+capture epoch can satisfy it. Explicit loading gets a separate absolute
+`--replay-fill-seconds` setup allowance (1..10,800, default 1,800), followed by
+the existing optimizer-work deadline. Resume preserves the requested floor;
+sustain fails if live eviction ever lowers ownership beneath it. This is an
+optional qualification load, outside ordinary job controls and defaults.
+
 The `live-distillation` CI job runs the cross-repository qualification host against
 real Rust v4/v2 capture over HTTP. It trains with the default 32-window batch,
 32-step burn-in and 64-step BPTT, saves at update 125, and launches a second Python
