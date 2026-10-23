@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from pyrl_trainer.brain_artifact import encode_brain_artifact, read_raw_brain_artifact
+from pyrl_trainer.brain_artifact import HEADER, encode_brain_artifact, read_raw_brain_artifact
 from pyrl_trainer.canonical_graph import CanonicalGraphManifest
 from pyrl_trainer.distillation_checkpoint import load_job_checkpoint
 from pyrl_trainer.distillation_job import DistillationJob, DistillationJobConfig
@@ -143,3 +143,20 @@ def test_actual_rust_compiler_admits_portable_bytes_and_rejects_a_forged_packing
         check=False,
     )
     assert rejected.returncode != 0 and not (tmp_path / "rejected").exists()
+
+
+def test_native_sorted_metadata_envelope_retains_original_bytes_and_equation_contract():
+    """Rust's serde_json::Value ordering is accepted without rewriting the uploaded original."""
+    source = artifact()
+    magic, length, encoding, count, stored, raw_sha, stored_sha = HEADER.unpack_from(source.data)
+    metadata = json.loads(source.data[HEADER.size:HEADER.size + length])
+    encoded = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode()
+    assert list(json.loads(encoded)["graphManifest"]["equations"]) == sorted(
+        metadata["graphManifest"]["equations"])
+    data = HEADER.pack(magic, len(encoded), encoding, count, stored, raw_sha, stored_sha)
+    data += encoded + source.data[HEADER.size + length:]
+    decoded, manifest, provenance = read_raw_brain_artifact(data)
+    assert decoded.data == data and decoded.sha256 == hashlib.sha256(data).hexdigest()
+    assert decoded.weights_sha256 == source.weights_sha256
+    assert manifest.layout_sha256 == metadata["graphManifest"]["layoutSha256"]
+    assert provenance == metadata["provenance"]

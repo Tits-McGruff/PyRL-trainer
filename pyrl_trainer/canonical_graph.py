@@ -19,6 +19,12 @@ from torch import nn
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 EQUATIONS_SHA256_V1 = "bfe2551fbdaa2674edff165d7ef24b7aff7cea3eeb6bd647f6367661e142ee08"
+# Rust TrainingEquations declaration order defines the existing v1 digest.
+# Portable metadata may pass through serde_json::Value, which sorts object keys.
+EQUATION_FIELDS_V1 = (
+    "revision", "dtype", "affine", "gru", "lstm", "rru", "concat", "split", "arithmetic"
+)
+
 
 
 class CanonicalGraphError(ValueError):
@@ -314,7 +320,11 @@ class CanonicalGraphManifest:
             or _integer(raw["outputSize"], 2, 2) != 2
         ):
             raise CanonicalGraphError("unsupported canonical manifest revision")
-        equations = json.dumps(raw["equations"], ensure_ascii=False, separators=(",", ":")).encode()
+        _keys(raw["equations"], " ".join(EQUATION_FIELDS_V1))
+        equations = json.dumps(
+            {name: raw["equations"][name] for name in EQUATION_FIELDS_V1},
+            ensure_ascii=False, separators=(",", ":"),
+        ).encode()
         digest = hashlib.sha256(b"slither.training-equations.v1\0" + equations).hexdigest()
         if digest != EQUATIONS_SHA256_V1 or raw["equationsSha256"] != digest:
             raise CanonicalGraphError("unsupported canonical equations")

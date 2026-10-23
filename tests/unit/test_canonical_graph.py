@@ -210,3 +210,36 @@ def test_distillation_labels_cannot_broadcast_or_promote_precision():
         distillation_loss(output, label[:1], label, label)
     with pytest.raises(CanonicalGraphError):
         distillation_loss(output, label.double(), label, label)
+
+
+@pytest.mark.parametrize("case,initial", CASES)
+def test_rust_json_value_member_order_preserves_canonical_equations_and_layout(case, initial):
+    """Native portable envelopes sort JSON object members without changing deployed semantics."""
+    path = ROOT / case / initial / "manifest.json"
+    expected = CanonicalGraphManifest.read(path)
+    raw = json.loads(path.read_bytes())
+    encoded = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+    assert list(json.loads(encoded)["equations"]) == sorted(raw["equations"])
+    actual = CanonicalGraphManifest.from_bytes(encoded)
+    assert actual.nodes == expected.nodes
+    assert actual.outputs == expected.outputs
+    assert actual.total_parameters == expected.total_parameters
+    assert actual.total_state_size == expected.total_state_size
+    assert actual.layout_sha256 == expected.layout_sha256
+    assert actual.sensor_sha256 == expected.sensor_sha256
+
+
+@pytest.mark.parametrize("fault", ["missing", "extra", "formula", "digest"])
+def test_reordered_equations_still_require_exact_fields_values_and_digest(fault):
+    """Object-order normalization cannot admit an omitted field or a changed equation."""
+    raw = json.loads((ROOT / "mixed/zero/manifest.json").read_bytes())
+    if fault == "missing":
+        del raw["equations"]["dtype"]
+    elif fault == "extra":
+        raw["equations"]["extra"] = "ignored"
+    elif fault == "formula":
+        raw["equations"]["gru"] += " changed"
+    else:
+        raw["equationsSha256"] = "0" * 64
+    with pytest.raises(CanonicalGraphError, match="canonical"):
+        CanonicalGraphManifest.from_bytes(json.dumps(raw, sort_keys=True).encode())

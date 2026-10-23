@@ -339,3 +339,10 @@ priority under CPU contention while keeping the two-thread trainer bound and
 all clock, debt and determinism gates unchanged. Reports include the observed
 `processPriority`; it is scheduling policy, not serialized optimizer/recurrent
 state. The actual numerical environment and trainer source checks remain strict.
+
+
+Portable manifest validation reconstructs Rust's declared equation-field order
+before checking the existing v1 equation digest. Native envelopes serialized
+through `serde_json::Value` may sort JSON members; this does not change the
+equations or packing. Missing/extra fields, changed formulas and mismatched
+digests still reject. A raw portable import retains its exact original bytes.
