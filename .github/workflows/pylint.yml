@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: bd007aab0755fe723a0bead7e90935ee02d273fd
+          ref: 101014d994bf7175c102ecc18cde56e1a531322b
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -115,11 +115,16 @@ jobs:
           PYRL_TEACHER_CHUNK_REFERENCE=.teacher-chunk-reference python -m pytest -q tests/unit/test_distillation_transport.py
       - name: Portable candidate admission and actual 250-update snapshots
         run: PYRL_BRAIN_ARTIFACT_RUNNER=.canonical-rust/native/target/release/brain_artifact_validate python -m pytest -q tests/unit/test_brain_artifact.py
+      - name: Generate native wide recurrent regression inputs
+        run: >-
+          python scripts/generate_canonical_graph_fixtures.py
+          --runner .canonical-rust/native/target/release/canonical-training-graph
+          --output-directory canonical-wide-fixtures --include-large
       - name: Optimizer, export, native admission and exact-byte reimport
         run: >-
           python -m pyrl_trainer.canonical_parity
           --runner .canonical-rust/native/target/release/canonical-training-graph
-          --fixtures tests/fixtures/canonical_graph
+          --fixtures canonical-wide-fixtures --include-large
           --device cpu --output-json canonical-roundtrip-cpu.json
       - name: Retain numerical parity and optimizer evidence
         uses: actions/upload-artifact@v4
@@ -143,7 +148,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 3958342f31624774e2c8c2ad4f535087a4103202
+          ref: 101014d994bf7175c102ecc18cde56e1a531322b
           path: .live-slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

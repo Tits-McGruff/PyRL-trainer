@@ -282,11 +282,24 @@ Run CPU or CUDA qualification with an explicitly built Rust runner:
 This gate performs real optimizer updates, exports canonical Float32 bytes,
 independently admits them in Rust, evaluates both native math backends, and
 reimports exact bytes into PyTorch. An unavailable requested GPU fails the gate.
-TF32 and autocast are disabled for the initial parity envelope. Unit tests also
+TF32 and autocast are disabled for the initial parity envelope.
+CPU affine rows of width 32 or more use 16-term Float32 matrix partials with
+Float32 Neumaier summation to reduce cancellation across CPU BLAS implementations
+and batch shapes. Short CPU rows and CUDA retain their direct matrix operation.
+Parameters, activations and gradients stay Float32; gradients and strided views
+are checked against an independent Float64 oracle. Arithmetic remains bound to
+the recorded trainer/native sources and environment; old jobs are not exact
+continuations under a changed trainer source. Unit tests also
 compare every output and next recurrent state over frozen 256-delivery sequences.
 Compact CPU/RTX4080 reports and reproduction notes are under
 [`docs/performance/canonical_graph`](docs/performance/canonical_graph/README.md).
 These synthetic gates measure semantic/optimizer parity, not gameplay quality.
+Use `--include-large` in both `scripts/generate_canonical_graph_fixtures.py`
+and `pyrl_trainer.canonical_parity` to require Motion/B32 GRU/LSTM/RRU graphs
+with five 256-wide feature layers and 96 recurrent units. CI generates these
+with the pinned native runner and requires all 18 CPU optimizer roundtrips;
+missing large fixtures fail rather than being skipped.
+
 
 An existing CPU Torch installation can satisfy the version constraint even
 when the CUDA index is configured. To replace it explicitly inside `.venv`:

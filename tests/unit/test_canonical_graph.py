@@ -14,6 +14,7 @@ from pyrl_trainer.canonical_graph import (
     CanonicalGraphError,
     CanonicalGraphManifest,
     distillation_loss,
+    _affine_dot,
 )
 
 pytestmark = pytest.mark.unit
@@ -243,3 +244,55 @@ def test_reordered_equations_still_require_exact_fields_values_and_digest(fault)
         raw["equationsSha256"] = "0" * 64
     with pytest.raises(CanonicalGraphError, match="canonical"):
         CanonicalGraphManifest.from_bytes(json.dumps(raw, sort_keys=True).encode())
+
+
+@pytest.mark.parametrize("width", [32, 51, 128, 147, 248, 256, 264, 504, 512])
+@pytest.mark.parametrize("batch", [1, 8])
+def test_compensated_cpu_affine_accuracy_and_gradients_with_strided_views(width, batch):
+    """Compare real Float32 forward/backward with an independent Float64 oracle."""
+    generator = torch.Generator().manual_seed(617)
+    values = torch.randn(batch, width, generator=generator, requires_grad=True)
+    storage = torch.randn(17, width + 1, generator=generator, requires_grad=True)
+    weights = storage[:, :width]
+    assert not weights.is_contiguous()
+    cotangent = torch.randn(batch, 17, generator=generator)
+    actual = _affine_dot(values, weights)
+    expected_values = values.detach().double().requires_grad_(True)
+    expected_storage = storage.detach().double().requires_grad_(True)
+    expected = expected_values @ expected_storage[:, :width].T
+    assert actual.dtype == torch.float32
+    torch.testing.assert_close(actual.double(), expected, atol=5e-6, rtol=1e-5)
+    (actual * cotangent).sum().backward()
+    (expected * cotangent.double()).sum().backward()
+    for actual_gradient, expected_gradient in [
+        (values.grad, expected_values.grad), (storage.grad, expected_storage.grad)
+    ]:
+        assert actual_gradient.dtype == torch.float32
+        assert torch.isfinite(actual_gradient).all()
+        torch.testing.assert_close(
+            actual_gradient.double(), expected_gradient, atol=5e-6, rtol=1e-5
+        )
+    assert torch.count_nonzero(storage.grad[:, -1]) == 0
+
+
+def test_compensated_cpu_affine_recovers_cancellation_and_preserves_nonfinite():
+    """Recover cross-block small terms while retaining ordinary infinity/NaN results."""
+    weights = torch.zeros(1, 512)
+    weights[0, 0], weights[0, -1] = 1e8, -1e8
+    weights[0, 16:32] = 1
+    values = torch.ones(1, 512)
+    assert _affine_dot(values, weights).item() == 16
+    overflowing = torch.full((1, 512), torch.finfo(torch.float32).max)
+    assert torch.isposinf(_affine_dot(values, overflowing)).all()
+    overflowing[0, -1] = -torch.inf
+    assert torch.isnan(_affine_dot(values, overflowing)).all()
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_short_cpu_and_cuda_affine_keep_direct_operation(device):
+    """CUDA and short CPU rows preserve the existing matrix result exactly."""
+    generator = torch.Generator().manual_seed(616)
+    for width in ([31] if device == "cpu" else [31, 32, 504]):
+        values = torch.randn(8, width, generator=generator).to(device)
+        weights = torch.randn(17, width, generator=generator).to(device)
+        assert torch.equal(_affine_dot(values, weights), values @ weights.T)

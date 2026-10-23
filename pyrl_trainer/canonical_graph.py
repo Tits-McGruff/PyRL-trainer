@@ -438,6 +438,36 @@ def _deployment(raw):
     return interval, raw["lifeStateRule"]
 
 
+def _affine_dot(values, weights):
+    """Use compensated Float32 CPU partials; retain the direct CUDA matrix operation.
+
+    Small blocks bound each CPU BLAS reduction before Float32 Neumaier summation.
+    This reduces batch/platform-dependent cancellation in deep wide graphs without
+    widening products, learned parameters, activations or gradients. Canonical
+    widths are bounded at 512; at most 32 partial matrices are accumulated. Short
+    CPU rows and every CUDA row keep their existing operation. Callers already
+    validate Float32 tensors and disable autocast.
+    """
+    if values.device.type != "cpu" or values.shape[-1] < 32:
+        return values @ weights.T
+    total = torch.zeros(
+        values.shape[0], weights.shape[0], dtype=values.dtype, device=values.device
+    )
+    correction = torch.zeros_like(total)
+    for start in range(0, values.shape[-1], 16):
+        partial = values[:, start : start + 16] @ weights[:, start : start + 16].T
+        updated = total + partial
+        delta = torch.where(
+            total.abs() >= partial.abs(),
+            (total - updated) + partial,
+            (partial - updated) + total,
+        )
+        finite = updated.isfinite() & total.isfinite() & partial.isfinite()
+        correction = torch.where(finite, correction + delta, torch.zeros_like(correction))
+        total = updated
+    return torch.where(total.isfinite(), total + correction, total)
+
+
 class CanonicalGraph(nn.Module):
     """Exact differentiable canonical DAG with one flat Float32 Parameter."""
 
@@ -486,9 +516,10 @@ class CanonicalGraph(nn.Module):
         previous = state.narrow(-1, node.states[0][1], node.hidden_size)
 
         def gate(name, recurrent=previous):
-            return (values @ weights[f"W{name}"].T + recurrent @ weights[f"U{name}"].T) + weights[
-                f"b{name}"
-            ]
+            return (
+                _affine_dot(values, weights[f"W{name}"])
+                + _affine_dot(recurrent, weights[f"U{name}"])
+            ) + weights[f"b{name}"]
 
         if node.operation == "GRU":
             update, reset = torch.sigmoid(gate("z")), torch.sigmoid(gate("r"))
@@ -543,7 +574,7 @@ class CanonicalGraph(nn.Module):
             if node.operation in ("Dense", "MLP"):
                 for layer in range(len(node.hidden_sizes) + 1):
                     values = torch.tanh(
-                        values @ weights[f"layer{layer}.W"].T + weights[f"layer{layer}.b"]
+                        _affine_dot(values, weights[f"layer{layer}.W"]) + weights[f"layer{layer}.b"]
                     )
             elif node.operation in ("GRU", "LSTM", "RRU"):
                 values, updated = self._recurrent(node, values, state, weights)

@@ -172,7 +172,7 @@ def _case(runner, root, operation, device):
         return results
 
 
-def run_gate(runner: Path, fixtures: Path, device: str):
+def run_gate(runner: Path, fixtures: Path, device: str, include_large=False):
     """Require the requested device; a missing GPU or Rust runner never silently skips."""
     runner = runner.resolve(strict=True)
     if device == "cuda" and not torch.cuda.is_available():
@@ -181,7 +181,10 @@ def run_gate(runner: Path, fixtures: Path, device: str):
     if device == "cuda":
         torch.cuda.manual_seed_all(42)
     results = []
-    for operation in ["dense", "mlp", "gru", "lstm", "rru", "mixed"]:
+    operations = ["dense", "mlp", "gru", "lstm", "rru", "mixed"]
+    if include_large:
+        operations.extend("large-" + kind for kind in ["gru", "lstm", "rru"])
+    for operation in operations:
         results.extend(_case(runner, fixtures / operation, operation, device))
     source_hash = hashlib.sha256(b"pyrl.canonical-training-source.v1\0")
     for name in ["canonical_graph.py", "canonical_parity.py", "sequence_distillation.py"]:
@@ -211,8 +214,10 @@ def main():
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
     parser.add_argument("--output-json", type=Path, required=True)
+    parser.add_argument("--include-large", action="store_true",
+                        help="Require all large Motion/B32 recurrent optimizer roundtrips")
     args = parser.parse_args()
-    report = run_gate(args.runner, args.fixtures, args.device)
+    report = run_gate(args.runner, args.fixtures, args.device, args.include_large)
     with args.output_json.open("x", encoding="utf-8") as output:
         json.dump(report, output, indent=2)
         output.flush()

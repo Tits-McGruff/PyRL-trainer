@@ -7,7 +7,7 @@ import struct
 import subprocess
 
 
-def _graph(operation, width):
+def _graph(operation, width):  # pylint: disable=too-many-statements
     """Declare source DAGs; Rust decides all parameter and state packing."""
     nodes = [{"id": "input", "type": "Input", "outputSize": width}]
     edges = []
@@ -20,7 +20,18 @@ def _graph(operation, width):
             {"from": source, "to": destination, "fromPort": source_port, "toPort": ordinal}
         )
 
-    if operation == "routing":
+    if operation.startswith("large-"):
+        kind = operation.removeprefix("large-")
+        if kind not in ("gru", "lstm", "rru"):
+            raise ValueError("unsupported large recurrent fixture")
+        node("features", "MLP", inputSize=width, hiddenSizes=[256] * 4, outputSize=256)
+        node("memory", kind.upper(), inputSize=256, hiddenSize=96)
+        node("output", "Dense", inputSize=96, outputSize=2)
+        edge("input", "features")
+        edge("features", "memory")
+        edge("memory", "output")
+        outputs, states = [{"nodeId": "output"}], 192 if kind == "lstm" else 96
+    elif operation == "routing":
         node("split", "Split", outputSizes=[49, 1, 1])
         edge("input", "split")
         outputs = [{"nodeId": "split", "port": 2}, {"nodeId": "split", "port": 1}]
@@ -69,7 +80,7 @@ def _graph(operation, width):
     }, states
 
 
-def generate(runner, output):
+def generate(runner, output, include_large=False):
     """Emit exact little-endian inputs and immutable Rust results with provenance."""
     output.mkdir(parents=True, exist_ok=False)
     records = []
@@ -82,6 +93,8 @@ def generate(runner, output):
         ("mixed", "motion", 16),
         ("routing", "v3", 8),
     ]
+    if include_large:
+        cases.extend(("large-" + kind, "motion", 32) for kind in ["gru", "lstm", "rru"])
     for operation, profile, bins in cases:
         width = (
             (19 + 4 * bins) if profile == "v3" else 24 + (6 if profile == "basic" else 15) * bins
@@ -101,7 +114,7 @@ def generate(runner, output):
                 "graphSpec": graph,
                 "sensorProfile": profile,
                 "bins": bins,
-                "controlIntervalSeconds": 0.03,
+                "controlIntervalSeconds": 1 / 60 if operation.startswith("large-") else 0.03,
                 "lifeStateRule": "preserve",
                 "mathBackend": "rust-scalar-v1",
                 "initializationSeed": 42,
@@ -109,7 +122,9 @@ def generate(runner, output):
             }
             if nonzero:
                 states = [
-                    (index + 1) * 0.03125 * (-1 if index % 2 else 1) for index in range(state_count)
+                    ((index % 17) - 8) / 64 if operation.startswith("large-")
+                    else (index + 1) * 0.03125 * (-1 if index % 2 else 1)
+                    for index in range(state_count)
                 ]
                 (root / "initial-state.f32").write_bytes(struct.pack(f"<{state_count}f", *states))
                 request["initialStatePath"] = "initial-state.f32"
@@ -141,8 +156,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
+    parser.add_argument("--include-large", action="store_true",
+                        help="Include Motion/B32 deep 256-wide GRU/LSTM/RRU regressions")
     args = parser.parse_args()
-    generate(args.runner.resolve(strict=True), args.output_directory.resolve())
+    generate(args.runner.resolve(strict=True), args.output_directory.resolve(), args.include_large)
 
 
 if __name__ == "__main__":
