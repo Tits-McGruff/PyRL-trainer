@@ -172,9 +172,20 @@ def _case(runner, root, operation, device):
         return results
 
 
+
+def _training_source_sha256():
+    """Bind normalized source files for one immutable optimizer qualification."""
+    source_hash = hashlib.sha256(b"pyrl.canonical-training-source.v1\0")
+    for name in ["canonical_graph.py", "canonical_parity.py", "sequence_distillation.py"]:
+        source_hash.update(name.encode("utf-8"))
+        source_hash.update(Path(__file__).with_name(name).read_bytes().replace(b"\r\n", b"\n"))
+    return source_hash.hexdigest()
+
+
 def run_gate(runner: Path, fixtures: Path, device: str, include_large=False):
     """Require the requested device; a missing GPU or Rust runner never silently skips."""
     runner = runner.resolve(strict=True)
+    trainer_source = _training_source_sha256()
     if device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA qualification requires an available CUDA device")
     torch.manual_seed(42)
@@ -186,12 +197,12 @@ def run_gate(runner: Path, fixtures: Path, device: str, include_large=False):
         operations.extend("large-" + kind for kind in ["gru", "lstm", "rru"])
     for operation in operations:
         results.extend(_case(runner, fixtures / operation, operation, device))
-    source_hash = hashlib.sha256(b"pyrl.canonical-training-source.v1\0")
-    for name in ["canonical_graph.py", "canonical_parity.py", "sequence_distillation.py"]:
-        source_hash.update(name.encode("utf-8"))
-        source_hash.update(Path(__file__).with_name(name).read_bytes().replace(b"\r\n", b"\n"))
+    _require(
+        _training_source_sha256() == trainer_source,
+        "trainer source changed during qualification",
+    )
     return {
-        "trainerSourceSha256": source_hash.hexdigest(),
+        "trainerSourceSha256": trainer_source,
         "schemaVersion": 1,
         "gate": "canonical-optimizer-roundtrip-v1",
         "torchVersion": torch.__version__,

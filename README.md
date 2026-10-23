@@ -283,11 +283,13 @@ This gate performs real optimizer updates, exports canonical Float32 bytes,
 independently admits them in Rust, evaluates both native math backends, and
 reimports exact bytes into PyTorch. An unavailable requested GPU fails the gate.
 TF32 and autocast are disabled for the initial parity envelope.
-CPU affine rows of width 32 or more use 16-term Float32 matrix partials with
-Float32 Neumaier summation to reduce cancellation across CPU BLAS implementations
-and batch shapes. Short CPU rows and CUDA retain their direct matrix operation.
-Parameters, activations and gradients stay Float32; gradients and strided views
-are checked against an independent Float64 oracle. Arithmetic remains bound to
+CPU affine rows of width 128 or more use batched 16-term Float32 matrix partials
+and an error-corrected reduction tree to reduce cancellation across CPU BLAS
+implementations and batch shapes. The analytic matrix derivative saves only the
+original input/weight views, avoiding a retained correction graph per delivery.
+Short CPU rows and CUDA retain their direct matrix operation. Parameters,
+activations and gradients stay Float32; gradients and strided views are checked
+against an independent Float64 oracle. Arithmetic remains bound to
 the recorded trainer/native sources and environment; old jobs are not exact
 continuations under a changed trainer source. Unit tests also
 compare every output and next recurrent state over frozen 256-delivery sequences.

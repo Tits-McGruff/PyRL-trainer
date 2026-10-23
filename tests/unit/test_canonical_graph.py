@@ -246,12 +246,14 @@ def test_reordered_equations_still_require_exact_fields_values_and_digest(fault)
         CanonicalGraphManifest.from_bytes(json.dumps(raw, sort_keys=True).encode())
 
 
-@pytest.mark.parametrize("width", [32, 51, 128, 147, 248, 256, 264, 504, 512])
+@pytest.mark.parametrize("width", [32, 51, 127, 128, 129, 147, 248, 256, 264, 504, 512])
 @pytest.mark.parametrize("batch", [1, 8])
 def test_compensated_cpu_affine_accuracy_and_gradients_with_strided_views(width, batch):
     """Compare real Float32 forward/backward with an independent Float64 oracle."""
     generator = torch.Generator().manual_seed(617)
-    values = torch.randn(batch, width, generator=generator, requires_grad=True)
+    values = torch.randn(batch, width * 2, generator=generator)[:, ::2]
+    values = values.detach().requires_grad_(True)
+    assert not values.is_contiguous()
     storage = torch.randn(17, width + 1, generator=generator, requires_grad=True)
     weights = storage[:, :width]
     assert not weights.is_contiguous()
@@ -292,7 +294,41 @@ def test_compensated_cpu_affine_recovers_cancellation_and_preserves_nonfinite():
 def test_short_cpu_and_cuda_affine_keep_direct_operation(device):
     """CUDA and short CPU rows preserve the existing matrix result exactly."""
     generator = torch.Generator().manual_seed(616)
-    for width in ([31] if device == "cpu" else [31, 32, 504]):
+    for width in ([31, 127] if device == "cpu" else [31, 32, 504]):
         values = torch.randn(8, width, generator=generator).to(device)
         weights = torch.randn(17, width, generator=generator).to(device)
         assert torch.equal(_affine_dot(values, weights), values @ weights.T)
+
+
+def test_cpu_affine_backward_retains_inputs_without_reduction_intermediates():
+    """Keep retained autograd storage bounded by the original two matrix views."""
+    values = torch.ones(8, 512, requires_grad=True)
+    weights = torch.ones(17, 512, requires_grad=True)
+    retained_elements = []
+
+    def pack(tensor):
+        """Count saved elements without copying, changing or exposing their contents."""
+        retained_elements.append(tensor.numel())
+        return tensor
+
+    with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
+        output = _affine_dot(values, weights)
+        output.sum().backward()
+    assert sum(retained_elements) <= values.numel() + weights.numel()
+    assert torch.equal(values.grad, torch.full_like(values, 17))
+    assert torch.equal(weights.grad, torch.full_like(weights, 8))
+
+
+def test_cpu_affine_backward_ignores_ambient_autocast():
+    """CPU correction must preserve Float32 adjoints outside the guarded forward."""
+    generator = torch.Generator().manual_seed(619)
+    values = torch.randn(8, 128, generator=generator, requires_grad=True)
+    weights = torch.randn(17, 128, generator=generator, requires_grad=True)
+    gradient = torch.randn(8, 17, generator=generator)
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        with torch.autocast(device_type="cpu", enabled=False):
+            output = _affine_dot(values, weights)
+        output.backward(gradient)
+    assert output.dtype == torch.float32
+    torch.testing.assert_close(values.grad, gradient @ weights.detach(), atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(weights.grad, gradient.T @ values.detach(), atol=1e-6, rtol=1e-6)

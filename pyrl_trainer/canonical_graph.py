@@ -438,34 +438,77 @@ def _deployment(raw):
     return interval, raw["lifeStateRule"]
 
 
-def _affine_dot(values, weights):
-    """Use compensated Float32 CPU partials; retain the direct CUDA matrix operation.
+def _compensated_cpu_dot(values, weights):
+    """Reduce bounded 16-term CPU partials in a Float32 error-corrected tree.
 
-    Small blocks bound each CPU BLAS reduction before Float32 Neumaier summation.
-    This reduces batch/platform-dependent cancellation in deep wide graphs without
-    widening products, learned parameters, activations or gradients. Canonical
-    widths are bounded at 512; at most 32 partial matrices are accumulated. Short
-    CPU rows and every CUDA row keep their existing operation. Callers already
-    validate Float32 tensors and disable autocast.
+    Callers select widths 128..512. Padding to the next power of two permits at
+    most 32 partial matrices and five tree levels. A nonfinite partial cannot
+    become finite through later additions, so one final guard preserves ordinary
+    infinity/NaN propagation without per-level finite masks. All products,
+    sums and corrections remain Float32.
     """
-    if values.device.type != "cpu" or values.shape[-1] < 32:
-        return values @ weights.T
-    total = torch.zeros(
-        values.shape[0], weights.shape[0], dtype=values.dtype, device=values.device
-    )
-    correction = torch.zeros_like(total)
-    for start in range(0, values.shape[-1], 16):
-        partial = values[:, start : start + 16] @ weights[:, start : start + 16].T
-        updated = total + partial
-        delta = torch.where(
-            total.abs() >= partial.abs(),
-            (total - updated) + partial,
-            (partial - updated) + total,
+    width = values.shape[-1]
+    padded = 1 << (width - 1).bit_length()
+    if padded != width:
+        values = torch.nn.functional.pad(values, (0, padded - width))
+        weights = torch.nn.functional.pad(weights, (0, padded - width))
+    blocks = padded // 16
+    left = values.reshape(values.shape[0], blocks, 16).transpose(0, 1)
+    right = weights.reshape(weights.shape[0], blocks, 16).permute(1, 2, 0)
+    partial = torch.bmm(left, right)
+    correction = None
+    while partial.shape[0] > 1:
+        left, right = partial[0::2], partial[1::2]
+        updated = left + right
+        error = torch.where(
+            left.abs() >= right.abs(),
+            (left - updated) + right,
+            (right - updated) + left,
         )
-        finite = updated.isfinite() & total.isfinite() & partial.isfinite()
-        correction = torch.where(finite, correction + delta, torch.zeros_like(correction))
-        total = updated
-    return torch.where(total.isfinite(), total + correction, total)
+        correction = (
+            error if correction is None
+            else (correction[0::2] + correction[1::2]) + error
+        )
+        partial = updated
+    return torch.where(partial[0].isfinite(), partial[0] + correction[0], partial[0])
+
+
+class _CpuAffineDot(torch.autograd.Function):  # pylint: disable=abstract-method
+    """Keep only original inputs for the analytic derivative of a linear dot.
+
+    The correction improves Float32 forward rounding; the mathematical operation
+    remains values @ weights.T. Saving the original two views avoids retaining
+    the internal reduction tree for every TBPTT delivery.
+    """
+
+    @staticmethod
+    def forward(ctx, values, weights):  # pylint: disable=arguments-differ
+        """Evaluate the compensated CPU sum without recording its internal graph."""
+        ctx.save_for_backward(values, weights)
+        return _compensated_cpu_dot(values, weights)
+
+    @staticmethod
+    def backward(ctx, gradient):  # pylint: disable=arguments-differ
+        """Return ordinary Float32 matrix adjoints for the requested input views."""
+        values, weights = ctx.saved_tensors
+        # Backward may run after forward's autocast guard has left its scope.
+        with torch.autocast(device_type="cpu", enabled=False):
+            values_gradient = gradient @ weights if ctx.needs_input_grad[0] else None
+            weights_gradient = gradient.T @ values if ctx.needs_input_grad[1] else None
+        return values_gradient, weights_gradient
+
+
+def _affine_dot(values, weights):
+    """Use accurate bounded CPU long rows; retain direct short/CUDA operations.
+
+    CPU widths below 128 have short BLAS reductions. Longer rows use 16-term
+    partials, compensated Float32 reduction and the analytic matrix derivative.
+    Canonical callers validate dimensions/dtype and disable autocast; this helper
+    introduces no parameters, recurrent state, compiler cache or RNG.
+    """
+    if values.device.type != "cpu" or values.shape[-1] < 128:
+        return values @ weights.T
+    return _CpuAffineDot.apply(values, weights)
 
 
 class CanonicalGraph(nn.Module):
