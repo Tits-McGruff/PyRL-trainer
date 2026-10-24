@@ -60,7 +60,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 386341a2fe528dd42e05f5b4bc6a38bcc4ab813a
+          # Original Slither source: 386341a2fe528dd42e05f5b4bc6a38bcc4ab813a
+          ref: 1d5876c38200e16aa31a80cb2240efa3d33a06c9
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -190,7 +191,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 386341a2fe528dd42e05f5b4bc6a38bcc4ab813a
+          # Original Slither source: 386341a2fe528dd42e05f5b4bc6a38bcc4ab813a
+          ref: 1d5876c38200e16aa31a80cb2240efa3d33a06c9
           path: .live-slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
