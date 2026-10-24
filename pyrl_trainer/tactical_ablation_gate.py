@@ -171,6 +171,8 @@ class AblationStudy:
                                   "updates": args.updates, "validationSeed": args.validation_seed,
                                   "nativeSteps": args.native_steps,
                                   "nativeWorkers": args.native_workers,
+                                  "sensorProfile": self.corpus.sensor.profile,
+                                  "sensorBins": self.corpus.sensor.bins,
                                   "validationUpdates": list(args.validation_update),
                                   **({"cudaGraphs": True} if self.cuda_graphs else {})},
                        "scope": (

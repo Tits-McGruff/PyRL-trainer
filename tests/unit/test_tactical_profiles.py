@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from pyrl_trainer.canonical_graph import CanonicalGraph, CanonicalGraphError, CanonicalGraphManifest
 from pyrl_trainer.sequence_distillation import CanonicalSequenceTrainer, SequenceTrainingConfig
@@ -167,3 +168,29 @@ def test_basic_study_rejects_nonexistent_motion_groups_before_device_or_output(p
     args = SimpleNamespace(updates=1, validation_update=(), corpus=root, variant=["no-heading"])
     with pytest.raises(ValueError, match="unavailable"):
         AblationStudy(args)
+
+
+
+def test_profile_study_report_binds_native_contract_and_default_variant_set(profile_case,
+                                                                         monkeypatch):
+    """CI and downstream readers receive the exact declared profile/width in each report."""
+    root, receipt = profile_case
+    canonical = root / "canonical-runner"
+    tactical = root / "tactical-runner"
+    canonical.write_bytes(b"fixture runner identity only")
+    tactical.write_bytes(b"fixture tactical identity only")
+    monkeypatch.setattr(torch, "set_num_threads", lambda _count: None)
+    args = SimpleNamespace(
+        updates=2, validation_update=(1,), cuda_graphs=False, corpus=root, variant=None,
+        validation_seed=2, batch_sequences=2, sequence_length=16, burn_in=0,
+        seed=1, device="cpu", cpu_threads=1, device_memory_mib=512,
+        canonical_runner=canonical, tactical_runner=tactical, directory=root / "study",
+        native_steps=12, native_workers=1, deadline_seconds=60,
+    )
+    study = AblationStudy(args)
+    config = study.report["config"]
+    assert config["sensorProfile"] == receipt["profile"]
+    assert config["sensorBins"] == study.corpus.sensor.bins
+    assert tuple(args.variant) == variants_for_profile(receipt["profile"])
+    assert study.report["measurementComplete"] is False
+    assert study.report["releaseQualified"] is False
