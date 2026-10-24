@@ -616,6 +616,21 @@
       "bytes": 7331,
       "sha256": "ff9761eb0d15d75ff43fadb8b6579e959c58c129c5fb907e07b80addcbcd6604",
       "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/compensated_dot_counterexample_v1/fixture.json": {
+      "sha256": "22bf98a545504f40ac76346b6b83ff3563970e97b00c34cc35b2e6a267c378ed",
+      "bytes": 977,
+      "purpose": "Actual first-layer row from the original failing large-LSTM export; bounded CPU compensated dot regression against independent math.fsum, without the full model/corpus."
+    },
+    "tests/fixtures/compensated_dot_counterexample_v1/values.f32": {
+      "sha256": "2e30321df713577a3f6148ea0c435f7d255cf2e5a893c7590114f673156348cc",
+      "bytes": 2016,
+      "purpose": "Actual first-layer row from the original failing large-LSTM export; bounded CPU compensated dot regression against independent math.fsum, without the full model/corpus."
+    },
+    "tests/fixtures/compensated_dot_counterexample_v1/weights.f32": {
+      "sha256": "6707eb57c6fc2efed79cf4705ecfe04910d32f87223ae644c2ee0aa4d6d8d668",
+      "bytes": 2016,
+      "purpose": "Actual first-layer row from the original failing large-LSTM export; bounded CPU compensated dot regression against independent math.fsum, without the full model/corpus."
     }
   }
 }

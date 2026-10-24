@@ -396,3 +396,12 @@ def test_reader_rejects_hash_bound_native_input_width_that_disagrees_with_study(
     (tmp_path / "summary.json").write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError, match="native candidate sensor width"):
         read_study(tmp_path)
+
+
+def test_reader_preserves_source_basename_confinement_with_git_provenance(tmp_path):
+    """Migrating away from source archives must retain the original path admission."""
+    report = write_study(tmp_path)
+    report["sources"]["../escape.py"] = report["sources"]["canonical_graph.py"]
+    (tmp_path / "summary.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="confined source basename"):
+        read_study(tmp_path)

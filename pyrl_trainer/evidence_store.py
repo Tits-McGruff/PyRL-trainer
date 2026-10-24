@@ -129,6 +129,28 @@ def verify(root, catalog):
     return root
 
 
+def _asset_bytes(artifact, archive_path):
+    """Read one bounded encoded asset and bind it to its published receipt."""
+    if archive_path is not None:
+        archive_path = Path(archive_path)
+        if (archive_path.is_symlink() or not archive_path.is_file()
+                or archive_path.stat().st_size != artifact["bytes"]):
+            raise ValueError("release asset size/checksum mismatch")
+        data = archive_path.read_bytes()
+    else:
+        if not artifact["url"].startswith("https://github.com/"):
+            raise ValueError("explicit HTTPS release asset required")
+        try:
+            with urllib.request.urlopen(artifact["url"], timeout=60) as response:
+                data = response.read(artifact["bytes"] + 1)
+        except OSError as error:
+            raise RuntimeError("Required evidence unavailable. Download release asset "
+                               + artifact["url"] + " and retry fetch --archive FILE") from error
+    if len(data) != artifact["bytes"] or sha(data) != artifact["sha256"]:
+        raise ValueError("release asset size/checksum mismatch")
+    return data
+
+
 def fetch(catalog_path, cache, archive_path=None):  # pylint: disable=too-many-branches
     """Download/restore an admitted content-addressed archive, then verify restorability."""
     catalog = json.loads(Path(catalog_path).read_bytes())
@@ -144,19 +166,7 @@ def fetch(catalog_path, cache, archive_path=None):  # pylint: disable=too-many-b
         return verify(root, catalog)
     root.mkdir(parents=True, exist_ok=True)
     local = root / "archive.tar.gz"
-    if archive_path is not None:
-        data = Path(archive_path).read_bytes()
-    else:
-        if not artifact["url"].startswith("https://github.com/"):
-            raise ValueError("explicit HTTPS release asset required")
-        try:
-            with urllib.request.urlopen(artifact["url"], timeout=60) as response:
-                data = response.read(artifact["bytes"] + 1)
-        except OSError as error:
-            raise RuntimeError("Required evidence unavailable. Download release asset "
-                               + artifact["url"] + " and retry fetch --archive FILE") from error
-    if len(data) != artifact["bytes"] or sha(data) != artifact["sha256"]:
-        raise ValueError("release asset size/checksum mismatch")
+    data = _asset_bytes(artifact, archive_path)
     local.write_bytes(data)
     seen = set()
     with tarfile.open(local, "r:gz") as archive:

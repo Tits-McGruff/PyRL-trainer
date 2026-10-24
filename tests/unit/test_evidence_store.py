@@ -6,12 +6,14 @@ import io
 import json
 import tarfile
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
 from pyrl_trainer.evidence_store import export, fetch, inventory, required_root, verify
 from pyrl_trainer.evidence_policy import check
 from pyrl_trainer.source_provenance import capture, restore
+from pyrl_trainer.tactical_ablation_gate import AblationStudy
 
 pytestmark = pytest.mark.unit
 
@@ -155,3 +157,15 @@ def test_explicit_dirty_patch_and_eol_recipe_roundtrip_in_isolated_git(tmp_path,
     assert record["lineEndings"] == ending and record["patch"].endswith(".patch")
     assert not list(output.glob("*.gz"))
     assert restore(record, output, repo) == raw
+
+
+def test_ablation_source_capture_writes_provenance_without_source_archives(tmp_path):
+    """The actual study producer cannot reintroduce its former compressed source directory."""
+    study = AblationStudy.__new__(AblationStudy)
+    study.args = SimpleNamespace(directory=tmp_path)
+    receipts = study._sources()  # pylint: disable=protected-access
+    assert "distillation_job.py" in receipts and "source_provenance.py" in receipts
+    assert not (tmp_path / "sources").exists() and not list(tmp_path.rglob("*.gz"))
+    assert all(set(receipt) == {"sha256"} for receipt in receipts.values())
+    assert all(len(record["commit"]) == 40 for record in
+               study.source_provenance["versions"].values())

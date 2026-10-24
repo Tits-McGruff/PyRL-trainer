@@ -131,7 +131,12 @@ def read_study(directory):
              "sequence_distillation.py", "tactical_ablation.py", "tactical_ablation_gate.py",
              "tactical_contract.py", "tactical_corpus.py"} <= names.keys(),
              "complete measured sources required")
+    for name in names:
+        _require(Path(name).name == name and name.endswith(".py"),
+                 "confined source basename required")
     source_bytes = measured_sources(report, root)
+    _require(all(len(value) <= MAX_SUMMARY_BYTES for value in source_bytes.values()),
+             "bounded measured source required")
     declarations = [node.value for node in ast.parse(source_bytes["distillation_job.py"]).body
                     if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                         and target.id == "SOURCE_FILES" for target in node.targets)]
