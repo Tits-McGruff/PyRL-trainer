@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 147cefc41ef56c116fd4a214615901c2255a5e42
+          ref: 1eafb98e9ee6aea9ba2b0d44872d17e5c530e872
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -71,7 +71,7 @@ jobs:
           python -m pip install -c constraints.txt numpy pytest pytest-asyncio
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
       - name: Build the deployed whole-graph runner
-        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate --bin baseline-v2-qualification
+        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate --bin baseline-v2-qualification --bin sensor-v4-qualification
       - name: Fresh committed native tactical corpus interoperability
         run: |
           .canonical-rust/native/target/release/baseline-v2-qualification --seed-count 2 --steps 12 --workers 1 --output tactical-report.json --corpus-directory native-tactical-corpus
@@ -115,6 +115,7 @@ jobs:
             if [ "$profile_case" = basic-b8 ]; then profile=basic; bins=8; else profile=motion; bins=32; fi
             .canonical-rust/native/target/release/baseline-v2-qualification --seed-count 2 --steps 12 --workers 1 --cadence 0.06 --bins "$bins" --corpus-profile "$profile" --output "$profile_case-tactics.json" --corpus-directory "native-tactical-$profile_case"
             python -m pyrl_trainer.tactical_ablation_gate --corpus "native-tactical-$profile_case" --canonical-runner .canonical-rust/native/target/release/canonical-training-graph --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification --directory "tactical-profile-$profile_case" --device cpu --updates 2 --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12 --validation-seed 2 --validation-update 1 --device-memory-mib 512
+            python -B .canonical-rust/scripts/qualification/trained-sensor-cohorts.py --executable .canonical-rust/native/target/release/sensor-v4-qualification --artifact "tactical-profile-$profile_case/full/trained.slither-brain" --profile "$profile" --bins "$bins" --directory "profile-gameplay-$profile_case" --workers 3 --warmup 0 --steps 12
           done
           python - <<'PY'
           import json
@@ -123,6 +124,12 @@ jobs:
               report = json.loads(Path("tactical-profile-" + case, "summary.json").read_bytes())
               assert report["measurementComplete"] and not report["releaseQualified"]
               assert report["config"]["sensorProfile"] == profile and report["config"]["sensorBins"] == bins
+              gameplay = json.loads(Path("profile-gameplay-" + case, "summary.json").read_bytes())
+              assert gameplay["measurementComplete"] and not gameplay["releaseQualified"]
+              assert gameplay["sensorProfile"] == profile and gameplay["sensorBins"] == bins
+              assert len(gameplay["records"]) == 4
+              assert {(row["scenario"], row["workers"]) for row in gameplay["records"]} == {
+                  ("P0", 1), ("P0", 3), ("P1", 1), ("P1", 3)}
               assert len(report["variants"]) == (1 if profile == "basic" else 7)
               assert len({row["training"]["scheduleSha256"] for row in report["variants"]}) == 1
               for row in report["variants"]:
@@ -164,6 +171,8 @@ jobs:
             tactical-profile-basic-b8/
             tactical-profile-motion-b32/
             tactical-profile-motion-b32-matrix.json
+            profile-gameplay-basic-b8/*.json
+            profile-gameplay-motion-b32/*.json
           if-no-files-found: error
 
 
@@ -176,7 +185,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 147cefc41ef56c116fd4a214615901c2255a5e42
+          ref: 1eafb98e9ee6aea9ba2b0d44872d17e5c530e872
           path: .live-slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
