@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "normalizationPolicy": "canonical LF for Git recovery; raw byte SHA-256 and explicit LF/CRLF/mixed recipe preserve measured identities. Patches apply to the recorded base commit before EOL reconstruction.",
+  "versions": {
+    "50147430ae3cac6fa69f0acb3406b8c6a29536a1511b1fa305e5263a88ca652e": {
+      "sha256": "50147430ae3cac6fa69f0acb3406b8c6a29536a1511b1fa305e5263a88ca652e",
+      "bytes": 5961,
+      "canonicalLfSha256": "9878569211968af4a373c340eabcb36d9a9339849f75f198012b182ea9524a09",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "c644b94ca4a591f9efeee475033b01f0ade97a20",
+      "path": "benchmarks/historical/experiment-987856921196.py",
+      "patch": "benchmarks/patches/9878569211968af4a373c340eabcb36d9a9339849f75f198012b182ea9524a09.patch",
+      "patchSha256": "6805c65632bf05ad13710b6771e08f9a32b7456ffd6e544bfc5dbc1e6a332760"
+    },
+    "667cb3d9d00402a5cd0aa7980094ab1ec0306b4f561fc814aa76d17c02ea2e74": {
+      "sha256": "667cb3d9d00402a5cd0aa7980094ab1ec0306b4f561fc814aa76d17c02ea2e74",
+      "bytes": 6125,
+      "canonicalLfSha256": "667cb3d9d00402a5cd0aa7980094ab1ec0306b4f561fc814aa76d17c02ea2e74",
+      "lineEndings": "lf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "76c1bc241637794b2643e8caffeb0a1cc412b7c3",
+      "path": "pyrl_trainer/brain_artifact.py",
+      "gitBlob": "39fcb4eb1e22cab0f4321816dfc7ac20fa6a815b"
+    },
+    "72a80c648ff8058377aaf65f1870b29d9ca20f05e41e9f6a9513574272eb3129": {
+      "sha256": "72a80c648ff8058377aaf65f1870b29d9ca20f05e41e9f6a9513574272eb3129",
+      "bytes": 25104,
+      "canonicalLfSha256": "72a80c648ff8058377aaf65f1870b29d9ca20f05e41e9f6a9513574272eb3129",
+      "lineEndings": "lf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "6e3bdd840389594db1387ca0d23eed76e5968dda",
+      "path": "pyrl_trainer/canonical_graph.py",
+      "gitBlob": "6856b80d31803f9d56cf5c8b11b1b6e03a4b4f1d"
+    },
+    "b960733610b12a33d894f080d54473531b7b3e0d7ce665b58d5e08d0febacc30": {
+      "sha256": "b960733610b12a33d894f080d54473531b7b3e0d7ce665b58d5e08d0febacc30",
+      "bytes": 9717,
+      "canonicalLfSha256": "b960733610b12a33d894f080d54473531b7b3e0d7ce665b58d5e08d0febacc30",
+      "lineEndings": "lf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "59a856904dc8ef041536af03ef6cc96b1c5ddcdb",
+      "path": "pyrl_trainer/canonical_parity.py",
+      "gitBlob": "68eed8946b6e493aa9027953f9a992dc29c4a02d"
+    },
+    "beaa2c7a8cfc43af7bad01e97b2ee502f7e92d3b5548b679e60504627dbac9ae": {
+      "sha256": "beaa2c7a8cfc43af7bad01e97b2ee502f7e92d3b5548b679e60504627dbac9ae",
+      "bytes": 34525,
+      "canonicalLfSha256": "f40b78dd1c078163967dcea2cfccf31676c149859837f96178d6174355e579ac",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "61d0e00cc6e2a89e470cdf89e5ec6e073fb0bf40",
+      "path": "pyrl_trainer/distillation_checkpoint.py",
+      "gitBlob": "b44c045d6afe3e6a1291bd7a832c5c90e294aa6c"
+    },
+    "91de1bb80cb00ed961758d079a051c662e3c2ae538a546b11731ba00f39b54c6": {
+      "sha256": "91de1bb80cb00ed961758d079a051c662e3c2ae538a546b11731ba00f39b54c6",
+      "bytes": 22665,
+      "canonicalLfSha256": "40c24ea83648dd6de713ff42106e1f256cdad9e4874516ef93435624f7fe3a07",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "01317afbb53ddcee445559aef1a697fae0379019",
+      "path": "pyrl_trainer/distillation_client.py",
+      "gitBlob": "56df061bfea0f8e8f1475ca3b086a2ace5a34d79"
+    },
+    "ea5c9657618089983f6ebd03501413a2f89508ce16902bac2fe330e75b2464ad": {
+      "sha256": "ea5c9657618089983f6ebd03501413a2f89508ce16902bac2fe330e75b2464ad",
+      "bytes": 25820,
+      "canonicalLfSha256": "27aab7db3575c429acab2102a516d800bfc531e0728d23682f78c27b953ca27e",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "df2de6c6144b1b3b69305c7149fc850ca761ba22",
+      "path": "pyrl_trainer/distillation_job.py",
+      "gitBlob": "b4d1cdd9fb75827e2c2c39d20dfb2ea43d42ed10"
+    },
+    "4538ca541528c6f550afb41ed3eaa4ff6f0e7640f0f9deb19ac95e3ca7bb85f6": {
+      "sha256": "4538ca541528c6f550afb41ed3eaa4ff6f0e7640f0f9deb19ac95e3ca7bb85f6",
+      "bytes": 15074,
+      "canonicalLfSha256": "c39890ffa2d4511f9481960d543c6f388613e6a5b029c0736f2677d8a92e53be",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "61d0e00cc6e2a89e470cdf89e5ec6e073fb0bf40",
+      "path": "pyrl_trainer/distillation_replay.py",
+      "gitBlob": "b5880f9a818b4b94fcee33a9d49001008d8a0cd5"
+    },
+    "0bcb7f639b84458b6dca236cead2bc0774530b096e574a3b42771337d20e8275": {
+      "sha256": "0bcb7f639b84458b6dca236cead2bc0774530b096e574a3b42771337d20e8275",
+      "bytes": 12796,
+      "canonicalLfSha256": "0bcb7f639b84458b6dca236cead2bc0774530b096e574a3b42771337d20e8275",
+      "lineEndings": "lf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "da219836ebcbaa26f2e382b93a022ad963ed7d78",
+      "path": "pyrl_trainer/distillation_run.py",
+      "gitBlob": "c428594076684fc7fa53df260e648184b10fc6c8"
+    },
+    "5eef4b95bccb0e84090053b64fb415e72986da97f255ef0cd83b1222b67626ac": {
+      "sha256": "5eef4b95bccb0e84090053b64fb415e72986da97f255ef0cd83b1222b67626ac",
+      "bytes": 12631,
+      "canonicalLfSha256": "5eef4b95bccb0e84090053b64fb415e72986da97f255ef0cd83b1222b67626ac",
+      "lineEndings": "lf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "4c959a31e5fd6ae65f8fe666897645a1ff03fd6b",
+      "path": "pyrl_trainer/distillation_sampling.py",
+      "gitBlob": "c6b59c1a4ea8c582ae02a6418a30273507dc8b29"
+    },
+    "6663d2edbecf8c8ce6e36dc46382e9de28a4ad184750e6a19c8b4dd2171f5277": {
+      "sha256": "6663d2edbecf8c8ce6e36dc46382e9de28a4ad184750e6a19c8b4dd2171f5277",
+      "bytes": 7684,
+      "canonicalLfSha256": "74865d9cb88022b3a1091c8c3b880009f50c2669cee28c479b574f554c76243d",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "6f02a077949446edc4e58e9021ed7196cf962842",
+      "path": "pyrl_trainer/distillation_shadows.py",
+      "gitBlob": "e769287646d68d3aad6c94a59c1a26303e4efad1"
+    },
+    "05fe9f442c004e6a5c131e44d92b7a285293b7738f28736de07a3519db005f96": {
+      "sha256": "05fe9f442c004e6a5c131e44d92b7a285293b7738f28736de07a3519db005f96",
+      "bytes": 2342,
+      "canonicalLfSha256": "3b91f99eac3eecf97a15a241438df60600c1a5734ea94312671f465a102a060e",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "01317afbb53ddcee445559aef1a697fae0379019",
+      "path": "pyrl_trainer/distillation_storage.py",
+      "gitBlob": "2c80ebe6f6ed47d5e26babcbf03c599c0c8f07f5"
+    },
+    "0498343d66408ddc1896ffad48777859e3ddac98406885ab25aaa4518f61d0ce": {
+      "sha256": "0498343d66408ddc1896ffad48777859e3ddac98406885ab25aaa4518f61d0ce",
+      "bytes": 20337,
+      "canonicalLfSha256": "f2a410854fc0b909f0c31cc3f03ce1470c45947c2dd91c3098622e8cf416af79",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "01317afbb53ddcee445559aef1a697fae0379019",
+      "path": "pyrl_trainer/distillation_transport.py",
+      "gitBlob": "846e4307f2d8d14e99697cc73d196d0f2913dbf6"
+    },
+    "770dff09d17e5be62e07eaa25900deba159f767da567ec0623bbeb29fd63f5a9": {
+      "sha256": "770dff09d17e5be62e07eaa25900deba159f767da567ec0623bbeb29fd63f5a9",
+      "bytes": 10203,
+      "canonicalLfSha256": "770dff09d17e5be62e07eaa25900deba159f767da567ec0623bbeb29fd63f5a9",
+      "lineEndings": "lf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "76c1bc241637794b2643e8caffeb0a1cc412b7c3",
+      "path": "pyrl_trainer/sensor_contract.py",
+      "gitBlob": "e496ae438489babafbd3383a113a3f35308137e2"
+    },
+    "6f434d655ca69c8fef07f45e94dca48cbfd7bc3e0cd830d54d0c205835e12d54": {
+      "sha256": "6f434d655ca69c8fef07f45e94dca48cbfd7bc3e0cd830d54d0c205835e12d54",
+      "bytes": 17366,
+      "canonicalLfSha256": "034f2120f7e07399db19a2930faa3924448ff2b6e267f95fca5cd46123484446",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "9107b851953de90e2d6a2f3d6612973fd475084a",
+      "path": "pyrl_trainer/sequence_distillation.py",
+      "gitBlob": "04a411843c660e6ca88761875a8767e911b42c8d"
+    },
+    "4d252a5317417cc98c23aeaa909c52c03a3fe01bc04a30add9003f590b210506": {
+      "sha256": "4d252a5317417cc98c23aeaa909c52c03a3fe01bc04a30add9003f590b210506",
+      "bytes": 9672,
+      "canonicalLfSha256": "58a3c311b0d09bc7d957526bc6dce085d79cabb24ddadf713e9fe674b017306e",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "df2de6c6144b1b3b69305c7149fc850ca761ba22",
+      "path": "pyrl_trainer/tactical_ablation.py",
+      "gitBlob": "48dfcca647c850b226c9a742fa3f1b52f06c1bed"
+    },
+    "19437ed0725e3f9cf4835d8f610c14f65cac8e669f424c5cdfceb4349c85982f": {
+      "sha256": "19437ed0725e3f9cf4835d8f610c14f65cac8e669f424c5cdfceb4349c85982f",
+      "bytes": 24870,
+      "canonicalLfSha256": "7f5cd73d252eff516a98012fccbdc22e6d9fa0d6e2f760461e483512c80dff30",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "9107b851953de90e2d6a2f3d6612973fd475084a",
+      "path": "pyrl_trainer/tactical_ablation_gate.py",
+      "gitBlob": "be983ed96d061c9f53d07b45dac134dd6a62c4b2"
+    },
+    "b0ff47fc364f8caaf3b7c6ff0a4dc74bec5e5811d420fd8befa3ff77c9c43390": {
+      "sha256": "b0ff47fc364f8caaf3b7c6ff0a4dc74bec5e5811d420fd8befa3ff77c9c43390",
+      "bytes": 667,
+      "canonicalLfSha256": "5893be65cf4657f1e6a6c05f1942519510be67eebf70377ac40e1763264e18d8",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "df2de6c6144b1b3b69305c7149fc850ca761ba22",
+      "path": "pyrl_trainer/tactical_contract.py",
+      "gitBlob": "6b21fe014a4bced82d01a2367c1fea496b2754cc"
+    },
+    "2ce401f7606333c07ac835ea481cbc853b032c26ba3d3031ebb9ea207463e1ce": {
+      "sha256": "2ce401f7606333c07ac835ea481cbc853b032c26ba3d3031ebb9ea207463e1ce",
+      "bytes": 8696,
+      "canonicalLfSha256": "619f976cc6b9b1c78b9e8d90d0d89f1499284f0d42ef78d617a944d66f4953a7",
+      "lineEndings": "crlf",
+      "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+      "commit": "df2de6c6144b1b3b69305c7149fc850ca761ba22",
+      "path": "pyrl_trainer/tactical_corpus.py",
+      "gitBlob": "29fe5976ec446e9cec2a9b7ff8726062a7a8a3bb"
+    }
+  },
+  "historicalPaths": {
+    "docs/performance/canonical_graph/cuda-window-windows-v1/experiment.py.gz": "50147430ae3cac6fa69f0acb3406b8c6a29536a1511b1fa305e5263a88ca652e",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/brain_artifact.py.gz": "667cb3d9d00402a5cd0aa7980094ab1ec0306b4f561fc814aa76d17c02ea2e74",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/canonical_graph.py.gz": "72a80c648ff8058377aaf65f1870b29d9ca20f05e41e9f6a9513574272eb3129",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/canonical_parity.py.gz": "b960733610b12a33d894f080d54473531b7b3e0d7ce665b58d5e08d0febacc30",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_checkpoint.py.gz": "beaa2c7a8cfc43af7bad01e97b2ee502f7e92d3b5548b679e60504627dbac9ae",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_client.py.gz": "91de1bb80cb00ed961758d079a051c662e3c2ae538a546b11731ba00f39b54c6",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_job.py.gz": "ea5c9657618089983f6ebd03501413a2f89508ce16902bac2fe330e75b2464ad",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_replay.py.gz": "4538ca541528c6f550afb41ed3eaa4ff6f0e7640f0f9deb19ac95e3ca7bb85f6",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_run.py.gz": "0bcb7f639b84458b6dca236cead2bc0774530b096e574a3b42771337d20e8275",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_sampling.py.gz": "5eef4b95bccb0e84090053b64fb415e72986da97f255ef0cd83b1222b67626ac",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_shadows.py.gz": "6663d2edbecf8c8ce6e36dc46382e9de28a4ad184750e6a19c8b4dd2171f5277",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_storage.py.gz": "05fe9f442c004e6a5c131e44d92b7a285293b7738f28736de07a3519db005f96",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/distillation_transport.py.gz": "0498343d66408ddc1896ffad48777859e3ddac98406885ab25aaa4518f61d0ce",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/sensor_contract.py.gz": "770dff09d17e5be62e07eaa25900deba159f767da567ec0623bbeb29fd63f5a9",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/sequence_distillation.py.gz": "6f434d655ca69c8fef07f45e94dca48cbfd7bc3e0cd830d54d0c205835e12d54",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/tactical_ablation.py.gz": "4d252a5317417cc98c23aeaa909c52c03a3fe01bc04a30add9003f590b210506",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/tactical_ablation_gate.py.gz": "19437ed0725e3f9cf4835d8f610c14f65cac8e669f424c5cdfceb4349c85982f",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/tactical_contract.py.gz": "b0ff47fc364f8caaf3b7c6ff0a4dc74bec5e5811d420fd8befa3ff77c9c43390",
+    "docs/performance/canonical_graph/cuda-window-windows-v1/sources/tactical_corpus.py.gz": "2ce401f7606333c07ac835ea481cbc853b032c26ba3d3031ebb9ea207463e1ce"
+  }
+}

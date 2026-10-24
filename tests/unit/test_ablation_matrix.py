@@ -1,11 +1,12 @@
 """Reader-only grid checks; these fixture records are not measured training evidence."""
 import copy
 import hashlib
-import gzip
 import json
 
 import pytest
 
+from pyrl_trainer.source_provenance import capture
+from pyrl_trainer.distillation_job import SOURCE_FILES, trainer_source_sha256
 from pyrl_trainer.ablation_matrix import MatrixSpec, combine_studies, read_study
 from pyrl_trainer.tactical_contract import POLICIES, SCENARIOS, VARIANTS
 
@@ -134,22 +135,13 @@ def write_study(root):
     """Publish test-only receipt files to exercise hash binding, with no simulation claims."""
     report = study(1, 2)
     report.update(schemaVersion=1, kind="native-tactical-ablation-v1")
-    source_root = root / "sources"
-    source_root.mkdir()
-    names = ["distillation_job.py", "canonical_graph.py", "sequence_distillation.py",
-             "tactical_ablation.py", "tactical_ablation_gate.py", "tactical_contract.py",
-             "tactical_corpus.py"]
-    sources = {name: b"# reader unit fixture\n" for name in names}
-    sources["distillation_job.py"] = b'SOURCE_FILES = ("distillation_job.py",)\n'
-    trainer = hashlib.sha256(b"slither.distillation-trainer-source.v1\0")
-    trainer.update(b"distillation_job.py\0" + sources["distillation_job.py"])
-    report["trainerSourceSha256"] = trainer.hexdigest()
-    report["sources"] = {}
-    for name, data in sources.items():
-        encoded = gzip.compress(data, mtime=0)
-        (source_root / (name + ".gz")).write_bytes(encoded)
-        report["sources"][name] = {"sha256": hashlib.sha256(data).hexdigest(),
-                                   "gzipSha256": hashlib.sha256(encoded).hexdigest()}
+    names = tuple(dict.fromkeys((*SOURCE_FILES, "tactical_ablation.py",
+                                "tactical_ablation_gate.py", "tactical_contract.py",
+                                "tactical_corpus.py")))
+    report["sourceProvenance"] = capture(names, root)
+    report["trainerSourceSha256"] = trainer_source_sha256()
+    report["sources"] = {name: {"sha256": record["sha256"]}
+                         for name, record in report["sourceProvenance"]["versions"].items()}
     for variant in report["variants"]:
         directory = root / variant["variant"]
         directory.mkdir()
@@ -191,7 +183,7 @@ def test_reader_binds_native_reports_originals_and_measured_sources(tmp_path):
         read_study(tmp_path)
 
 
-def test_reader_recomputes_trainer_identity_from_archived_inventory(tmp_path):
+def test_reader_recomputes_trainer_identity_from_git_inventory(tmp_path):
     """Matching source filenames alone cannot qualify a different executable trainer source."""
     report = write_study(tmp_path)
     report["trainerSourceSha256"] = digest("different trainer")

@@ -2,3 +2,9 @@
 *.f32 binary
 *.bin binary
 *.distill-job binary
+
+# The trained CUDA replay receipt is part of a byte-exact golden fixture.
+tests/fixtures/cuda_window_replay_v1/**/*.json text eol=lf
+tests/fixtures/cuda_window_replay_v1/*.slither-brain binary
+docs/performance/**/*.json text eol=lf
+benchmarks/patches/*.patch text eol=lf -whitespace

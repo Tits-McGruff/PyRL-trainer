@@ -6,7 +6,6 @@ Paired differences keep one initialization/held-out-fold cell as the analysis un
 import argparse
 import ast
 from dataclasses import dataclass
-import gzip
 import hashlib
 import json
 import math
@@ -15,6 +14,7 @@ import shutil
 from pathlib import Path
 import statistics
 
+from .source_provenance import measured_sources
 from .tactical_contract import SCENARIOS, variants_for_profile, policies_for_profile
 
 MAX_CELLS = 64
@@ -118,7 +118,7 @@ def _study_variants(records, profile):
 
 
 def read_study(directory):
-    """Bind actual native reports, portable bytes and measured source archives to one summary."""
+    """Bind actual native reports, portable bytes and measured source provenance to one summary."""
     root = Path(directory).resolve(strict=True)
     report, digest = _read_json(root / "summary.json", MAX_SUMMARY_BYTES)
     _require(report.get("kind") == "native-tactical-ablation-v1"
@@ -131,19 +131,7 @@ def read_study(directory):
              "sequence_distillation.py", "tactical_ablation.py", "tactical_ablation_gate.py",
              "tactical_contract.py", "tactical_corpus.py"} <= names.keys(),
              "complete measured sources required")
-    source_bytes = {}
-    for name, receipt in names.items():
-        _require(Path(name).name == name and name.endswith(".py"),
-                 "confined source basename required")
-        path = root / "sources" / (name + ".gz")
-        _require(_digest(path, MAX_SUMMARY_BYTES) == _sha(receipt["gzipSha256"]),
-                 "source archive changed")
-        with gzip.open(path, "rb") as stream:
-            source = stream.read(MAX_SUMMARY_BYTES + 1)
-        _require(len(source) <= MAX_SUMMARY_BYTES
-                 and hashlib.sha256(source).hexdigest() == _sha(receipt["sha256"]),
-                 "measured source changed")
-        source_bytes[name] = source
+    source_bytes = measured_sources(report, root)
     declarations = [node.value for node in ast.parse(source_bytes["distillation_job.py"]).body
                     if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                         and target.id == "SOURCE_FILES" for target in node.targets)]
@@ -153,10 +141,10 @@ def read_study(directory):
              "invalid measured trainer source inventory")
     trainer_hash = hashlib.sha256(b"slither.distillation-trainer-source.v1\0")
     for name in inventory:
-        _require(name in source_bytes, "trainer source omitted from measured archive")
+        _require(name in source_bytes, "trainer source omitted from measured provenance")
         trainer_hash.update(name.encode() + b"\0" + source_bytes[name])
     _require(trainer_hash.hexdigest() == _sha(report["trainerSourceSha256"]),
-             "trainer identity differs from measured source archives")
+             "trainer identity differs from measured source provenance")
     reference = None
     for variant in report["variants"]:
         name = variant["variant"]
@@ -411,7 +399,8 @@ def combine_studies(studies, spec):
     return {"schemaVersion": 1, "kind": "paired-ablation-matrix-v1", "measurementComplete": True,
             "releaseQualified": False, "maturityQualified": False, "profileChoice": None,
             "replicatedSeedFoldCoverage": len(spec.seeds) >= 3 and len(spec.validation_seeds) >= 3,
-            "sensorProfile": profile, "sensorBins": bins,
+            **({"sensorProfile": profile, "sensorBins": bins}
+               if "sensorProfile" in config else {}),
             "updatesPerVariant": spec.updates, "initializationSeeds": sorted(spec.seeds),
             "validationSeeds": sorted(spec.validation_seeds), "cellCount": len(cells),
             "corpusManifestSha256": common[1], "corpusNativeSourceSha256": common[2],

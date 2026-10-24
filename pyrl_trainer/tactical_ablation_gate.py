@@ -6,7 +6,6 @@ select sensor defaults or qualify representative population performance/soak.
 
 import argparse
 from dataclasses import asdict
-import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -17,6 +16,7 @@ import time
 import numpy as np
 import torch
 
+from .source_provenance import capture
 from .brain_artifact import encode_brain_artifact
 from .canonical_graph import (CanonicalGraph, CanonicalGraphManifest,
                               configure_distillation_precision)
@@ -188,24 +188,18 @@ class AblationStudy:
                             'cross-profile data.'
                        ),
                        "sources": self._sources(), "variants": []}
+        self.report["sourceProvenance"] = self.source_provenance
         _write(args.directory / "initial-observation.f32",
                self.corpus.observations[self.training[0].row_offset].tobytes())
 
     def _sources(self):
-        """Retain exact measured source bytes, including the existing canonical method owner."""
-        destination = self.args.directory / "sources"
-        destination.mkdir()
-        names = dict.fromkeys((*SOURCE_FILES, "canonical_parity.py", "tactical_corpus.py",
-                               "tactical_ablation.py", "tactical_ablation_gate.py",
-                               "tactical_contract.py"))
-        records = {}
-        for name in names:
-            value = (Path(__file__).parent / name).read_bytes()
-            compressed = gzip.compress(value, mtime=0)
-            _write(destination / (name + ".gz"), compressed)
-            records[name] = {"sha256": hashlib.sha256(value).hexdigest(),
-                             "gzipSha256": hashlib.sha256(compressed).hexdigest()}
-        return records
+        """Keep hash identities and Git/patch provenance without duplicate source archives."""
+        names = tuple(dict.fromkeys((*SOURCE_FILES, "canonical_parity.py", "tactical_corpus.py",
+                                    "tactical_ablation.py", "tactical_ablation_gate.py",
+                                    "tactical_contract.py", "source_provenance.py")))
+        self.source_provenance = capture(names, self.args.directory)
+        return {name: {"sha256": record["sha256"]}
+                for name, record in self.source_provenance["versions"].items()}
 
     def _remaining(self):
         seconds = self.args.deadline_seconds - (time.perf_counter() - self.started)

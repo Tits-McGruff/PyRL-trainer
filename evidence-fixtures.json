@@ -1,0 +1,621 @@
+{
+  "schemaVersion": 1,
+  "policy": "Explicit reviewed golden inputs, not an experiment archive. Update deliberately with tests and a reason.",
+  "files": {
+    "tests/fixtures/ablation_curve_v1/evidence.json": {
+      "bytes": 796,
+      "sha256": "c853dc4e6e84311738dfcb498a1e0fbdfd04d9f0afd8be34b5aa40fd232e0f6d",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/ablation_curve_v1/manifest.json.gz": {
+      "bytes": 4535,
+      "sha256": "b46f861edfa1a28c48d96bce5805714d756e19e689026054db5ccd48155b5456",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/ablation_curve_v1/README.md": {
+      "bytes": 515,
+      "sha256": "d1b42b437e60586e4b082d7013a1074575ba828584656ac78c9979b712380db8",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/ablation_curve_v1/receipt.json.gz": {
+      "bytes": 655,
+      "sha256": "4a90a941b3ac10e91d840200ccac34d84e74adec986bb0029f10dcc39a03ccd4",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/ablation_curve_v1/weights.f32.gz": {
+      "bytes": 11918,
+      "sha256": "9a18f937aae87233a1ba54471a5366fd6a2ecfd11ff67f4d08d581d19e2f8bd6",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/observations.f32": {
+      "bytes": 52224,
+      "sha256": "b143dc1fa11667677aa3e0b348b5762f70f821499a4fcab7e6ce98f4b91637bb",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/request-zero.json": {
+      "bytes": 451,
+      "sha256": "7965553dc9c9968d9bf64882a01ee2680d51b61000bea89963d9ddaeadd98b70",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/zero/manifest.json": {
+      "bytes": 7623,
+      "sha256": "3879ce74dcd55ac2bc0b180ba4de544a38d4eaab572d60abc919388cabf8a5fc",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "a116fef7108ddb0d4a8ead9e0954d8fd565fda268039a41b71e8915fd1c1601b",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "c84990a782e1b1b4a1be25b4a50d5a722bf6891dc1a90b88601f90eb06094c70",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/zero/states.f32": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/dense/zero/weights.f32": {
+      "bytes": 416,
+      "sha256": "c5133eed40a2caf11b84c8cf2e03fa9c2643d79a5011380e2d1d8305be0bd031",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/initial-state.f32": {
+      "bytes": 8,
+      "sha256": "c689a9637c5caf4d3e8bebdf6736813f4b17957657112d4ad9dbab22f8f3f359",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/nonzero/manifest.json": {
+      "bytes": 13536,
+      "sha256": "219fbf834d9119c0a68d071015bedd97bf847c4be2c355247964b4bf947fce43",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/nonzero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "dbf93e335f696a047ab14de74371105d77215869def306e87e5b5d4db5da6270",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/nonzero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "305b301e28cf0c8819faa6b86f7bce0965c0d6c9e42ae250b072a9048aa60dd9",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/nonzero/states.f32": {
+      "bytes": 2048,
+      "sha256": "dbf93e335f696a047ab14de74371105d77215869def306e87e5b5d4db5da6270",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/nonzero/weights.f32": {
+      "bytes": 3528,
+      "sha256": "a70abf5db2e4974a25643adec535fa0fddd8032447fe804a942dc97044a7ed1c",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/observations.f32": {
+      "bytes": 147456,
+      "sha256": "5c3dc9b3b8f9234afb9017c9a754c29df964c4f0f56931114e7cc23f81876b53",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/request-nonzero.json": {
+      "bytes": 509,
+      "sha256": "3e595e45c10095e6d9f794189403a45c9efdae51bcac184207bea05354ed7da0",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/request-zero.json": {
+      "bytes": 470,
+      "sha256": "3b0e1e1ee7fdb2784ae723a1886b09ce57807ef94a91d8a7275363b61ef88373",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/zero/manifest.json": {
+      "bytes": 13536,
+      "sha256": "219fbf834d9119c0a68d071015bedd97bf847c4be2c355247964b4bf947fce43",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "fa9409b55793dafbabc96b70a7007861a002b3a6dd382c0824c55d9fcaeb1a37",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "38a726c2f88e734c84f123056196e444fd17c06c908fc6f6c02304492fc8d21e",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/zero/states.f32": {
+      "bytes": 2048,
+      "sha256": "fa9409b55793dafbabc96b70a7007861a002b3a6dd382c0824c55d9fcaeb1a37",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/gru/zero/weights.f32": {
+      "bytes": 3528,
+      "sha256": "a70abf5db2e4974a25643adec535fa0fddd8032447fe804a942dc97044a7ed1c",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/index.json": {
+      "bytes": 2430,
+      "sha256": "99ce7643fcaf61191e185596a79ff7c2fd23ca5f74868732c452b4acc48ed5b6",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/initial-state.f32": {
+      "bytes": 24,
+      "sha256": "4df84a6235569971f6a35f66caa4f1ada066bb2d8e6f6e031f5e95bae858deb3",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/nonzero/manifest.json": {
+      "bytes": 9612,
+      "sha256": "fd6536956a9a22c435a91368f75ed1471a421580676b77b207671a06c1e2293b",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/nonzero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "9f2d7be28c134fa1c59b2cc4497e4a79b4b5ae2532a93a83ac4ea6daff2b8384",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/nonzero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "823efd291f48aae2217eec45ca3c0ab8e35645aab208a7af4aac8e3d55a8e77f",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/nonzero/states.f32": {
+      "bytes": 6144,
+      "sha256": "b26c0c313cc3e5b71fdc80c619292323c863cd26cfc571be76e25330dd6a998c",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/nonzero/weights.f32": {
+      "bytes": 4208,
+      "sha256": "5b153116943808bab9489c171b72464e3786672ba2f31110b2a73cace1b733c7",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/observations.f32": {
+      "bytes": 84992,
+      "sha256": "75a1047e05f5debde2ffd6d3990a587f95ae181604e433266ae1f23a34bfcb5e",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/request-nonzero.json": {
+      "bytes": 615,
+      "sha256": "5c21404e9b73c8413bf1ee324e9ae7f34bfe9574cc527f435a9f0a78aae14023",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/request-zero.json": {
+      "bytes": 576,
+      "sha256": "6e8de9cc3299fa2ecbdcd2e82927c5d1a6f153a7000e7778ea2932d7b6e9ce58",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/zero/manifest.json": {
+      "bytes": 9612,
+      "sha256": "fd6536956a9a22c435a91368f75ed1471a421580676b77b207671a06c1e2293b",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "c86d6ebbc686a926596827246fa135a529c95372858786dcd2bc29b6408faa3e",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "fa9d88fc6436c7931492f6cab089d9bc806a915612f5fc710ebd43cd62aabb5a",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/zero/states.f32": {
+      "bytes": 6144,
+      "sha256": "68c7541a30b9ecd586d1dbe633256a028c7932195442e2774beb1ef2e059ffb3",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/lstm/zero/weights.f32": {
+      "bytes": 4208,
+      "sha256": "5b153116943808bab9489c171b72464e3786672ba2f31110b2a73cace1b733c7",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/initial-state.f32": {
+      "bytes": 40,
+      "sha256": "45d3537999d3a760ec57ab7fd65c28311f6b5ee9a5206131d8834e5817547163",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/nonzero/manifest.json": {
+      "bytes": 22207,
+      "sha256": "2271218fd563aea159bbf7ac767492372d4ff55f9183bac5133fe610bb37237a",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/nonzero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "9ddf85c135ff64f1fabf2c2130528fff5ef0b4b82fb3da77ec7dfc0ee3a47eba",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/nonzero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "e1e32b125a0f04f977fc148d2a39f9374911d00c640af742a4c73904b1dba63c",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/nonzero/states.f32": {
+      "bytes": 10240,
+      "sha256": "f611e0bd35448d8c79d7e4cbdf7a8d8cdfebb762b45f7f082f6974bec8c1c3ea",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/nonzero/weights.f32": {
+      "bytes": 8436,
+      "sha256": "e6dac978fb86d9898db0fa0c81ad5f467b6a21d4168cd732bffdaa2d4c48be87",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/observations.f32": {
+      "bytes": 270336,
+      "sha256": "6c02ac4f5ae6b6d80e786d0f05ec0798cd348f16e5b898aa26c08019ed2ea1de",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/request-nonzero.json": {
+      "bytes": 1223,
+      "sha256": "2c5a1091c121855364d27b800a139c77d7cccbf37a5d3e63563c1b2497d3f270",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/request-zero.json": {
+      "bytes": 1184,
+      "sha256": "4a64e3da04871b9d096f40e541f3dc87b0ec14e71901b2460ee3faacec7060b3",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/zero/manifest.json": {
+      "bytes": 22207,
+      "sha256": "2271218fd563aea159bbf7ac767492372d4ff55f9183bac5133fe610bb37237a",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "178593f0ca5ac179c64bb94565c7d989d4f0703529ba24880f0add9cedaa1d58",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "189267ed3d3be587360af4dbffe62e08caa003c46434f6269f3a5bae3ed645be",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/zero/states.f32": {
+      "bytes": 10240,
+      "sha256": "cd971e64f8344773ba23e14ec09c17c6f4534e0dba6e3f2f973af5e1c9d034f8",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mixed/zero/weights.f32": {
+      "bytes": 8436,
+      "sha256": "e6dac978fb86d9898db0fa0c81ad5f467b6a21d4168cd732bffdaa2d4c48be87",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/observations.f32": {
+      "bytes": 73728,
+      "sha256": "cd8fb80c616668171f8cc252625ec889f0374b8d90498eeaeb4e70098fa693ed",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/request-zero.json": {
+      "bytes": 471,
+      "sha256": "465fee010f6134c19b74e2d0bf706e8314a02580c9dc3a953456107fb7704224",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/zero/manifest.json": {
+      "bytes": 10193,
+      "sha256": "6d16ee8f7bd38e1a936921c428471b628bde762aa8972f0bc5242517fa49b349",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "042dbf65925af4432981ad75f5d2b015aa76938421e873d8b3a2dcb5d6342b67",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "4b868dbc9bd00cef99b357f497208a1345b18b3d47bebc81bd7760d7bda105b8",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/zero/states.f32": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/mlp/zero/weights.f32": {
+      "bytes": 2964,
+      "sha256": "6b890b75c17408152871fa0c8064fa7bff48853c8ac0020537385da157e460b3",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/README.md": {
+      "bytes": 1787,
+      "sha256": "a508942bebd9512a5ad87992db39ebbe27db531f60d618e095e5635b1f0ed837",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/observations.f32": {
+      "bytes": 52224,
+      "sha256": "b143dc1fa11667677aa3e0b348b5762f70f821499a4fcab7e6ce98f4b91637bb",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/request-zero.json": {
+      "bytes": 484,
+      "sha256": "e4341df1f20b21a187895d64e27927c7f7e6c697169caca088a6813bcbead4e8",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/zero/manifest.json": {
+      "bytes": 7643,
+      "sha256": "b9b8f5966d798d4fd68b9489c4001c060f54e406f375141cf4fdc85a0519c13d",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "ab285ca84514916a54adbbec3f2b95f225351307144deafb2e1757be293aa6b6",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "398d3bd6c3f611e10c1c6db610fb8f571979778d5236ee265f2d39f35aae5aae",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/zero/states.f32": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/routing/zero/weights.f32": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/initial-state.f32": {
+      "bytes": 8,
+      "sha256": "c689a9637c5caf4d3e8bebdf6736813f4b17957657112d4ad9dbab22f8f3f359",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/nonzero/manifest.json": {
+      "bytes": 10915,
+      "sha256": "b102e73a6ba7b50c1aee99cc760d27d45c9630072fc193126e943a79d8e45c69",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/nonzero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "d206117878d805ef538bad169802531a8f930ac2b2441937f3be4a2dc6ae2709",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/nonzero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "50c7593db311feb39363b9261c324d22b10f48f6b18f1aed10c82932836261fb",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/nonzero/states.f32": {
+      "bytes": 2048,
+      "sha256": "d206117878d805ef538bad169802531a8f930ac2b2441937f3be4a2dc6ae2709",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/nonzero/weights.f32": {
+      "bytes": 1968,
+      "sha256": "d19ac42cbfe8633e4738acdc92004d78b306b43c3d363e94cda33eff2dce4947",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/observations.f32": {
+      "bytes": 122880,
+      "sha256": "ab9b4da6844fe86962d6f58e1b32a477d0b1f874295f7b17a610089d31c4e136",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/request-nonzero.json": {
+      "bytes": 509,
+      "sha256": "f4c42dfd40f1745bb176734cfe6529d2f3db98ef4073c46f161464e7af0eed79",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/request-zero.json": {
+      "bytes": 470,
+      "sha256": "b3445d41bee0e7057c464770b2a5544cbd6b29ad3a5f2c94c600b25625002baa",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/zero/manifest.json": {
+      "bytes": 10915,
+      "sha256": "b102e73a6ba7b50c1aee99cc760d27d45c9630072fc193126e943a79d8e45c69",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/zero/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "f0075cd970978a55edaadfa4f36e28b2050ebeec41a9350204eecdd95a072957",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/zero/receipt.json": {
+      "bytes": 1035,
+      "sha256": "4faedce15a6ebc15dc467dd214f7dcec75ba98a3d73fa7bb21edda612022b102",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/zero/states.f32": {
+      "bytes": 2048,
+      "sha256": "f0075cd970978a55edaadfa4f36e28b2050ebeec41a9350204eecdd95a072957",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/canonical_graph/rru/zero/weights.f32": {
+      "bytes": 1968,
+      "sha256": "d19ac42cbfe8633e4738acdc92004d78b306b43c3d363e94cda33eff2dce4947",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/cuda_window_replay_v1/fixture.json": {
+      "bytes": 1244,
+      "sha256": "2c4fefa1c8db01bcf0ffb5ca3535c55c337341781bfaa0afe8c1669db7a9e41a",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/cuda_window_replay_v1/native-parity/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "1fff79ecc462cb41fc911a085a49039da9bec7d7ee72f992a56f01eefbae0492",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/cuda_window_replay_v1/native-parity/receipt.json": {
+      "bytes": 1035,
+      "sha256": "8250d0419cc8ae7c67a09e51b9e74e53fca1886bd61cd2df2c9a77165e983b39",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/cuda_window_replay_v1/native-parity/states.f32": {
+      "bytes": 16384,
+      "sha256": "698d2dd96d70e18c3789f2077d6b4692366095d15351f7e82184422f42efeeb1",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/cuda_window_replay_v1/parity-observations.f32": {
+      "bytes": 270336,
+      "sha256": "016ae0b38536d653929d49afe366cdf968cf06393215003925c271ff10dd6855",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/cuda_window_replay_v1/trained.slither-brain": {
+      "bytes": 118579,
+      "sha256": "8d41d436ccaee7b0410865209211d36418dfe8b301f0a982711c32c12efa1a88",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/manifest.json": {
+      "bytes": 11032,
+      "sha256": "9dd548584327d2f63510962bdc4dba8d62064b0131c501e3c7e94a93ba06a321",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/observations.f32": {
+      "bytes": 73728,
+      "sha256": "3804f61681067df88e859b422c775c7f41216621bc1700b06ddbb1be797499a8",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "a86291f390ee32a7efe45f19a94038ecae7534c40b27c4cc6e37eded835493d0",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/README.md": {
+      "bytes": 980,
+      "sha256": "36b5ec3cb53a0c1f193d51786ac458f42c95329f78cf7a73685d69c93e9e0610",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/receipt.json": {
+      "bytes": 1035,
+      "sha256": "ddd00c7e8b182aaad9a7d71c9140400186afa62408ca9f5fc536848da24a5004",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/request.json": {
+      "bytes": 571,
+      "sha256": "3be16abbded5498bd2afecf622ef26e8cd7cb4aab011b1093e05d3431aefc95c",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/states.f32": {
+      "bytes": 8192,
+      "sha256": "9586a70fed437ee97a25745a0dfb6e500584caf7151b5baaf15fb5096bd99eb8",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/distillation_graph_v1/weights.f32": {
+      "bytes": 7848,
+      "sha256": "4014378abfde69ddbd50dfc09231ec38389b824c397607419d5409084795f244",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_corpus_v1/actions.f32.gz": {
+      "bytes": 219,
+      "sha256": "8cd0f030c47611b549c4be0eb9b886d6192e1eb763a68df5fdf0f5c620d9e478",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_corpus_v1/corpus.json.gz": {
+      "bytes": 6511,
+      "sha256": "03282b69036b0cd8048990df822e65a6c48e43f465aadc5bd366067a7ba64a80",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_corpus_v1/observations.f32.gz": {
+      "bytes": 9633,
+      "sha256": "68d313d1751acd5c1083451cb1dfe207ab102100da13cd98cdec7d39c64c71f1",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_corpus_v1/README.md": {
+      "bytes": 924,
+      "sha256": "14153999bd728c4fa97766d33e589dcd08301d1abc5c351aef54fce1eacfae9f",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_corpus_v1/receipt.json": {
+      "bytes": 990,
+      "sha256": "52badf189fc9e260db93e7045ff728a89532da985750ea16028f099dc4dd0ce7",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_corpus_v1/steps.u32.gz": {
+      "bytes": 44,
+      "sha256": "67c97e4d2e0e98c720b7c60421f1d1a153eb0264860a40ba59bc9432ba7322dc",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/actions.f32.gz": {
+      "bytes": 428,
+      "sha256": "5a60fe2b9060b70647b404e287bb6462928438187c0167f49d2422c9948e4842",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/corpus.json.gz": {
+      "bytes": 5596,
+      "sha256": "e5ea06f26a8c4a99693750981d3bb100244915ecb4346469aab09a49d4000be4",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/initialized/manifest.json.gz": {
+      "bytes": 3829,
+      "sha256": "b2100bc466a63e5bbe63bfe7fec5940cf9f1f6d7a0341312f59c2c1a01689182",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/initialized/receipt.json.gz": {
+      "bytes": 656,
+      "sha256": "ff6d90df714ef3020b25f7a457366296a444946ee475ebf2bf237e3e9114174a",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/initialized/weights.f32.gz": {
+      "bytes": 47199,
+      "sha256": "b991aa70959eb31463ad2045fdf4e2d28918eaa426be213d7221c9d41bad4004",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/observations.f32.gz": {
+      "bytes": 8026,
+      "sha256": "e2d6fd0966df46226c581c8c44da858f3c00eb5877eb41231d10e317cd0b027b",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/basic-b8/steps.u32.gz": {
+      "bytes": 57,
+      "sha256": "fc563e54ca7675aa8a9d598a85eccae019d50b93938eb1a353b1f8fa55f25750",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/actions.f32.gz": {
+      "bytes": 322,
+      "sha256": "806d9db791098afcb7d3f6681a5c01acb786c4e13523716d6f051a1899675b93",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/corpus.json.gz": {
+      "bytes": 7178,
+      "sha256": "0653cd8d9c37fea90a9dc568c4b5cc7e1716666ccf938018433381e23f5cbe10",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/initialized/manifest.json.gz": {
+      "bytes": 5395,
+      "sha256": "d34c3900a495dd1d6968a25718787db241d08132cde6dc64105c215dd0888076",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/initialized/receipt.json.gz": {
+      "bytes": 656,
+      "sha256": "41f01721ec0db82e0437314f47eec4aa0a49dad0c145e915ebf8056e3874202d",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/initialized/weights.f32.gz": {
+      "bytes": 149386,
+      "sha256": "98c60d5d9d8a95c87282a69297606e7c571e11d2892337164d819d79c2c1107d",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/observations.f32.gz": {
+      "bytes": 23129,
+      "sha256": "c750a6da1fba7a600898fcbeb74b56847636ac5753e12c50563b60d3e5e00f40",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/motion-b32/steps.u32.gz": {
+      "bytes": 55,
+      "sha256": "cef17c74ce81686873dc2dec6149f972b5f5d04a891db67bf85ebe1485b1e0fc",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/README.md": {
+      "bytes": 1018,
+      "sha256": "63701e41dc7b6e5c4faf024e4fd0b5a213a401afd2234965d0b9993b7f175d6e",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/tactical_profiles_v1/receipt.json": {
+      "bytes": 4030,
+      "sha256": "555bbe1d24e671f76579697baa1bf038e558fd2b66e61215cf1e13064a0cbdd6",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/teacher_chunk_v1/chunk.bin": {
+      "bytes": 1115,
+      "sha256": "fa106a3fdcc5ff72b0cefb59708e3887baa318613169e4dc57208c3451bf20d9",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/teacher_chunk_v1/README.md": {
+      "bytes": 1107,
+      "sha256": "171ba1df0092be93d5748182ca84120efb11c6b340487250b7af19e7a7da6a93",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    },
+    "tests/fixtures/teacher_chunk_v1/reference.json": {
+      "bytes": 7331,
+      "sha256": "ff9761eb0d15d75ff43fadb8b6579e959c58c129c5fb907e07b80addcbcd6604",
+      "purpose": "Bounded semantic/protocol/interoperability golden inputs; existing fixture tests."
+    }
+  }
+}

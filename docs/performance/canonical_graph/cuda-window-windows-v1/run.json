@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "cuda-window-qualification-v1",
+  "releaseQualified": false,
+  "inputEvidence": "https://github.com/Tits-McGruff/slither_neuroevo/tree/bfd8157e41e42d855bb2efe438c2214be324e231/docs/performance/sensor-v4/heldout-curves-windows-v1",
+  "inputPaths": [
+    "corpus/",
+    "seed-1-fold-2/full/initial.slither-brain"
+  ],
+  "scope": "32 paired actual native tactical windows; update timing excludes sampling and held-out evaluation, includes validation/transfer/compilation/Adam; not a gameplay, maturity or integrated throughput gate",
+  "nativeSourceSha256": "b2828e0390c51138627616d705ba7f59369ee73c39115e17031426bf52d32b8d",
+  "trainerSourceSha256": "55cfbb12ddbad5780e8185beb53e51793b3ba0e99af0b7225ab18ecb1fbd2d4d",
+  "pairedUpdates": 32,
+  "compiledUpdates": 100,
+  "pairedMaxAbs": {
+    "loss": 0.0,
+    "gradient": 0.0,
+    "weights": 0.0,
+    "state": 0.0,
+    "adamExpAvg": 0.0,
+    "adamExpAvgSq": 0.0
+  },
+  "eagerWarmedMeanMs": 278.42473750069985,
+  "compiledWarmedMeanMs": 26.8611812493873,
+  "eagerTotalUpdateSeconds": 9.237447800012887,
+  "compiledTotalUpdateSeconds": 33.2628900000127,
+  "nativeParity": {
+    "steps": 256,
+    "outputMaxAbs": 2.8312206268310547e-07,
+    "stateMaxAbs": 8.046627044677734e-07,
+    "scope": "Frozen canonical parity tolerances, actual held-out delivered prefix"
+  },
+  "retainedPayload": {
+    "catalog": "docs/performance/catalog.json",
+    "originalManifest": "docs/performance/canonical_graph/cuda-window-windows-v1/evidence.json",
+    "sha256": "639b4c1c1af6866a711d1b0702a205ae28057e3ac7ac7c955fb46b58fb5b6f7a",
+    "bytes": 7726
+  },
+  "sourceProvenance": "docs/performance/source-provenance.json"
+}

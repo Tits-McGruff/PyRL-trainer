@@ -34,6 +34,9 @@ jobs:
         run: |
           pylint --disable=duplicate-code,too-many-instance-attributes,too-many-locals,try-except-raise $(git ls-files '*.py')
 
+      - name: Reject generated evidence promotion
+        run: python -m pyrl_trainer.evidence_policy
+
       - name: Full test suite
         run: python -m pytest -q
 
@@ -227,18 +230,13 @@ jobs:
         working-directory: .live-slither
         run: |
           python - <<'PY'
-          import gzip, hashlib, json
+          import hashlib, json, os
           from pathlib import Path
-          study = Path("docs/performance/sensor-v4/tactical-ablation-windows-v1")
-          inventory = json.loads((study / "evidence.json").read_bytes())
-          record = next(item for item in inventory["files"] if item["path"] == "full/trained.slither-brain")
-          encoded = (study / record["archive"]).read_bytes()
-          assert hashlib.sha256(encoded).hexdigest() == record["gzipSha256"]
-          original = gzip.decompress(encoded)
-          assert len(original) == record["bytes"]
-          assert hashlib.sha256(original).hexdigest() == record["sha256"]
-          with Path("native/target/contention-student.slither-brain").open("xb") as output:
-              output.write(original)
+          fixture = Path(os.environ["GITHUB_WORKSPACE"]) / "tests/fixtures/cuda_window_replay_v1"
+          record = json.loads((fixture / "fixture.json").read_bytes())["files"]["trained.slither-brain"]
+          brain = (fixture / "trained.slither-brain").read_bytes()
+          assert len(brain) == record["bytes"] and hashlib.sha256(brain).hexdigest() == record["sha256"]
+          Path("native/target/contention-student.slither-brain").write_bytes(brain)
           PY
           node node_modules/tsx/dist/cli.mjs scripts/qualification/live-distillation.ts \
             --pyrl-root "${{ github.workspace }}" --python "$(command -v python)" \
@@ -267,3 +265,20 @@ jobs:
             live-distillation-cpu-w*.json
             live-distillation-durability-cpu-P0.json
           if-no-files-found: warn
+
+  historical-evidence:
+    name: Required historical CUDA evidence integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install CPU replay dependencies
+        run: |
+          python -m pip install -c constraints.txt pytest numpy
+          python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Fetch and verify required release evidence
+        run: python -m pyrl_trainer.evidence_store fetch --catalog docs/performance/catalog.json --cache .cache/qualification-evidence
+      - name: Preserve all historical dispatch, timing, hash and replay assertions
+        run: python -m pytest -q tests/evidence

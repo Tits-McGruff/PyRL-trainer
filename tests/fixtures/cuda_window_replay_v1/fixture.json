@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "purpose": {
+    "test": "tests/unit/test_cuda_window_evidence.py",
+    "origin": "docs/performance/canonical_graph/cuda-window-windows-v1",
+    "sourceCommit": "c644b94ca4a591f9efeee475033b01f0ade97a20",
+    "nativeSourceSha256": "b2828e0390c51138627616d705ba7f59369ee73c39115e17031426bf52d32b8d",
+    "description": "Actual CUDA-trained brain and all 256 CPU/Rust replay observations, outputs, states and receipt. Timing claims remain in required external audit."
+  },
+  "files": {
+    "trained.slither-brain": {
+      "bytes": 118579,
+      "sha256": "8d41d436ccaee7b0410865209211d36418dfe8b301f0a982711c32c12efa1a88"
+    },
+    "parity-observations.f32": {
+      "bytes": 270336,
+      "sha256": "016ae0b38536d653929d49afe366cdf968cf06393215003925c271ff10dd6855"
+    },
+    "native-parity/outputs.f32": {
+      "bytes": 2048,
+      "sha256": "1fff79ecc462cb41fc911a085a49039da9bec7d7ee72f992a56f01eefbae0492"
+    },
+    "native-parity/states.f32": {
+      "bytes": 16384,
+      "sha256": "698d2dd96d70e18c3789f2077d6b4692366095d15351f7e82184422f42efeeb1"
+    },
+    "native-parity/receipt.json": {
+      "bytes": 1035,
+      "sha256": "8250d0419cc8ae7c67a09e51b9e74e53fca1886bd61cd2df2c9a77165e983b39"
+    }
+  }
+}

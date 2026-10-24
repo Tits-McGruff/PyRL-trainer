@@ -1,6 +1,5 @@
 """Retained CUDA measurements and CPU replay of the actual trained native prefix."""
 
-import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -14,40 +13,21 @@ from pyrl_trainer.canonical_graph import CanonicalGraph
 from pyrl_trainer.canonical_parity import _sequence, _compare
 
 pytestmark = pytest.mark.unit
-ROOT = (Path(__file__).resolve().parents[2]
-        / "docs/performance/canonical_graph/cuda-window-windows-v1")
+ROOT = Path(__file__).resolve().parents[1] / "fixtures/cuda_window_replay_v1"
 
 
-def test_retained_cuda_capsule_hashes_dispatch_and_native_continuation():
-    """CI checks bounded archived bytes and replays the trained GPU artifact against Rust."""
-    evidence = json.loads((ROOT / "evidence.json").read_text(encoding="utf-8"))
+def test_cuda_trained_brain_replays_all_native_outputs_and_states():
+    """The deliberate golden fixture needs no historical experiment/source bundle."""
+    fixture = json.loads((ROOT / "fixture.json").read_bytes())
     files = {}
-    total = 0
-    for name, receipt in evidence["files"].items():
-        encoded = (ROOT / (name + ".gz")).read_bytes()
-        assert hashlib.sha256(encoded).hexdigest() == receipt["gzipSha256"]
-        with gzip.open(ROOT / (name + ".gz"), "rb") as stream:
-            data = stream.read(1024**2 + 1)
-        total += len(data)
-        assert len(data) == receipt["bytes"] <= 1024**2 and total <= 4 * 1024**2
-        assert hashlib.sha256(data).hexdigest() == receipt["sha256"]
+    for name, record in fixture["files"].items():
+        data = (ROOT / name).read_bytes()
+        assert len(data) == record["bytes"]
+        assert hashlib.sha256(data).hexdigest() == record["sha256"]
         files[name] = data
-    paired = json.loads(files["paired-updates.json"])
-    assert paired["trainerSourceSha256"] == evidence["trainerSourceSha256"]
-    assert all(value == 0 for value in paired["maxAbs"].values())
-    for mode, run in paired["runs"].items():
-        assert len(run["updateWallMs"]) == 32
-        assert run["dispatch"]["compiledWindowCalls"] == (32 if mode == "cudagraphs" else 0)
-    for name, digest in paired["sources"].items():
-        assert hashlib.sha256(files["sources/" + name]).hexdigest() == digest
-    functional = json.loads(files["native-roundtrip.json"])
-    assert functional["measurementComplete"] and functional["status"] == "measured"
-    training = functional["variants"][0]["training"]
-    assert training["updates"] == 100
-    assert training["windowExecution"]["compiledWindowCalls"] == 100
-    assert training["windowExecution"]["eagerWindowCalls"] == 0
-    artifact, manifest, _ = read_raw_brain_artifact(files["roundtrip/trained.slither-brain"])
-    receipt = json.loads(files["roundtrip/native-parity/receipt.json"])
+    evidence = fixture["purpose"]
+    artifact, manifest, _ = read_raw_brain_artifact(files["trained.slither-brain"])
+    receipt = json.loads(files["native-parity/receipt.json"])
     assert receipt["sourceSha256"] == evidence["nativeSourceSha256"]
     assert artifact.weights_sha256 == receipt["weightsSha256"]
     assert manifest.layout_sha256 == receipt["layoutSha256"]
@@ -58,7 +38,7 @@ def test_retained_cuda_capsule_hashes_dispatch_and_native_continuation():
                       ("native-parity/outputs.f32", "outputsSha256", 2),
                       ("native-parity/states.f32", "statesSha256", manifest.total_state_size))
     for name, digest, width in expected_files:
-        data = files["roundtrip/" + name]
+        data = files["" + name]
         assert hashlib.sha256(data).hexdigest() == receipt[digest]
         values.append(torch.from_numpy(np.frombuffer(data, dtype="<f4").copy().reshape(256, width)))
     actual, states = _sequence(model, values[0], model.initial_state(1))
