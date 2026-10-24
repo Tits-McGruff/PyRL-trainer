@@ -405,3 +405,27 @@ def test_reader_preserves_source_basename_confinement_with_git_provenance(tmp_pa
     (tmp_path / "summary.json").write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError, match="confined source basename"):
         read_study(tmp_path)
+
+
+@pytest.mark.parametrize("change", [None, "extra-output", "missing-output", "order"])
+def test_completed_variant_receipts_are_required_by_the_independent_reader(tmp_path, change):
+    """New-format summaries bind the entire completed output inventory, beyond model bytes."""
+    from pyrl_trainer.ablation_progress import variant_inventory  # pylint: disable=import-outside-toplevel
+    report = write_study(tmp_path)
+    report["resumeSchemaVersion"] = 1
+    report["variantOrder"] = [value["variant"] for value in report["variants"]]
+    report["completedFiles"] = {
+        name: variant_inventory(tmp_path / name) for name in report["variantOrder"]}
+    if change == "extra-output":
+        (tmp_path / "full/extra.f32").write_bytes(b"unexpected bytes")
+    elif change == "missing-output":
+        (tmp_path / "full/initial.slither-brain").unlink()
+    elif change == "order":
+        report["variantOrder"].reverse()
+    (tmp_path / "summary.json").write_text(json.dumps(report), encoding="utf8")
+    if change is None:
+        actual, _ = read_study(tmp_path)
+        assert actual == report
+    else:
+        with pytest.raises(ValueError, match="checkpoint inventory|study files changed"):
+            read_study(tmp_path)

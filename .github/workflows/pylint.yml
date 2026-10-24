@@ -113,6 +113,19 @@ jobs:
               assert [point["update"] for point in points] == [0, 1, 2]
               assert all(point["measurements"]["turnMae"]["count"] == 1 for point in points)
           PY
+      - name: Actual ablation process interruption and exact completed-variant reuse
+        run: >-
+          python -m pyrl_trainer.ablation_resume_gate
+          --canonical-runner .canonical-rust/native/target/release/canonical-training-graph
+          --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification
+          --directory "${{ runner.temp }}/ablation-resume-smoke"
+      - name: Retain actual ablation restart qualification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ablation-resume
+          path: ${{ runner.temp }}/ablation-resume-smoke/
+          if-no-files-found: error
       - name: Native profile-width corpus and optimizer deployment contracts
         run: |
           for profile_case in basic-b8 motion-b32; do

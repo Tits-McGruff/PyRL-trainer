@@ -510,6 +510,19 @@ windows and performs actual before/after native student trials. Reports now reta
 separate deterministic/stochastic teacher-policy and scenario/policy statistics;
 these strata cannot cancel each other inside one aggregate agreement score.
 
+Each new study atomically records `progress.json` after a variant has completed
+training, native parity and before/after gameplay. To continue an interrupted
+study, rerun its original command with `--resume` and the same directory and
+settings. Resume verifies source/dependency identities, numerical environment,
+corpus, native binaries and every completed output file before reuse. Only a
+completed variant is reused; interrupted optimizer work restarts from its seeded
+initialization, with its partial files retained in a labelled attempt directory.
+One process owns the study at a time. Attempt history keeps observed timings;
+unobserved interruption time is not reconstructed. Older studies without this
+checkpoint format remain preserved diagnostic inputs and require a new study
+directory. Completed studies stay immutable; use the independent matrix reader
+to verify them. Resume never silently upgrades old studies or marks incomplete data complete.
+
 Combine completed studies with the reader-only `pyrl_trainer.ablation_matrix`:
 
 ```text

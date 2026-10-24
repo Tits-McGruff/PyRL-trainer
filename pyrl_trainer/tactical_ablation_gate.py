@@ -16,7 +16,8 @@ import time
 import numpy as np
 import torch
 
-from .source_provenance import capture
+from .ablation_progress import replace_report, study_lease, variant_inventory
+from .source_provenance import capture, measured_sources
 from .brain_artifact import encode_brain_artifact
 from .canonical_graph import (CanonicalGraph, CanonicalGraphManifest,
                               configure_distillation_precision)
@@ -86,6 +87,8 @@ def _arguments():
     for name in ("corpus", "canonical-runner", "tactical-runner", "directory"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--variant", action="append", choices=VARIANTS)
+    parser.add_argument("--resume", action="store_true",
+                        help="Verify and reuse completed variants; restart an interrupted variant")
     parser.add_argument("--validation-update", type=int, action="append",
                         help=("Record held-out agreement after this update; "
                               "maximum 16 including the automatic final point"))
@@ -120,8 +123,10 @@ def _arguments():
     for name in ("canonical_runner", "tactical_runner", "corpus"):
         setattr(args, name, getattr(args, name).resolve(strict=True))
     args.directory = args.directory.resolve()
-    if args.directory.exists() or not args.directory.parent.is_dir():
-        parser.error("exclusive output directory with an existing parent required")
+    if (not args.directory.parent.is_dir() or args.directory.is_symlink()
+            or args.directory.exists() != args.resume
+            or (args.resume and not args.directory.is_dir())):
+        parser.error("new exclusive directory required, or --resume with an existing study")
     return args
 
 
@@ -134,9 +139,18 @@ class AblationStudy:
         self.cuda_graphs = getattr(args, "cuda_graphs", False)
         self.args = args
         self.started = time.perf_counter()
+        _require(not getattr(args, "resume", False)
+                 or (args.directory / "progress.json").is_file(),
+                 "study has no completed-variant checkpoint; use a new directory")
+        self.resume_report = (_json(args.directory / "progress.json")
+                              if getattr(args, "resume", False) else None)
+        if self.resume_report is not None:
+            _require(self.resume_report.get("measurementComplete") is False
+                     and self.resume_report.get("status") in ("running", "failed"),
+                     "completed studies are immutable; verify with ablation_matrix.read_study")
         self.corpus = load_tactical_corpus(args.corpus)
         supported = variants_for_profile(self.corpus.sensor.profile)
-        args.variant = list(supported) if args.variant is None else args.variant
+        args.variant = list(supported if args.variant is None else args.variant)
         _require(args.variant and len(set(args.variant)) == len(args.variant)
                  and all(variant in supported for variant in args.variant),
                  "ablation variants unavailable for the declared corpus profile")
@@ -159,10 +173,16 @@ class AblationStudy:
         self.runner_hashes = {name: _digest(path) for name, path in self.runners.items()}
         self.corpus_hash = _digest(args.corpus / "corpus.json")
         self.reference_v1 = None
-        args.directory.mkdir()
+        if self.resume_report is None:
+            args.directory.mkdir()
         self.report = {"schemaVersion": 1, "kind": "native-tactical-ablation-v1",
                        "releaseQualified": False, "measurementComplete": False,
-                       "status": "running", "corpusManifestSha256": self.corpus_hash,
+                       "status": "running", "resumeSchemaVersion": 1,
+                       "variantOrder": list(args.variant), "completedFiles": {},
+                       "attempt": 1, "attemptHistory": [],
+                       "elapsedMsScope": ("Current process attempt; unobserved interruption "
+                                          "time is excluded"),
+                       "corpusManifestSha256": self.corpus_hash,
                        "corpusNativeSourceSha256": self.corpus.source_sha256,
                        "runnerSha256": self.runner_hashes,
                        "trainerSourceSha256": trainer_source_sha256(),
@@ -189,17 +209,87 @@ class AblationStudy:
                        ),
                        "sources": self._sources(), "variants": []}
         self.report["sourceProvenance"] = self.source_provenance
-        _write(args.directory / "initial-observation.f32",
-               self.corpus.observations[self.training[0].row_offset].tobytes())
+        if self.resume_report is not None:
+            self._restore_progress()
+        else:
+            _write(args.directory / "initial-observation.f32",
+                   self.corpus.observations[self.training[0].row_offset].tobytes())
 
     def _sources(self):
         """Keep hash identities and Git/patch provenance without duplicate source archives."""
         names = tuple(dict.fromkeys((*SOURCE_FILES, "canonical_parity.py", "tactical_corpus.py",
                                     "tactical_ablation.py", "tactical_ablation_gate.py",
-                                    "tactical_contract.py", "source_provenance.py")))
-        self.source_provenance = capture(names, self.args.directory)
+                                    "tactical_contract.py", "source_provenance.py",
+                                    "ablation_progress.py")))
+        if getattr(self, "resume_report", None) is not None:
+            saved = self.resume_report
+            _require(saved.get("resumeSchemaVersion") == 1,
+                     "study has no supported completed-variant checkpoint; use a new directory")
+            _require(set(saved["sources"]) == set(names), "resume source inventory changed")
+            for name, receipt in saved["sources"].items():
+                _require(_digest(Path(__file__).parent / name) == receipt["sha256"],
+                         "resume trainer source changed: " + name)
+            measured_sources(saved, self.args.directory)
+            self.source_provenance = saved["sourceProvenance"]
+            dependencies = {name: _digest(Path(__file__).parents[1] / name)
+                            for name in ("requirements.txt", "constraints.txt",
+                                         "requirements-dev.txt")
+                            if (Path(__file__).parents[1] / name).is_file()}
+            _require(self.source_provenance["dependencies"] == dependencies,
+                     "resume dependency identity changed")
+        else:
+            self.source_provenance = capture(names, self.args.directory)
         return {name: {"sha256": record["sha256"]}
                 for name, record in self.source_provenance["versions"].items()}
+
+    def _checkpoint(self):
+        """Publish only completed variants, never implying optimizer recovery within a variant."""
+        self.report["elapsedMs"] = (time.perf_counter() - self.started) * 1000
+        replace_report(self.args.directory / "progress.json", self.report)
+
+    def _restore_progress(self):
+        """Reject changed identities or outputs before reusing any historical measurement."""
+        saved = self.resume_report
+        for key in ("kind", "schemaVersion", "resumeSchemaVersion", "variantOrder", "config",
+                    "corpusManifestSha256", "corpusNativeSourceSha256", "runnerSha256",
+                    "trainerSourceSha256", "environment", "sources"):
+            _require(saved[key] == self.report[key], "resume study identity changed: " + key)
+        _require(isinstance(saved["attempt"], int) and not isinstance(saved["attempt"], bool)
+                 and 1 <= saved["attempt"] < 32,
+                 "study restart attempt admission exceeded")
+        variants = saved["variants"]
+        _require(isinstance(variants, list) and len(variants) <= len(self.args.variant),
+                 "invalid completed variant prefix")
+        names = [value["variant"] for value in variants]
+        _require(names == self.args.variant[:len(names)]
+                 and set(saved["completedFiles"]) == set(names),
+                 "completed variant order or inventory changed")
+        initial = self.args.directory / "initial-observation.f32"
+        _require(initial.read_bytes() == self.corpus.observations[
+            self.training[0].row_offset].tobytes(), "resume initial observation changed")
+        for value in variants:
+            name = value["variant"]
+            _require(variant_inventory(self.args.directory / name) == saved["completedFiles"][name],
+                     "completed variant files changed: " + name)
+            for phase, field in (("native-before.json", "nativeBefore"),
+                                 ("native-after.json", "nativeAfter")):
+                report = _json(self.args.directory / name / phase)
+                _require(_digest(self.args.directory / name / phase) == value[field]["sha256"],
+                         "completed native receipt changed")
+                if self.reference_v1 is None:
+                    self.reference_v1 = report["referenceV1"]
+                _require(report["referenceV1"] == self.reference_v1,
+                         "completed paired physical reference changed")
+        self.report["variants"] = variants
+        self.report["completedFiles"] = saved["completedFiles"]
+        _require(isinstance(saved["attemptHistory"], list)
+                 and len(saved["attemptHistory"]) == saved["attempt"] - 1,
+                 "invalid study attempt history")
+        self.report["attemptHistory"] = [*saved["attemptHistory"], {
+            "attempt": saved["attempt"], "status": saved["status"],
+            "elapsedMs": saved["elapsedMs"], "completedVariants": names,
+            **({"failure": saved["failure"]} if "failure" in saved else {})}]
+        self.report["attempt"] = saved["attempt"] + 1
 
     def _remaining(self):
         seconds = self.args.deadline_seconds - (time.perf_counter() - self.started)
@@ -402,29 +492,57 @@ class AblationStudy:
                 "nativeBefore": native_before, "nativeAfter": native_after}
 
     def run(self):
+        """Acquire exclusive ownership before publishing progress or touching partial outputs."""
+        with study_lease(self.args.directory):
+            if getattr(self, "resume_report", None) is not None:
+                _require(_json(self.args.directory / "progress.json") == self.resume_report,
+                         "study checkpoint changed since resume admission")
+            self._run()
+
+    def _run(self):
         """Keep negative quality outcomes as measurements and retain functional failures."""
         try:
+            self._checkpoint()
+            self.report.setdefault("completedFiles", {})
+            self.report.setdefault("attempt", 1)
             reference = None
             for variant in self.args.variant:
                 print("[tactical-ablation]", variant, flush=True)
-                result = self.variant(variant)
+                cached = len(self.report["variants"]) > self.args.variant.index(variant)
+                if cached:
+                    result = self.report["variants"][self.args.variant.index(variant)]
+                else:
+                    root = self.args.directory / variant
+                    if root.exists():
+                        _require(not root.is_symlink() and root.is_dir(),
+                                 "ordinary interrupted variant directory required")
+                        root.rename(self.args.directory / (
+                            "interrupted-" + str(self.report["attempt"]) + "-" + variant))
+                    result = self.variant(variant)
                 identity = tuple(result["training"][key] for key in
                                  ("scheduleSha256", "trainingRows", "burnInRows"))
                 reference = identity if reference is None else reference
                 _require(reference == identity, "ablation variants trained on different windows")
-                self.report["variants"].append(result)
+                if not cached:
+                    files = variant_inventory(root)
+                    self.report["variants"].append(result)
+                    self.report["completedFiles"][variant] = files
+                    self._checkpoint()
             _require(_digest(self.args.corpus / "corpus.json") == self.corpus_hash,
                      "corpus metadata changed during study")
             for name, receipt in self.report["sources"].items():
                 _require(_digest(Path(__file__).parent / name) == receipt["sha256"],
                          "trainer source changed during study")
+            for name, receipt in self.report["completedFiles"].items():
+                _require(variant_inventory(self.args.directory / name) == receipt,
+                         "completed variant files changed: " + name)
             self.report.update(status="measured", measurementComplete=True)
         except Exception as error:  # pylint: disable=broad-exception-caught
             self.report.update(status="failed", failure=type(error).__name__ + ": " + str(error))
             raise
         finally:
-            self.report["elapsedMs"] = (time.perf_counter() - self.started) * 1000
-            _write_json(self.args.directory / "summary.json", self.report)
+            self._checkpoint()
+            replace_report(self.args.directory / "summary.json", self.report)
 
 
 def main():

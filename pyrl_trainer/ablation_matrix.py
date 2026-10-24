@@ -125,6 +125,19 @@ def read_study(directory):
              and report.get("schemaVersion") == 1, "unsupported ablation study")
     _require(report.get("measurementComplete") is True and report.get("status") == "measured"
              and report.get("releaseQualified") is False, "complete diagnostic study required")
+    if "resumeSchemaVersion" in report:
+        from .ablation_progress import variant_inventory  # pylint: disable=import-outside-toplevel
+        _integer(report["resumeSchemaVersion"], 1, 1)
+        completed = [value["variant"] for value in report["variants"]]
+        _require(completed == report["variantOrder"]
+                 and len(set(completed)) == len(completed)
+                 and set(report["completedFiles"]) == set(completed),
+                 "incomplete study checkpoint inventory")
+        for name in completed:
+            _require(name in variants_for_profile(_study_sensor(report["config"])[0]),
+                     "unknown completed variant")
+            _require(variant_inventory(root / name) == report["completedFiles"][name],
+                     "completed study files changed")
     profile, bins = _study_sensor(report["config"])
     names = report["sources"]
     _require(1 <= len(names) <= 64 and {"distillation_job.py", "canonical_graph.py",
