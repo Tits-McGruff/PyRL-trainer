@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "kind": "external-evidence-v1",
+  "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+  "sourceCommit": "af0cbff3911bac0963976df5ba3cd980de941e1b",
+  "bytePolicy": "Exact pre-migration working-tree bytes; no normalization of payloads.",
+  "files": {
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/.study.lock": [
+      "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      1
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/after.resources.jsonl": [
+      "030f1c3c9b7a7368d5050536db1bfd69136ed5877f87f8152b654c69ed7cfd26",
+      713
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/before.resources.jsonl": [
+      "a03733f37b5acd041ec842ac78d3d0b7e9406ea613df84b76ad5f08aa98c4fd5",
+      713
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/corpus.json": [
+      "1f5c1ef5886f5adbdd216647c06fa3891d6018a7234d6d6d5f02c0364c21e595",
+      77172
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/during.resources.jsonl": [
+      "2644be89c33f45f91e13210f1d0f7d8c52024dc78f31ba2e7f543d7efa94b8df",
+      30826
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initial.slither-brain": [
+      "97bf3e10e03fd951d434688dd4bab314b578517216e1768a0cbae6476fde00a6",
+      85155
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initialize.json": [
+      "c94bb5e93790c137aa033306be22f47e678795719e6590a4fb59792e6cfa7143",
+      1357
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initialized/manifest.json": [
+      "c7afd11349f8c59b18d5d2b97b4c210ed6b08ab2ea162ee130b8426a17784800",
+      15350
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initialized/outputs.f32": [
+      "76593ec822864766a41b04b6d5cd2644d53fbd3178ef1338cfb1807bc1a05a86",
+      8
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initialized/receipt.json": [
+      "3ad3d7ce1e7dd018f9d68321b7225fc830e7aabf6ab9589bad029f4368153f73",
+      1030
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initialized/states.f32": [
+      "d26688d718f3b172e36d091813161c0eab30b0c0fbad95e7d12836a8d0e5fcb1",
+      64
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/initialized/weights.f32": [
+      "8c375812202a60efe034cc9810fc40d60bea370cee4a5481b0dfde1dd976633b",
+      69448
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-after.json": [
+      "eaf771954af906f9c7bde51629726ae7f45c549a9d7c11351641424d8ed46588",
+      27739
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-before.json": [
+      "7df0754555941409af75f717dca4e79a84ba7a017f629d1bdde5df5a2e068d80",
+      27832
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-parity/manifest.json": [
+      "c7afd11349f8c59b18d5d2b97b4c210ed6b08ab2ea162ee130b8426a17784800",
+      15350
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-parity/outputs.f32": [
+      "b278aeda95c2435be717de1c004ee7d3a3642f0448970648f8ccf6447c781975",
+      2048
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-parity/receipt.json": [
+      "1a9762a7754c6553a495b0a039f9876228cad84914d5c0b428df329e6964cfd9",
+      1035
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-parity/states.f32": [
+      "808bdd5cd75a17e8265591a42146bb341386e4e6f7e63c02e519365173063bc0",
+      16384
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/native-parity/weights.f32": [
+      "65b84d06ac57597ec43c19482cd5fbbfc30944b40a7a3d46a55e9fa9f2fce6d4",
+      69448
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/parity.json": [
+      "ad56068a678abe886f92334e90eeb51d84f8f63ebefe53476f0e3136ddc1d4f4",
+      1503
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/trained-weights.f32": [
+      "65b84d06ac57597ec43c19482cd5fbbfc30944b40a7a3d46a55e9fa9f2fce6d4",
+      69448
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/full/trained.slither-brain": [
+      "cb39925779264d6c4553482dbfe2bdc238809182037eafb91ad6ddf00d5ee2a0",
+      85162
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/initial-observation.f32": [
+      "62401c23ad6ba9863f8b8aea3a097ea8ab9390c64bd7ac1ac489f2b6a2bc5583",
+      576
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/progress.json": [
+      "fb7ed620aa651c0913a22d6a885780682520a67023e36569985b7d009d881938",
+      132507
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/provenance.json": [
+      "3b9f4035e34e65e112343a3dbb1fcfd410ba720bab952f1c5ad5023363b9c671",
+      90515
+    ],
+    "distillation-jobs/motion-b8-full-cuda32000-20261025/full-seed-1-fold-2/summary.json": [
+      "fb7ed620aa651c0913a22d6a885780682520a67023e36569985b7d009d881938",
+      132507
+    ]
+  },
+  "artifact": {
+    "url": "https://github.com/Tits-McGruff/PyRL-trainer/releases/download/qualification-long-curve-20261025/motion-b8-full-cuda32000.tar.gz",
+    "sha256": "d8c0f4a1faeb88c3b94e7832a3008ad9f060379dbf4d778519e987af214e8709",
+    "bytes": 364212,
+    "objects": 24,
+    "decodedBytes": 884042
+  }
+}
