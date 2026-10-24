@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 import statistics
 
-from .tactical_contract import POLICIES, SCENARIOS, VARIANTS
+from .tactical_contract import SCENARIOS, variants_for_profile, policies_for_profile
 
 MAX_CELLS = 64
 MAX_SUMMARY_BYTES = 1024 * 1024
@@ -96,6 +96,27 @@ class MatrixSpec:
                      for fold in sorted(self.validation_seeds))
 
 
+def _study_sensor(config):
+    """Keep legacy Motion/B16 readable; explicit identities require both profile and width."""
+    declared = ("sensorProfile" in config, "sensorBins" in config)
+    _require(declared[0] == declared[1], "complete study sensor identity required")
+    profile, bins = config.get("sensorProfile", "motion"), config.get("sensorBins", 16)
+    policies_for_profile(profile)
+    _integer(bins, 8, 32)
+    return profile, bins
+
+
+
+def _study_variants(records, profile):
+    """Require the complete declared profile comparison, including unique graph labels."""
+    variants = {value["variant"]: value for value in records}
+    _require(len(variants) == len(records)
+             and set(variants) == set(variants_for_profile(profile)),
+             ("every cell requires the same seven distinct ablations" if profile == "motion"
+              else "Basic cells require exactly the Full variant"))
+    return variants
+
+
 def read_study(directory):
     """Bind actual native reports, portable bytes and measured source archives to one summary."""
     root = Path(directory).resolve(strict=True)
@@ -104,6 +125,7 @@ def read_study(directory):
              and report.get("schemaVersion") == 1, "unsupported ablation study")
     _require(report.get("measurementComplete") is True and report.get("status") == "measured"
              and report.get("releaseQualified") is False, "complete diagnostic study required")
+    profile, bins = _study_sensor(report["config"])
     names = report["sources"]
     _require(1 <= len(names) <= 64 and {"distillation_job.py", "canonical_graph.py",
              "sequence_distillation.py", "tactical_ablation.py", "tactical_ablation_gate.py",
@@ -138,7 +160,7 @@ def read_study(directory):
     reference = None
     for variant in report["variants"]:
         name = variant["variant"]
-        _require(name in VARIANTS, "unknown graph-input ablation")
+        _require(name in variants_for_profile(profile), "unknown graph-input ablation")
         for phase, artifact_name in [("Before", "initial.slither-brain"),
                                      ("After", "trained.slither-brain")]:
             receipt = variant["native" + phase]
@@ -166,6 +188,10 @@ def read_study(directory):
             _require(native["candidate"]["parameterCount"] == variant["parameters"]
                      and native["candidate"]["layoutSha256"] == variant["layoutSha256"],
                      "native packing/parameter count differs from summary")
+            if "sensorProfile" in report["config"]:
+                _require(native["candidate"]["inputSize"] == 24 + (
+                    6 if profile == "basic" else 15) * bins,
+                         "native candidate sensor width differs from study")
             measured = {"survivingTrials": sum(trial["alive"] for trial in native["trials"]),
                         "survivalSeconds": sum(trial["aliveSeconds"] for trial in native["trials"]),
                         "foodEarned": sum(trial["foodEarned"] for trial in native["trials"]),
@@ -177,12 +203,13 @@ def read_study(directory):
     return report, digest
 
 
-def _policy_metrics(evaluation, compact=False):
+def _policy_metrics(evaluation, compact=False, profile="motion"):
     groups = evaluation["perPolicy"]
-    _require(set(groups) == set(POLICIES), "both teacher policy strata required")
+    policies = policies_for_profile(profile)
+    _require(set(groups) == set(policies), "both teacher policy strata required")
     if not compact:
         _require(set(evaluation["perScenarioPolicy"]) == {
-            scenario + "/" + policy for scenario in SCENARIOS for policy in POLICIES},
+            scenario + "/" + policy for scenario in SCENARIOS for policy in policies},
             "complete scenario/policy strata required")
     result = {}
     for policy, group in groups.items():
@@ -219,12 +246,12 @@ def _policy_metrics(evaluation, compact=False):
     return result
 
 
-def _measurements(variant):
+def _measurements(variant, profile="motion"):
     result = {key: _number(variant["after"][key])
               for key in ("turnMae", "turnMse", "loss", "boostDisagreement")}
     for key in ("survivingTrials", "survivalSeconds", "foodEarned", "kills"):
         result[key] = _number(variant["nativeAfter"][key])
-    for policy, values in _policy_metrics(variant["after"]).items():
+    for policy, values in _policy_metrics(variant["after"], profile=profile).items():
         result.update({policy + "/" + key: value for key, value in values.items()})
     return result
 
@@ -242,16 +269,16 @@ def _curve_updates(config):
     return [0, *updates] if updates else []
 
 
-def _curve_values(point):
+def _curve_values(point, profile="motion"):
     """Only aggregate and separate policy agreement enters intermediate curve summaries."""
     values = {key: _number(point[key]) for key in
               ("turnMae", "turnMse", "loss", "boostDisagreement")}
-    for policy, metrics in _policy_metrics(point, compact=True).items():
+    for policy, metrics in _policy_metrics(point, compact=True, profile=profile).items():
         values.update({policy + "/" + key: value for key, value in metrics.items()})
     return values
 
 
-def _checked_curve(variant, updates):
+def _checked_curve(variant, updates, profile="motion"):
     """Bind every compact point to the same held-out exposure and real endpoint weights."""
     points = variant["training"].get("validationCurve", [])
     _require(isinstance(points, list) and len(points) == len(updates),
@@ -265,7 +292,7 @@ def _checked_curve(variant, updates):
         _require(point["rows"] == variant["after"]["rows"]
                  and _integer(point["sequences"], 1, 1_000_000) == variant["after"]["sequences"],
                  "validation curve held-out exposure changed")
-        result[expected] = _curve_values(point)
+        result[expected] = _curve_values(point, profile)
         if expected in (0, variant["training"]["updates"]):
             initial = expected == 0
             _require(point["weightsSha256"] == variant[
@@ -315,6 +342,7 @@ def combine_studies(studies, spec):
                  and report.get("releaseQualified") is False,
                  "incomplete study cannot enter matrix")
         config = report["config"]
+        profile, bins = _study_sensor(config)
         cell = (_integer(config["seed"], 0, 0xffffffff),
                 _integer(config["validationSeed"], 1, 64))
         _require(cell in spec.cells and cell not in cells, "duplicate or foreign seed/fold cell")
@@ -328,14 +356,12 @@ def combine_studies(studies, spec):
                     report["trainerSourceSha256"], report["sources"], report["environment"])
         common = identity if common is None else common
         _require(identity == common, "matrix source/environment/hyperparameters changed")
-        variants = {value["variant"]: value for value in report["variants"]}
-        _require(len(variants) == len(report["variants"]) and set(variants) == set(VARIANTS),
-                 "every cell requires the same seven distinct ablations")
+        variants = _study_variants(report["variants"], profile)
         schedule = None
         exposure = None
         for name, value in variants.items():
             training = value["training"]
-            curves[cell, name] = _checked_curve(value, curve_updates)
+            curves[cell, name] = _checked_curve(value, curve_updates, profile)
             _require(_integer(training["updates"], 1, 10000) == spec.updates
                      and _integer(training["trainingRows"], 1, 1_000_000_000) > 0,
                      "missing actual optimizer work")
@@ -354,8 +380,8 @@ def combine_studies(studies, spec):
             shape = _integer(value["parameters"], 1, 1_000_000), _sha(value["layoutSha256"])
             parameters.setdefault(name, shape)
             _require(parameters[name] == shape, "ablation packing changed across cells")
-            _policy_metrics(value["before"])
-            _measurements(value)
+            _policy_metrics(value["before"], profile=profile)
+            _measurements(value, profile)
             for phase in ("before", "after"):
                 measured = value[phase]
                 seen = (measured["rows"], tuple(sorted((key, group["rows"])
@@ -363,15 +389,15 @@ def combine_studies(studies, spec):
                 exposure = seen if exposure is None else exposure
                 _require(exposure == seen, "held-out trajectory exposure changed across ablations")
         cells[cell] = variants, digest
-    for name in VARIANTS:
+    for name in variants_for_profile(profile):
         _require(len({initial[name, seed] for seed in spec.seeds}) == len(spec.seeds),
                  "different initialization seeds reused identical initial parameters")
     results = {}
-    for name in VARIANTS:
+    for name in variants_for_profile(profile):
         absolute, paired = {}, {}
         for cell in spec.cells:
-            values = _measurements(cells[cell][0][name])
-            full = _measurements(cells[cell][0]["full"])
+            values = _measurements(cells[cell][0][name], profile)
+            full = _measurements(cells[cell][0]["full"], profile)
             for key, value in values.items():
                 absolute.setdefault(key, []).append(value)
                 paired.setdefault(key, []).append(value - full[key])
@@ -385,6 +411,7 @@ def combine_studies(studies, spec):
     return {"schemaVersion": 1, "kind": "paired-ablation-matrix-v1", "measurementComplete": True,
             "releaseQualified": False, "maturityQualified": False, "profileChoice": None,
             "replicatedSeedFoldCoverage": len(spec.seeds) >= 3 and len(spec.validation_seeds) >= 3,
+            "sensorProfile": profile, "sensorBins": bins,
             "updatesPerVariant": spec.updates, "initializationSeeds": sorted(spec.seeds),
             "validationSeeds": sorted(spec.validation_seeds), "cellCount": len(cells),
             "corpusManifestSha256": common[1], "corpusNativeSourceSha256": common[2],

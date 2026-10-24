@@ -297,3 +297,110 @@ def test_curve_declaration_requires_final_update_and_same_coverage_for_all_cells
     values[1][0]["config"]["validationUpdates"] = []
     with pytest.raises(ValueError, match="hyperparameters"):
         combine_studies(values, spec)
+
+
+def basic_records(spec):
+    """Adapt reader-only sufficient statistics to the actual Basic teacher labels."""
+    values = with_curves(records(spec))
+    for report, _digest in values:
+        report["config"].update(sensorProfile="basic", sensorBins=8)
+        report["variants"] = [report["variants"][0]]
+        variant = report["variants"][0]
+        for evaluation_record in (variant["before"], variant["after"],
+                                  *variant["training"]["validationCurve"]):
+            evaluation_record["perPolicy"] = {
+                key.replace("motion-", "basic-"): value
+                for key, value in evaluation_record["perPolicy"].items()}
+            if "perScenarioPolicy" in evaluation_record:
+                evaluation_record["perScenarioPolicy"] = {
+                    key.replace("/motion-", "/basic-"): value
+                    for key, value in evaluation_record["perScenarioPolicy"].items()}
+    return values
+
+
+def test_basic_full_matrix_preserves_its_actual_policy_strata_and_learning_curves():
+    """Full-only Basic data reports balanced coverage without manufacturing extra ablations."""
+    spec = MatrixSpec((1, 2, 3), (2, 4, 6), 250)
+    result = combine_studies(basic_records(spec), spec)
+    assert result["sensorProfile"] == "basic" and result["sensorBins"] == 8
+    assert set(result["variants"]) == {"full"}
+    assert result["replicatedSeedFoldCoverage"] and not result["maturityQualified"]
+    assert not result["releaseQualified"] and result["profileChoice"] is None
+    points = result["variants"]["full"]["heldOutLearningCurve"]
+    assert [point["update"] for point in points] == [0, 100, 250]
+    assert points[1]["measurements"]["basic-v2-stochastic/turnMae"]["count"] == 9
+    assert points[1]["pairedDifferenceFromFull"]["turnMae"]["zero"] == 9
+
+
+@pytest.mark.parametrize("bins", range(8, 33))
+def test_explicit_motion_width_keeps_the_complete_seven_variant_comparison(bins):
+    """Declaring a new width cannot weaken Motion pairing or silently select defaults."""
+    spec = MatrixSpec((1,), (2,), 250)
+    values = records(spec)
+    values[0][0]["config"].update(sensorProfile="motion", sensorBins=bins)
+    result = combine_studies(values, spec)
+    assert result["sensorProfile"] == "motion" and result["sensorBins"] == bins
+    assert set(result["variants"]) == set(VARIANTS)
+    values[0][0]["variants"].pop()
+    with pytest.raises(ValueError, match="seven distinct"):
+        combine_studies(values, spec)
+
+
+@pytest.mark.parametrize("identity", [
+    {"sensorProfile": "basic"}, {"sensorBins": 8}, {"sensorProfile": "v3", "sensorBins": 8},
+    {"sensorProfile": "basic", "sensorBins": True},
+    {"sensorProfile": "motion", "sensorBins": 7},
+    {"sensorProfile": "motion", "sensorBins": 33},
+])
+def test_incomplete_or_unsupported_sensor_identity_cannot_enter_matrix(identity):
+    """An absent legacy declaration differs from a partial or invalid explicit identity."""
+    spec = MatrixSpec((1,), (2,), 250)
+    values = records(spec)
+    values[0][0]["config"].update(identity)
+    with pytest.raises(ValueError):
+        combine_studies(values, spec)
+
+
+def test_basic_missing_or_wrong_teacher_policies_and_motion_groups_reject():
+    """Basic statistics cannot be relabeled as Motion or include undefined channel removals."""
+    spec = MatrixSpec((1,), (2,), 250)
+    values = basic_records(spec)
+    variant = values[0][0]["variants"][0]
+    variant["after"]["perPolicy"].pop("basic-v2-stochastic")
+    variant["training"]["validationCurve"][-1]["perPolicy"].pop("basic-v2-stochastic")
+    with pytest.raises(ValueError, match="policy strata"):
+        combine_studies(values, spec)
+    values = basic_records(spec)
+    values[0][0]["variants"][0]["variant"] = "core-only"
+    with pytest.raises(ValueError, match="exactly the Full"):
+        combine_studies(values, spec)
+    values = basic_records(spec)
+    values[0][0]["config"]["sensorProfile"] = "motion"
+    with pytest.raises(ValueError, match="seven distinct"):
+        combine_studies(values, spec)
+
+
+def test_cross_profile_or_width_cells_cannot_be_pooled_as_paired_data():
+    """Even matching source/seed receipts cannot pair different sensor geometries."""
+    spec = MatrixSpec((1,), (2, 3), 250)
+    for identity in ({"sensorProfile": "motion", "sensorBins": 8},
+                     {"sensorProfile": "basic", "sensorBins": 9}):
+        values = basic_records(spec)
+        values[1][0]["config"].update(identity)
+        with pytest.raises(ValueError, match="hyperparameters"):
+            combine_studies(values, spec)
+
+
+def test_reader_rejects_hash_bound_native_input_width_that_disagrees_with_study(tmp_path):
+    """A recomputed report receipt cannot reinterpret another native sensor dimension."""
+    report = write_study(tmp_path)
+    report["config"].update(sensorProfile="motion", sensorBins=32)
+    variant = report["variants"][0]
+    native_path = tmp_path / variant["variant"] / "native-before.json"
+    native = json.loads(native_path.read_bytes())
+    native["candidate"]["inputSize"] = 264
+    native_path.write_text(json.dumps(native), encoding="utf-8")
+    variant["nativeBefore"]["sha256"] = hashlib.sha256(native_path.read_bytes()).hexdigest()
+    (tmp_path / "summary.json").write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="native candidate sensor width"):
+        read_study(tmp_path)

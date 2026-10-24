@@ -523,14 +523,20 @@ reported only with at least three distinct identities on each axis; the example
 above intentionally does not meet that coverage. More optimizer updates alone do
 not prove a mature model.
 
-The reader verifies all seven ablations, matched windows within each cell, matching
+The reader verifies all seven Motion ablations or the sole Basic Full variant,
+matched windows within each cell, matching
 initial parameters across folds, unchanged sources/environment/hyperparameters,
 actual native outcome reports and exact portable bytes. It recomputes the trainer
 source identity from the retained source inventory. Results retain per-cell paired
 differences from Full, cell-wise macro averages and both policy strata. The tool
 never chooses a winner, claims independent folds/confidence intervals, promotes a
 sensor profile or qualifies representative populations, sensing cost or real-time
-performance. CI verifies a real two-update child study as a one-cell smoke.
+performance. Reports preserve the declared profile and B8..32 width. Older
+studies without either field retain their original Motion/B16 interpretation;
+partial declarations reject. Different profiles or widths cannot enter the same
+paired matrix, and Basic statistics retain their own teacher-policy names.
+CI verifies real two-update Basic/B8 and Motion/B32 studies as separate one-cell
+matrices.
 
 Exact job source identity also includes `sensor_contract.py`; a changed sensor
 parser cannot retain the identity of a cold exact trainer restart. Checkpoint files
