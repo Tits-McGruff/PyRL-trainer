@@ -3,6 +3,7 @@
 import copy
 import gzip
 import hashlib
+from itertools import islice
 import json
 import time
 from unittest.mock import Mock
@@ -19,7 +20,8 @@ from pyrl_trainer.sequence_distillation import (CanonicalSequenceTrainer, Sequen
 from pyrl_trainer.tactical_ablation import (VARIANTS, TacticalWindow, ablation_graph,
                                           evaluate_agreement, paired_windows, window_batch)
 from pyrl_trainer.tactical_corpus import load_tactical_corpus
-from pyrl_trainer.tactical_ablation_gate import AblationStudy, validation_updates
+from pyrl_trainer.tactical_ablation_gate import (AblationStudy, training_trace_interval,
+                                                  validation_updates)
 
 pytestmark = pytest.mark.unit
 FIXTURE = Path(__file__).parents[1] / "fixtures/tactical_corpus_v1"
@@ -334,3 +336,29 @@ def test_foreign_native_initializer_rejects_before_model_allocation(corpus, tmp_
     with pytest.raises(ValueError, match="initializer source differs"):
         study.variant("full")
     allocate.assert_not_called()
+
+
+@pytest.mark.parametrize("budget", [10000, 10001, 32000, 32768])
+def test_longer_study_budget_preserves_schedule_prefix_and_bounded_trace(corpus, budget):
+    """Longer work retains paired delivery order and the original bounded trace storage."""
+    training, _ = corpus.split_by_seed({2})
+    config = SequenceTrainingConfig(batch_size=2, bptt_steps=16, burn_in_steps=4)
+    assert list(islice(paired_windows(corpus, training, config, budget, 9), 12)) == list(
+        paired_windows(corpus, training, config, 12, 9))
+    interval = training_trace_interval(budget)
+    points = [step for step in range(1, budget + 1)
+              if step == 1 or step % interval == 0 or step == budget]
+    assert points[0] == 1 and points[-1] == budget and len(points) <= 402
+    assert interval == max(25, (budget + 399) // 400)
+    assert validation_updates([8000, 16000] if budget >= 16000 else [8000], budget)[-1] == budget
+
+
+@pytest.mark.parametrize("budget", [0, True, 32769])
+def test_longer_study_budget_still_rejects_unbounded_work(budget):
+    """CLI-independent schedule and observation admission share the same finite ceiling."""
+    with pytest.raises(ValueError):
+        training_trace_interval(budget)
+    with pytest.raises(ValueError):
+        validation_updates([], budget)
+    with pytest.raises(CanonicalGraphError):
+        next(paired_windows(None, (), None, budget, 9))

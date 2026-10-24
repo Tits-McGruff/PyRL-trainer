@@ -1,0 +1,465 @@
+{
+  "kind": "motion-b8-single-cell-v1",
+  "measurementComplete": true,
+  "releaseQualified": false,
+  "maturityQualified": false,
+  "replicatedSeedFoldCoverage": false,
+  "profileChoice": null,
+  "sourceCommit": "53510344f4cc0f9ffdeca373dfe5eb5993ccf247",
+  "summarySha256": "c1ac67f6b5c1169f361d4408a3c2d07220b24c88956a011926e5afd5b5745a33",
+  "config": {
+    "batch_size": 32,
+    "bptt_steps": 64,
+    "burn_in_steps": 32,
+    "learning_rate": 0.0003,
+    "gradient_clip": 1.0,
+    "seed": 1,
+    "updates": 8000,
+    "validationSeed": 2,
+    "nativeSteps": 180,
+    "nativeWorkers": 1,
+    "sensorProfile": "motion",
+    "sensorBins": 8,
+    "validationUpdates": [
+      250,
+      500,
+      1000,
+      2000,
+      4000,
+      6000,
+      8000
+    ],
+    "cudaGraphs": true
+  },
+  "elapsedMs": 3180530.012700008,
+  "variants": [
+    {
+      "variant": "full",
+      "afterTurnMae": 0.03844980477798181,
+      "afterBoostDisagreement": 0.000819672131147541,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "455e7853510b8c175c6a067cc73b03a48690432800746936efb01424218e4599",
+        "survivingTrials": 13,
+        "survivalSeconds": 39.08333333333326,
+        "foodEarned": 20.891491630347446,
+        "kills": 4
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.3736818742230942,
+          "boostDisagreement": 0.7993852459016394
+        },
+        {
+          "update": 250,
+          "turnMae": 0.0905875066264731,
+          "boostDisagreement": 0.002254098360655738
+        },
+        {
+          "update": 500,
+          "turnMae": 0.06934711029295061,
+          "boostDisagreement": 0.001912568306010929
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.05816762422114773,
+          "boostDisagreement": 0.0015710382513661203
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.04765112631307925,
+          "boostDisagreement": 0.001092896174863388
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.04250047722312271,
+          "boostDisagreement": 0.0009562841530054645
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.042406473027878124,
+          "boostDisagreement": 0.0009562841530054645
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.03844980477798181,
+          "boostDisagreement": 0.000819672131147541
+        }
+      ]
+    },
+    {
+      "variant": "no-bearing",
+      "afterTurnMae": 0.029589426061494756,
+      "afterBoostDisagreement": 0.0010245901639344263,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "baae2dcff40ee50fd1040ef8a632488792849d06d03d4803d68f9da634044353",
+        "survivingTrials": 13,
+        "survivalSeconds": 39.08333333333326,
+        "foodEarned": 17.176167702325618,
+        "kills": 3
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.3321007998914666,
+          "boostDisagreement": 0.8441939890710383
+        },
+        {
+          "update": 250,
+          "turnMae": 0.10060434185090612,
+          "boostDisagreement": 0.0019808743169398907
+        },
+        {
+          "update": 500,
+          "turnMae": 0.08001950751236879,
+          "boostDisagreement": 0.0017759562841530056
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.06792637310067161,
+          "boostDisagreement": 0.001639344262295082
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.049456404312386536,
+          "boostDisagreement": 0.001092896174863388
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.03538778001656298,
+          "boostDisagreement": 0.001092896174863388
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.03196824984472306,
+          "boostDisagreement": 0.0010245901639344263
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.029589426061494756,
+          "boostDisagreement": 0.0010245901639344263
+        }
+      ]
+    },
+    {
+      "variant": "no-heading",
+      "afterTurnMae": 0.043501210326705474,
+      "afterBoostDisagreement": 0.0009562841530054645,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "632772c5c40dfb3e74737d7f21e0ac3e0d031d9452d32d14c3df5ecd30c931e2",
+        "survivingTrials": 11,
+        "survivalSeconds": 35.59999999999994,
+        "foodEarned": 22.335463242139667,
+        "kills": 4
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.4390734138384543,
+          "boostDisagreement": 0.10095628415300546
+        },
+        {
+          "update": 250,
+          "turnMae": 0.13056245071640432,
+          "boostDisagreement": 0.002117486338797814
+        },
+        {
+          "update": 500,
+          "turnMae": 0.10396047400646523,
+          "boostDisagreement": 0.0020491803278688526
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.07078765142973655,
+          "boostDisagreement": 0.0017759562841530056
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.05748179544353746,
+          "boostDisagreement": 0.0012978142076502733
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.09026917192291041,
+          "boostDisagreement": 0.001092896174863388
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.0553879733538367,
+          "boostDisagreement": 0.0009562841530054645
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.043501210326705474,
+          "boostDisagreement": 0.0009562841530054645
+        }
+      ]
+    },
+    {
+      "variant": "no-velocity",
+      "afterTurnMae": 0.041666019345567525,
+      "afterBoostDisagreement": 0.000819672131147541,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "95010d995059ac9fc5a9d562dcabc502124c780127cf0d08ae03a219bc7a9cab",
+        "survivingTrials": 10,
+        "survivalSeconds": 33.68333333333327,
+        "foodEarned": 15.447843523905613,
+        "kills": 4
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.4576517978001162,
+          "boostDisagreement": 0.11379781420765027
+        },
+        {
+          "update": 250,
+          "turnMae": 0.13541216042523826,
+          "boostDisagreement": 0.0020491803278688526
+        },
+        {
+          "update": 500,
+          "turnMae": 0.10515406972072164,
+          "boostDisagreement": 0.0023224043715846993
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.07517486847326403,
+          "boostDisagreement": 0.002185792349726776
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.087862568564428,
+          "boostDisagreement": 0.001366120218579235
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.07337795741082541,
+          "boostDisagreement": 0.001092896174863388
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.049510238087568124,
+          "boostDisagreement": 0.000819672131147541
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.041666019345567525,
+          "boostDisagreement": 0.000819672131147541
+        }
+      ]
+    },
+    {
+      "variant": "no-urgency",
+      "afterTurnMae": 0.02832390746620835,
+      "afterBoostDisagreement": 0.0015710382513661203,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "bc50ca96e74e6d5735f9bced9f9e0773ad360f655f81799f5c7da6d71987f4f6",
+        "survivingTrials": 12,
+        "survivalSeconds": 37.66666666666659,
+        "foodEarned": 22.335463242139667,
+        "kills": 3
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.3976829561379438,
+          "boostDisagreement": 0.7609289617486339
+        },
+        {
+          "update": 250,
+          "turnMae": 0.11222844221552865,
+          "boostDisagreement": 0.0028688524590163933
+        },
+        {
+          "update": 500,
+          "turnMae": 0.08295630188913293,
+          "boostDisagreement": 0.0017759562841530056
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.060569933822246194,
+          "boostDisagreement": 0.001366120218579235
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.06188849670802309,
+          "boostDisagreement": 0.0017076502732240437
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.03905380988707308,
+          "boostDisagreement": 0.0014344262295081967
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.036203785704784705,
+          "boostDisagreement": 0.0015710382513661203
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.02832390746620835,
+          "boostDisagreement": 0.0015710382513661203
+        }
+      ]
+    },
+    {
+      "variant": "no-density",
+      "afterTurnMae": 0.02940954833082814,
+      "afterBoostDisagreement": 0.0012295081967213116,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "c99d2648cb668635651ec527ac8a0366887c9d4e03c1060875d397219805868c",
+        "survivingTrials": 12,
+        "survivalSeconds": 37.64999999999993,
+        "foodEarned": 21.177508421521633,
+        "kills": 3
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.4001380977734842,
+          "boostDisagreement": 0.7826502732240437
+        },
+        {
+          "update": 250,
+          "turnMae": 0.11385722886669179,
+          "boostDisagreement": 0.0031420765027322405
+        },
+        {
+          "update": 500,
+          "turnMae": 0.08437523444493612,
+          "boostDisagreement": 0.0023224043715846993
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.05679752457011593,
+          "boostDisagreement": 0.0015027322404371586
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.047243954941548934,
+          "boostDisagreement": 0.002185792349726776
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.04265282807128677,
+          "boostDisagreement": 0.0009562841530054645
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.03875452727079391,
+          "boostDisagreement": 0.0006830601092896175
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.02940954833082814,
+          "boostDisagreement": 0.0012295081967213116
+        }
+      ]
+    },
+    {
+      "variant": "core-only",
+      "afterTurnMae": 0.04472429933932309,
+      "afterBoostDisagreement": 0.0011612021857923497,
+      "nativeAfter": {
+        "report": "native-after.json",
+        "sha256": "00cc905b6f919ba03d23868bbf189317f6f84b4cb9ffc8efcfdf463e8abd010e",
+        "survivingTrials": 12,
+        "survivalSeconds": 37.8166666666666,
+        "foodEarned": 18.44784352390561,
+        "kills": 3
+      },
+      "windowExecution": {
+        "requested": "cudagraphs",
+        "compiledWindowCalls": 8000,
+        "eagerWindowCalls": 0,
+        "compiledSignatures": 1
+      },
+      "curve": [
+        {
+          "update": 0,
+          "turnMae": 0.5013629635826486,
+          "boostDisagreement": 0.00853825136612022
+        },
+        {
+          "update": 250,
+          "turnMae": 0.10532340788450398,
+          "boostDisagreement": 0.0029371584699453552
+        },
+        {
+          "update": 500,
+          "turnMae": 0.08531165917714437,
+          "boostDisagreement": 0.0020491803278688526
+        },
+        {
+          "update": 1000,
+          "turnMae": 0.07699414433025922,
+          "boostDisagreement": 0.0017759562841530056
+        },
+        {
+          "update": 2000,
+          "turnMae": 0.06182735437741045,
+          "boostDisagreement": 0.0015027322404371586
+        },
+        {
+          "update": 4000,
+          "turnMae": 0.05410065808908535,
+          "boostDisagreement": 0.001639344262295082
+        },
+        {
+          "update": 6000,
+          "turnMae": 0.05238723360775598,
+          "boostDisagreement": 0.0015027322404371586
+        },
+        {
+          "update": 8000,
+          "turnMae": 0.04472429933932309,
+          "boostDisagreement": 0.0011612021857923497
+        }
+      ]
+    }
+  ],
+  "verification": "Independent maintained read_study passed both original output and freshly downloaded/restored release asset; all completed-variant inventories, measured source hashes, portable artifact hashes, native before/after gameplay reports and paired physical references verified."
+}

@@ -29,7 +29,7 @@ from .sequence_distillation import CanonicalSequenceTrainer, SequenceTrainingCon
 from .tactical_ablation import (VARIANTS, ablation_graph, evaluate_agreement,
                                 paired_windows, window_batch)
 from .tactical_corpus import load_tactical_corpus
-from .tactical_contract import variants_for_profile
+from .tactical_contract import MAX_ABLATION_UPDATES, variants_for_profile
 
 
 def _require(condition, message):
@@ -65,10 +65,17 @@ def _write_json(path, value):
     _write(path, (json.dumps(value, indent=2, allow_nan=False) + "\n").encode())
 
 
+def training_trace_interval(updates):
+    """Keep the original 25-update cadence through 10k, then bound samples to 402."""
+    _require(isinstance(updates, int) and not isinstance(updates, bool)
+             and 1 <= updates <= MAX_ABLATION_UPDATES, "invalid trace update budget")
+    return max(25, (updates + 399) // 400)
+
+
 def validation_updates(values, updates):
     """Admit at most sixteen explicit held-out checkpoints, always closing at the final update."""
     _require(isinstance(updates, int) and not isinstance(updates, bool)
-             and 1 <= updates <= 10000, "invalid curve update budget")
+             and 1 <= updates <= MAX_ABLATION_UPDATES, "invalid curve update budget")
     values = () if values is None else values
     _require(isinstance(values, (tuple, list)) and len(values) <= 16
              and all(isinstance(value, int) and not isinstance(value, bool)
@@ -104,7 +111,8 @@ def _arguments():
     args = parser.parse_args()
     if args.cuda_graphs and args.device == "cpu":
         parser.error("--cuda-graphs requires --device cuda:0")
-    bounds = {"updates": (1, 10000), "seed": (0, 0xffffffff), "validation_seed": (1, 64),
+    bounds = {"updates": (1, MAX_ABLATION_UPDATES), "seed": (0, 0xffffffff),
+              "validation_seed": (1, 64),
               "batch_sequences": (1, 256), "sequence_length": (16, 256), "burn_in": (0, 128),
               "cpu_threads": (1, available_trainer_cpus()), "device_memory_mib": (512, 65536),
               "native_steps": (1, 600), "native_workers": (1, available_trainer_cpus()),
@@ -404,6 +412,7 @@ class AblationStudy:
         trainer = CanonicalSequenceTrainer(model, self.config, cuda_graphs=self.cuda_graphs)
         schedule = hashlib.sha256(b"native-tactical-window-schedule-v1\0")
         trace, rows, burn_rows, unknown = [], 0, 0, 0
+        trace_interval = training_trace_interval(self.args.updates)
         windows = paired_windows(self.corpus, self.training, self.config,
                                  self.args.updates, self.args.seed)
         for update, selected in enumerate(windows, 1):
@@ -418,7 +427,7 @@ class AblationStudy:
             rows += result.training_samples
             burn_rows += result.burn_in_samples
             unknown += result.unknown_state_starts
-            if update == 1 or update % 25 == 0 or update == self.args.updates:
+            if update == 1 or update % trace_interval == 0 or update == self.args.updates:
                 print("[tactical-ablation] update", update, flush=True)
                 trace.append({"update": update, "loss": result.loss,
                               "turnMse": result.turn_mse,
@@ -429,6 +438,7 @@ class AblationStudy:
         return {"updates": trainer.completed_updates, "trainingRows": rows,
                 "burnInRows": burn_rows, "unknownStateStarts": unknown,
                 "scheduleSha256": schedule.hexdigest(), "trace": trace,
+                "traceIntervalUpdates": trace_interval,
                 "validationCurve": curve,
                 **({"windowExecution": trainer.window_execution.statistics()}
                    if self.cuda_graphs else {})}, last_validation

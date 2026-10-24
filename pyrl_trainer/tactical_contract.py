@@ -1,5 +1,8 @@
 """Stable identifiers for native tactical corpus and graph-input studies."""
 
+# Qualification stays finite while allowing longer plateau screens than the original 10k cap.
+MAX_ABLATION_UPDATES = 32768
+
 SCENARIOS = (
     "open-wander", "approaching", "receding", "crossing", "head-on", "corridor",
     "crowd-opening", "wall-escape", "food-body-trap", "smaller-intercept",

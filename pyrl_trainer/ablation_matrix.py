@@ -15,7 +15,8 @@ from pathlib import Path
 import statistics
 
 from .source_provenance import measured_sources
-from .tactical_contract import SCENARIOS, variants_for_profile, policies_for_profile
+from .tactical_contract import (MAX_ABLATION_UPDATES, SCENARIOS, variants_for_profile,
+                                policies_for_profile)
 
 MAX_CELLS = 64
 MAX_SUMMARY_BYTES = 1024 * 1024
@@ -81,7 +82,7 @@ class MatrixSpec:
     updates: int
 
     def __post_init__(self):
-        _integer(self.updates, 1, 10000)
+        _integer(self.updates, 1, MAX_ABLATION_UPDATES)
         for values, maximum in [(self.seeds, 0xffffffff), (self.validation_seeds, 64)]:
             _require(1 <= len(values) <= 8 and len(set(values)) == len(values),
                      "one to eight distinct seed identities required")
@@ -352,7 +353,7 @@ def combine_studies(studies, spec):
         cell = (_integer(config["seed"], 0, 0xffffffff),
                 _integer(config["validationSeed"], 1, 64))
         _require(cell in spec.cells and cell not in cells, "duplicate or foreign seed/fold cell")
-        _require(_integer(config["updates"], 1, 10000) == spec.updates,
+        _require(_integer(config["updates"], 1, MAX_ABLATION_UPDATES) == spec.updates,
                  "optimizer budget differs from requested matrix")
         curve_updates = _curve_updates(config)
         fixed_config = {key: value for key, value in config.items()
@@ -368,7 +369,7 @@ def combine_studies(studies, spec):
         for name, value in variants.items():
             training = value["training"]
             curves[cell, name] = _checked_curve(value, curve_updates, profile)
-            _require(_integer(training["updates"], 1, 10000) == spec.updates
+            _require(_integer(training["updates"], 1, MAX_ABLATION_UPDATES) == spec.updates
                      and _integer(training["trainingRows"], 1, 1_000_000_000) > 0,
                      "missing actual optimizer work")
             witness = (_sha(training["scheduleSha256"]), training["trainingRows"],

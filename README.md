@@ -523,6 +523,14 @@ checkpoint format remain preserved diagnostic inputs and require a new study
 directory. Completed studies stay immutable; use the independent matrix reader
 to verify them. Resume never silently upgrades old studies or marks incomplete data complete.
 
+Studies admit 1..32,768 optimizer updates under the existing total deadline,
+sequence/device/memory bounds and at most sixteen held-out checkpoints. Longer
+budgets support explicit plateau screens; they do not establish model maturity.
+Training loss traces retain the original 25-update cadence through 10,000 updates
+and use a recorded coarser interval above that budget, keeping at most 402 samples
+per variant. First/final points, every optimizer update and every requested
+held-out checkpoint remain mandatory. The paired schedule prefix is unchanged.
+
 Combine completed studies with the reader-only `pyrl_trainer.ablation_matrix`:
 
 ```text

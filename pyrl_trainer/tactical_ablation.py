@@ -8,7 +8,7 @@ import torch
 
 from .canonical_graph import CanonicalGraphError, distillation_loss
 from .sequence_distillation import SequenceBatch, SequenceBoundary
-from .tactical_contract import VARIANTS, variants_for_profile
+from .tactical_contract import MAX_ABLATION_UPDATES, VARIANTS, variants_for_profile
 
 
 
@@ -57,8 +57,9 @@ class TacticalWindow:
 
 def paired_windows(corpus, sequences, config, updates, seed):
     """Cycle temporal blocks, including short fatal lives, with one shared seeded schedule."""
-    if not isinstance(updates, int) or isinstance(updates, bool) or not 1 <= updates <= 10000:
-        raise CanonicalGraphError("ablation update admission is 1..10000")
+    if (not isinstance(updates, int) or isinstance(updates, bool)
+            or not 1 <= updates <= MAX_ABLATION_UPDATES):
+        raise CanonicalGraphError(f"ablation update admission is 1..{MAX_ABLATION_UPDATES}")
     if not sequences or any(sequence not in corpus.sequences for sequence in sequences):
         raise CanonicalGraphError("unknown or empty ablation training split")
     if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed <= 0xffffffff:

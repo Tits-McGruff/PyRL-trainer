@@ -429,3 +429,19 @@ def test_completed_variant_receipts_are_required_by_the_independent_reader(tmp_p
     else:
         with pytest.raises(ValueError, match="checkpoint inventory|study files changed"):
             read_study(tmp_path)
+
+
+@pytest.mark.parametrize("budget", [10001, 32000, 32768])
+def test_longer_matrix_budget_remains_explicit_and_not_maturity(budget):
+    """Verified metadata supports longer work without promoting a diagnostic result."""
+    spec = MatrixSpec((1,), (2,), budget)
+    values = records(spec)
+    for value, _ in values:
+        value["config"]["updates"] = budget
+        for variant in value["variants"]:
+            variant["training"]["updates"] = budget
+    report = combine_studies(values, spec)
+    assert report["maturityQualified"] is False and report["releaseQualified"] is False
+    assert report["profileChoice"] is None
+    with pytest.raises(ValueError):
+        MatrixSpec((1,), (2,), 32769)
