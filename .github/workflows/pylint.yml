@@ -60,7 +60,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: e3ef608f567df2f81fd1bf8951532fe2bd6cf7a3
+          ref: 386341a2fe528dd42e05f5b4bc6a38bcc4ab813a
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -190,7 +190,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: e3ef608f567df2f81fd1bf8951532fe2bd6cf7a3
+          ref: 386341a2fe528dd42e05f5b4bc6a38bcc4ab813a
           path: .live-slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -230,11 +230,11 @@ jobs:
         working-directory: .live-slither
         run: |
           python - <<'PY'
-          import hashlib, json, os
+          import hashlib, json
           from pathlib import Path
-          fixture = Path(os.environ["GITHUB_WORKSPACE"]) / "tests/fixtures/cuda_window_replay_v1"
-          record = json.loads((fixture / "fixture.json").read_bytes())["files"]["trained.slither-brain"]
-          brain = (fixture / "trained.slither-brain").read_bytes()
+          fixture = Path("native/fixtures/learned-cohorts-v1/single")
+          record = json.loads((fixture / "fixture.json").read_bytes())["files"]["full-1.slither-brain"]
+          brain = (fixture / "full-1.slither-brain").read_bytes()
           assert len(brain) == record["bytes"] and hashlib.sha256(brain).hexdigest() == record["sha256"]
           Path("native/target/contention-student.slither-brain").write_bytes(brain)
           PY
@@ -271,6 +271,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -280,5 +282,7 @@ jobs:
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
       - name: Fetch and verify required release evidence
         run: python -m pyrl_trainer.evidence_store fetch --catalog docs/performance/catalog.json --cache .cache/qualification-evidence
+      - name: Reconstruct every historical source from exact Git provenance
+        run: python -m pyrl_trainer.source_provenance --registry docs/performance/source-provenance.json
       - name: Preserve all historical dispatch, timing, hash and replay assertions
         run: python -m pytest -q tests/evidence

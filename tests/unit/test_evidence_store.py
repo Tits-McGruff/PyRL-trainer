@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import tarfile
+import subprocess
 
 import pytest
 
@@ -124,3 +125,33 @@ def test_durable_promotion_requires_complete_metadata_and_refuses_source(tmp_pat
     (run / "source.py.gz").write_bytes(gzip.compress(b"print('source copy')"))
     with pytest.raises(ValueError, match="instead of source snapshots"):
         export(root, tmp_path / "out.tar.gz", "https://github.com/example/asset", run)
+
+
+@pytest.mark.parametrize("ending", ["lf", "crlf", "mixed"])
+def test_explicit_dirty_patch_and_eol_recipe_roundtrip_in_isolated_git(tmp_path, ending):
+    """CI exercises patch restoration even when its own production checkout is clean."""
+    repo = tmp_path / "source-repo"
+    modules = repo / "package"
+    modules.mkdir(parents=True)
+    def git(*arguments):
+        return subprocess.run(["git", *arguments], cwd=repo, check=True, capture_output=True)
+    git("init")
+    git("config", "core.autocrlf", "false")
+    git("remote", "add", "origin", "https://github.com/example/source")
+    source = modules / "sample.py"
+    source.write_bytes(b"VALUE = 1\nOTHER = 2\n")
+    git("add", ".")
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-m", "bounded source provenance fixture")
+    raw = b"VALUE = 3\nOTHER = 4\n"
+    if ending == "crlf":
+        raw = raw.replace(b"\n", b"\r\n")
+    elif ending == "mixed":
+        raw = raw.replace(b"VALUE = 3\n", b"VALUE = 3\r\n")
+    source.write_bytes(raw)
+    output = tmp_path / "run"
+    output.mkdir()
+    record = capture(("sample.py",), output, modules)["versions"]["sample.py"]
+    assert record["lineEndings"] == ending and record["patch"].endswith(".patch")
+    assert not list(output.glob("*.gz"))
+    assert restore(record, output, repo) == raw

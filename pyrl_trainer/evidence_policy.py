@@ -39,6 +39,8 @@ def check(root, names=None):  # pylint: disable=too-many-branches
             errors.append("ordinary file required: " + name)
             continue
         size = path.stat().st_size
+        if size > 2 * 1024**2:
+            errors.append("ordinary Git file exceeds two MiB; use artifact storage: " + name)
         fixture = (name.startswith(("tests/fixtures/", "native/fixtures/",
                                     "scripts/qualification/fixtures/")))
         if fixture:

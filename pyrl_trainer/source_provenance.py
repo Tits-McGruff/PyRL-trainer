@@ -3,6 +3,7 @@
 Runtime trainer hashes continue to bind raw loaded bytes. Canonical LF hashes bind
 Git content; an explicit EOL recipe restores the exact measured byte identity.
 """
+import argparse
 import difflib
 import hashlib
 import json
@@ -159,3 +160,52 @@ def measured_sources(report, directory):
             raise ValueError("measured source receipt differs from provenance")
         result[name] = restore(record, patch_root)
     return result
+
+
+def audit_original_patches(index):
+    """Check preserved git-format experiments against their recorded ordinary base commits."""
+    index = Path(index).resolve(strict=True)
+    root = index.parents[1]
+    records = json.loads(index.read_bytes())["patches"]
+    seen = set()
+    for record in records.values():
+        if record["sha256"] in seen:
+            continue
+        seen.add(record["sha256"])
+        patch = (root / _safe(record["patch"])).read_bytes().replace(b"\r\n", b"\n")
+        if digest(patch) != record["sha256"]:
+            raise ValueError("original experimental patch checksum mismatch")
+        if not re.fullmatch(r"[0-9a-f]{40}", record["baseCommit"]):
+            raise ValueError("original patch requires an exact ordinary base commit")
+        paths = re.findall(r"^--- a/(.+)$", patch.decode(), re.MULTILINE)
+        with tempfile.TemporaryDirectory(prefix="historical-patch-") as temp:
+            temporary = Path(temp)
+            for name in paths:
+                target = temporary / _safe(name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(_git(root, "show", record["baseCommit"] + ":" + name)
+                                   .replace(b"\r\n", b"\n"))
+            subprocess.run(["git", "-c", "core.autocrlf=false", "apply", "--check",
+                            "--unsafe-paths", "--directory=" + str(temporary)],
+                           input=patch, capture_output=True, check=True)
+    return len(seen)
+
+
+def main():
+    """Required source inventory audit; every commit/patch/EOL recipe must restore exactly."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--registry", type=Path, required=True)
+    parser.add_argument("--original-patches", type=Path)
+    args = parser.parse_args()
+    registry = args.registry.resolve(strict=True)
+    records = json.loads(registry.read_bytes())["versions"]
+    root = registry.parents[2]
+    for record in records.values():
+        restore(record, root)
+    original = audit_original_patches(args.original_patches) if args.original_patches else 0
+    print(json.dumps({"sourceVersionsVerified": len(records), "originalPatchesVerified": original,
+                      "experimentalPatches": sum("patch" in item for item in records.values())}))
+
+
+if __name__ == "__main__":
+    main()
