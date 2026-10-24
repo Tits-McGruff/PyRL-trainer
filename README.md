@@ -484,6 +484,22 @@ requires exact next-update restore from the latest checkpoint. The default remai
 one publication; reports state the selected publication count explicitly.
 
 
+### Tactical profile and width qualification
+
+The native tactical qualifier can export either v4 Basic or Motion with an
+explicit B8..32 width. `load_tactical_corpus` validates the exact native canonical
+metadata, digest, row bytes and matching teacher policy names before exposing
+read-only arrays. Existing Motion/B16 corpora retain their interpretation.
+
+`tactical_ablation_gate` derives its complete graph input and deployment request
+from that validated contract. Motion keeps its seven declared channel ablations
+at the chosen width; Basic trains Full and rejects unavailable Motion-only
+groups. Window padding, agreement evaluation and native before/after student
+physics use the same declared width. Separate profile corpora contain their
+actual teacher trajectories and do not establish paired cross-profile data.
+These tools enable qualification; they do not select sensor defaults or prove
+policy maturity or real-time performance.
+
 ### Replicated tactical ablation evidence
 
 Run `pyrl_trainer.tactical_ablation_gate` separately for each requested initializer

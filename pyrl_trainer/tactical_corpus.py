@@ -10,9 +10,10 @@ import stat
 import numpy as np
 
 from .sensor_contract import SensorContract, SensorContractError
-from .tactical_contract import POLICIES, SCENARIOS
+from .tactical_contract import SCENARIOS, policies_for_profile
 
 MAX_BYTES = 256 * 1024 * 1024
+# Historical Motion/B16 fixture width; runtime shapes come from validated native metadata.
 WIDTH = 264
 
 
@@ -109,6 +110,22 @@ def _validate_observations(observations):
                  "invalid normalized corpus observations")
 
 
+def _sensor(metadata, width):
+    """Validate exact Rust canonical metadata before pricing or exposing any tensor."""
+    canonical = metadata.get("sensorCanonicalJson")
+    _require(isinstance(canonical, str) and len(canonical) <= 1024 * 1024,
+             "missing native sensor metadata")
+    raw = _json(canonical)
+    _require(isinstance(raw, dict), "invalid native sensor metadata")
+    try:
+        sensor = SensorContract.from_spec({"layoutVersion": "v4", "sensorCount": width,
+            "profile": raw.get("profile"), "order": raw.get("order"),
+            "contract": {"canonicalJson": canonical, "sha256": metadata.get("sensorSha256")}})
+    except SensorContractError as error:
+        raise TacticalCorpusError("invalid native sensor contract") from error
+    return sensor
+
+
 def load_tactical_corpus(directory):
     """Verify finite metadata/bytes and complete sequence ownership before exposing arrays."""
     root = Path(directory)
@@ -116,8 +133,8 @@ def load_tactical_corpus(directory):
     _require(isinstance(metadata, dict) and _is_int(metadata.get("schemaVersion"))
              and metadata["schemaVersion"] == 1
              and metadata.get("kind") == "native-tactical-corpus-v1", "unsupported tactical corpus")
-    _require(metadata.get("inputSize") == WIDTH, "Motion/B16 tactical width required")
-    rows = _integer(metadata.get("rows"), 1, (MAX_BYTES - 1024 * 1024) // ((WIDTH + 3) * 4))
+    width = _integer(metadata.get("inputSize"), 72, 504)
+    rows = _integer(metadata.get("rows"), 1, (MAX_BYTES - 1024 * 1024) // ((width + 3) * 4))
     seeds = _integer(metadata.get("seedCount"), 1, 64)
     maximum_steps = _integer(metadata.get("maximumSteps"), 1, 600)
     cadence = metadata.get("controlIntervalSeconds")
@@ -127,21 +144,12 @@ def load_tactical_corpus(directory):
     _require(isinstance(source, str) and len(source) == 64
              and all(char in "0123456789abcdef" for char in source),
              "invalid native source identity")
-    canonical = metadata.get("sensorCanonicalJson")
-    _require(isinstance(canonical, str) and len(canonical) <= 1024 * 1024,
-             "missing native sensor metadata")
-    raw = _json(canonical)
-    _require(isinstance(raw, dict), "invalid native sensor metadata")
-    try:
-        sensor = SensorContract.from_spec({"layoutVersion": "v4", "sensorCount": WIDTH,
-            "profile": "motion", "order": raw.get("order"),
-            "contract": {"canonicalJson": canonical, "sha256": metadata.get("sensorSha256")}})
-    except SensorContractError as error:
-        raise TacticalCorpusError("invalid native sensor contract") from error
+    sensor = _sensor(metadata, width)
+    policies = policies_for_profile(sensor.profile)
     objects = metadata.get("objects")
     _require(isinstance(objects, list) and len(objects) == 3, "complete corpus objects required")
     expected = {
-        "observations.f32": rows * WIDTH * 4, "actions.f32": rows * 8, "steps.u32": rows * 4,
+        "observations.f32": rows * width * 4, "actions.f32": rows * 8, "steps.u32": rows * 4,
     }
     blobs = {}
     for receipt in objects:
@@ -156,7 +164,7 @@ def load_tactical_corpus(directory):
                  and hashlib.sha256(value).hexdigest() == receipt.get("sha256"),
                  "corpus object hash mismatch")
         blobs[name] = value
-    observations = np.frombuffer(blobs["observations.f32"], dtype="<f4").reshape(rows, WIDTH)
+    observations = np.frombuffer(blobs["observations.f32"], dtype="<f4").reshape(rows, width)
     actions = np.frombuffer(blobs["actions.f32"], dtype="<f4").reshape(rows, 2)
     steps = np.frombuffer(blobs["steps.u32"], dtype="<u4")
     _validate_observations(observations)
@@ -165,12 +173,12 @@ def load_tactical_corpus(directory):
              "invalid committed corpus actions")
     sequences = metadata.get("sequences")
     _require(isinstance(sequences, list)
-             and len(sequences) == len(SCENARIOS) * seeds * len(POLICIES),
+             and len(sequences) == len(SCENARIOS) * seeds * len(policies),
              "incomplete tactical sequence matrix")
     result = []
     offset = 0
     expected_matrix = ((scenario, seed, policy) for scenario in SCENARIOS
-                       for seed in range(1, seeds + 1) for policy in POLICIES)
+                       for seed in range(1, seeds + 1) for policy in policies)
     for sequence, (scenario, seed, policy) in zip(sequences, expected_matrix):
         _require(isinstance(sequence, dict) and sequence.get("scenario") == scenario
                  and _is_int(sequence.get("seed")) and sequence["seed"] == seed

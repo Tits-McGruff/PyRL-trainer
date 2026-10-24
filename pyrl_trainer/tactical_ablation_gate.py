@@ -28,6 +28,7 @@ from .sequence_distillation import CanonicalSequenceTrainer, SequenceTrainingCon
 from .tactical_ablation import (VARIANTS, ablation_graph, evaluate_agreement,
                                 paired_windows, window_batch)
 from .tactical_corpus import load_tactical_corpus
+from .tactical_contract import variants_for_profile
 
 
 def _require(condition, message):
@@ -114,8 +115,7 @@ def _arguments():
         args.validation_update = validation_updates(args.validation_update, args.updates)
     except ValueError as error:
         parser.error(str(error))
-    args.variant = args.variant or list(VARIANTS)
-    if len(set(args.variant)) != len(args.variant):
+    if args.variant is not None and len(set(args.variant)) != len(args.variant):
         parser.error("duplicate ablation variant")
     for name in ("canonical_runner", "tactical_runner", "corpus"):
         setattr(args, name, getattr(args, name).resolve(strict=True))
@@ -135,6 +135,11 @@ class AblationStudy:
         self.args = args
         self.started = time.perf_counter()
         self.corpus = load_tactical_corpus(args.corpus)
+        supported = variants_for_profile(self.corpus.sensor.profile)
+        args.variant = list(supported) if args.variant is None else args.variant
+        _require(args.variant and len(set(args.variant)) == len(args.variant)
+                 and all(variant in supported for variant in args.variant),
+                 "ablation variants unavailable for the declared corpus profile")
         self.training, self.validation = self.corpus.split_by_seed({args.validation_seed})
         self.config = SequenceTrainingConfig(batch_size=args.batch_sequences,
                                             bptt_steps=args.sequence_length,
@@ -171,13 +176,14 @@ class AblationStudy:
                        "scope": (
                            'Synthetic native tactical teacher lives; same data/seeds/windows '
                            'across canonical graph-input ablations. Split/Concat removes inputs '
-                           'before the first trainable layer while retaining the full Motion/B16 '
+                           'before the first trainable layer while retaining the declared v4 '
                            'sensor contract, so no sensing savings are claimed. Before/after '
                            'portable artifacts drive real native physics on the held-out seed. '
                            'PyTorch evaluation wall time includes transfer/loop/metrics and is '
                            'descriptive, not a native real-time gate. Representative '
                            'populations, sensor-layout freeze, saturation, contention and soak '
-                           'remain open.'
+                           'remain open. Separate profile corpora do not imply paired '
+                            'cross-profile data.'
                        ),
                        "sources": self._sources(), "variants": []}
         _write(args.directory / "initial-observation.f32",
@@ -218,8 +224,10 @@ class AblationStudy:
         _require(_digest(path) == self.runner_hashes[name], "native runner changed during study")
 
     def _initialize(self, root, variant):
-        request = {"schemaVersion": 1, "graphSpec": ablation_graph(variant),
-                   "sensorProfile": "motion", "bins": 16,
+        graph = ablation_graph(variant, bins=self.corpus.sensor.bins,
+                               profile=self.corpus.sensor.profile)
+        request = {"schemaVersion": 1, "graphSpec": graph,
+                   "sensorProfile": self.corpus.sensor.profile, "bins": self.corpus.sensor.bins,
                    "controlIntervalSeconds": self.corpus.control_interval_seconds,
                    "lifeStateRule": "reset", "mathBackend": "rust-sse2-v1",
                    "initializationSeed": self.args.seed,
@@ -253,6 +261,7 @@ class AblationStudy:
                                   "--steps", self.args.native_steps,
                                   "--workers", self.args.native_workers,
                                   "--cadence", self.corpus.control_interval_seconds,
+                                  "--bins", self.corpus.sensor.bins,
                                   "--output", report])
         value = _json(report)
         _require(value["kind"] == "native-student-tactics-v1" and value["sourceSha256"] == source,

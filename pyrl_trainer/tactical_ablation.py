@@ -8,26 +8,31 @@ import torch
 
 from .canonical_graph import CanonicalGraphError, distillation_loss
 from .sequence_distillation import SequenceBatch, SequenceBoundary
-from .tactical_contract import VARIANTS
+from .tactical_contract import VARIANTS, variants_for_profile
 
 
 
 
-def ablation_graph(variant):
+def ablation_graph(variant, *, bins=16, profile="motion"):
     """Select declared Split/Concat ports; Rust still owns packing and compilation."""
-    if variant not in VARIANTS:
-        raise CanonicalGraphError("unknown tactical ablation")
-    nodes = [{"id": "input", "type": "Input", "outputSize": 264}]
+    if (profile not in ("basic", "motion")
+            or not isinstance(bins, int) or isinstance(bins, bool) or not 8 <= bins <= 32):
+        raise CanonicalGraphError("tactical graph requires a v4 Basic/Motion B8..32 contract")
+    if variant not in variants_for_profile(profile):
+        raise CanonicalGraphError("unknown or unavailable tactical ablation")
+    channels = 6 if profile == "basic" else 15
+    input_width = 24 + channels * bins
+    nodes = [{"id": "input", "type": "Input", "outputSize": input_width}]
     edges = []
-    incoming, width = "input", 264
+    incoming, width = "input", input_width
     if VARIANTS[variant]:
-        selected = [port for port in range(16) if port not in VARIANTS[variant]]
-        nodes.extend([{"id": "channels", "type": "Split", "outputSizes": [24] + [16] * 15},
+        selected = [port for port in range(channels + 1) if port not in VARIANTS[variant]]
+        nodes.extend([{"id": "channels", "type": "Split", "outputSizes": [24] + [bins] * channels},
                       {"id": "selected", "type": "Concat"}])
         edges.append({"from": "input", "to": "channels", "fromPort": 0, "toPort": 0})
         edges.extend({"from": "channels", "to": "selected", "fromPort": port,
                       "toPort": ordinal} for ordinal, port in enumerate(selected))
-        incoming, width = "selected", 24 + (len(selected) - 1) * 16
+        incoming, width = "selected", 24 + (len(selected) - 1) * bins
     nodes.extend([
         {"id": "encode", "type": "MLP", "inputSize": width,
          "hiddenSizes": [64], "outputSize": 64},
@@ -72,7 +77,8 @@ def paired_windows(corpus, sequences, config, updates, seed):
 
 def _check_windows(corpus, manifest, windows, config):
     """Reject incompatible data or invalid spans before allocating a training slab."""
-    if (manifest.input_size != 264 or manifest.sensor_sha256 != corpus.sensor.structural_sha256
+    if (manifest.input_size != corpus.sensor.sensor_count
+            or manifest.sensor_sha256 != corpus.sensor.structural_sha256
             or manifest.control_interval_seconds != corpus.control_interval_seconds):
         raise CanonicalGraphError("ablation corpus deployment identity mismatch")
     if not windows or len(windows) > config.batch_size:
@@ -98,7 +104,7 @@ def window_batch(corpus, manifest, windows, config):
     """Copy only selected real deliveries; suffix padding never manufactures history."""
     actual = _check_windows(corpus, manifest, windows, config)
     shape = (actual.burn_in_steps + actual.bptt_steps, len(windows))
-    observations = np.zeros((*shape, 264), dtype=np.float32)
+    observations = np.zeros((*shape, manifest.input_size), dtype=np.float32)
     turns, boosts, weights = (np.zeros(shape, dtype=np.float32) for _ in range(3))
     active = np.zeros(shape, dtype=np.bool_)
     boundaries = np.zeros(shape, dtype=np.int64)
@@ -124,7 +130,7 @@ def window_batch(corpus, manifest, windows, config):
 
 def evaluate_agreement(model, corpus, sequences):
     """Measure full held-out native lives with carried student recurrence and no gradients."""
-    if (model.manifest.input_size != 264
+    if (model.manifest.input_size != corpus.sensor.sensor_count
             or model.manifest.sensor_sha256 != corpus.sensor.structural_sha256
             or model.manifest.control_interval_seconds != corpus.control_interval_seconds
             or not sequences or any(sequence not in corpus.sequences for sequence in sequences)):

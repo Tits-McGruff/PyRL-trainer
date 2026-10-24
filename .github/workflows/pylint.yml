@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 101014d994bf7175c102ecc18cde56e1a531322b
+          ref: 147cefc41ef56c116fd4a214615901c2255a5e42
           path: .canonical-rust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -109,6 +109,27 @@ jobs:
               assert [point["update"] for point in points] == [0, 1, 2]
               assert all(point["measurements"]["turnMae"]["count"] == 1 for point in points)
           PY
+      - name: Native profile-width corpus and optimizer deployment contracts
+        run: |
+          for profile_case in basic-b8 motion-b32; do
+            if [ "$profile_case" = basic-b8 ]; then profile=basic; bins=8; else profile=motion; bins=32; fi
+            .canonical-rust/native/target/release/baseline-v2-qualification --seed-count 2 --steps 12 --workers 1 --cadence 0.06 --bins "$bins" --corpus-profile "$profile" --output "$profile_case-tactics.json" --corpus-directory "native-tactical-$profile_case"
+            python -m pyrl_trainer.tactical_ablation_gate --corpus "native-tactical-$profile_case" --canonical-runner .canonical-rust/native/target/release/canonical-training-graph --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification --directory "tactical-profile-$profile_case" --device cpu --updates 2 --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12 --validation-seed 2 --validation-update 1 --device-memory-mib 512
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for case, profile, bins in [("basic-b8", "basic", 8), ("motion-b32", "motion", 32)]:
+              report = json.loads(Path("tactical-profile-" + case, "summary.json").read_bytes())
+              assert report["measurementComplete"] and not report["releaseQualified"]
+              assert report["config"]["sensorProfile"] == profile and report["config"]["sensorBins"] == bins
+              assert len(report["variants"]) == (1 if profile == "basic" else 7)
+              assert len({row["training"]["scheduleSha256"] for row in report["variants"]}) == 1
+              for row in report["variants"]:
+                  assert row["training"]["updates"] == 2
+                  assert [point["update"] for point in row["training"]["validationCurve"]] == [0, 1, 2]
+          PY
+          python -m pyrl_trainer.ablation_matrix --study tactical-profile-motion-b32 --initialization-seed 1 --validation-seed 2 --updates 2 --output tactical-profile-motion-b32-matrix.json
       - name: Native teacher codec interoperability
         run: |
           .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
@@ -136,6 +157,13 @@ jobs:
             native-tactical-corpus/
             tactical-ablation-smoke/
             tactical-ablation-matrix-smoke.json
+            basic-b8-tactics.json
+            motion-b32-tactics.json
+            native-tactical-basic-b8/
+            native-tactical-motion-b32/
+            tactical-profile-basic-b8/
+            tactical-profile-motion-b32/
+            tactical-profile-motion-b32-matrix.json
           if-no-files-found: error
 
 
@@ -148,7 +176,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 101014d994bf7175c102ecc18cde56e1a531322b
+          ref: 147cefc41ef56c116fd4a214615901c2255a5e42
           path: .live-slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
