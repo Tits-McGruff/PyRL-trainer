@@ -6,6 +6,4 @@ Full held-out turn MAE falls from 0.04240647 at 6,000 updates to 0.03844980 at 8
 
 `summary.json` retains per-variant curves and gameplay receipts. `catalog.json` locates the complete checksummed outputs in the immutable [release asset](https://github.com/Tits-McGruff/PyRL-trainer/releases/tag/qualification-resume-20261025). The asset was downloaded afresh, completely restored/rehash-verified and independently admitted by the maintained study reader. Source uses Git/path/hash/EOL provenance; no source snapshots are included. The corpus metadata records all generated input hashes and the reproduction command. Resource publication contains guarded aggregate counters only; the shared host was not asserted idle.
 
-```sh
-python -m pyrl_trainer.evidence_store fetch --catalog docs/performance/canonical_graph/motion-b8-cuda8000-v1/catalog.json --cache .cache/qualification-evidence
-```
+Download the linked release asset directly and verify its recorded SHA-256 when inspecting historical output.

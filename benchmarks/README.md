@@ -1,5 +1,7 @@
-# Historical experimental source patches
+# Experimental drivers
 
-These textual patches preserve unique code that existed only inside old performance bundles. The exact repository, ordinary base commit, target path, patch hash, canonical LF hash and raw-byte/EOL reconstruction are recorded in `docs/performance/source-provenance.json`. They are reconstruction inputs; no runtime imports or executes them. The PyRL `experiment.py` driver and Slither one-off drivers are new-file patches under `benchmarks/historical/` when applied to their recorded bases. Variants of maintained Python, Rust and TypeScript modules are patches against those normal module paths. Original git-format experiment patches, when present, are indexed separately in `historical-patches.json` with their original base/preimage metadata.
-
-Use the maintained `pyrl_trainer.source_provenance.restore` reader to reconstruct and raw-hash verify a version. Do not turn ordinary tracked modules into new snapshots here. A future experiment belongs in maintained benchmark code or an explicit reviewed patch with a base commit.
+Maintained benchmark and ablation programs live in `pyrl_trainer` and `scripts`.
+Use a clean commit or a temporary `experiment/...` branch for a new experiment.
+The unique historical `experiment.py` patch and its base/hash metadata remain
+inspectable at the unchanged `qualification-resume-20261025` tag. They are not
+runtime dependencies or an ongoing source reconstruction system.

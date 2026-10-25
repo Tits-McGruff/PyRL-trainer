@@ -182,6 +182,7 @@ def test_profile_study_report_binds_native_contract_and_default_variant_set(prof
     monkeypatch.setattr(torch, "set_num_threads", lambda _count: None)
     args = SimpleNamespace(
         updates=2, validation_update=(1,), cuda_graphs=False, corpus=root, variant=None,
+        allow_dirty=True,
         validation_seed=2, batch_sequences=2, sequence_length=16, burn_in=0,
         seed=1, device="cpu", cpu_threads=1, device_memory_mib=512,
         canonical_runner=canonical, tactical_runner=tactical, directory=root / "study",

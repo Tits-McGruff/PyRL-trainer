@@ -18,7 +18,7 @@ import torch
 from pyrl_trainer import distillation_checkpoint as snapshots
 from pyrl_trainer import distillation_job as owner
 from pyrl_trainer import distillation_run as runner
-from pyrl_trainer.distillation_checkpoint import load_job_checkpoint, _preflight
+from pyrl_trainer.distillation_checkpoint import load_job_checkpoint
 from pyrl_trainer.distillation_client import DistillationFetch
 from pyrl_trainer.distillation_replay import TeacherReplay
 from pyrl_trainer.distillation_transport import DistillationContractError
@@ -233,34 +233,19 @@ def test_replay_ceiling_is_explicit_without_an_eager_capacity_allocation():
         TeacherReplay(max_bytes=2048 * MIB + 1)
 
 
-@pytest.mark.parametrize("change", [None, "locator", "count", "central"])
-def test_zip64_size_directory_with_small_member_count_is_admitted_and_strictly_checked(
-    tmp_path, monkeypatch, local_source, change
+def test_standard_zip64_checkpoint_restores_and_truncation_rejects(
+    tmp_path, monkeypatch, local_source
 ):
-    """Exercise ZIP64-by-size without writing a multi-gigabyte test fixture."""
+    """Standard ZIP64 preserves exact restart; a truncated container cannot be restored."""
     monkeypatch.setattr(zipfile, "ZIP64_LIMIT", 128)
     result = runner.run(new_arguments(tmp_path) + ["--burn-in", "0", "--bptt", "16"])
     original = Path(result["checkpoint"])
-    data = bytearray(original.read_bytes())
-    assert struct.unpack_from("<H", data, len(data) - 12)[0] < 65535
-    record, locator = data.rfind(b"PK\x06\x06"), len(data) - 42
-    assert record > 0 and data[locator:locator + 4] == b"PK\x06\x07"
-    if change is None:
-        restored = load_job_checkpoint(original)
-        assert restored.replay.cursor == local_source.cursor
-        assert restored.update().optimizer_updated
-        return
-    if change == "locator":
-        struct.pack_into("<Q", data, locator + 8, record + 1)
-    elif change == "count":
-        count = struct.unpack_from("<Q", data, record + 32)[0]
-        struct.pack_into("<QQ", data, record + 24, count - 1, count - 1)
-    else:
-        struct.pack_into("<Q", data, record + 40, 8 * MIB + 1)
-        struct.pack_into("<I", data, len(data) - 10, 0xFFFFFFFF)
-    changed = tmp_path / "changed.distill-job"
-    changed.write_bytes(data)
-    with pytest.raises(DistillationContractError, match="ZIP64|central directory"):
+    restored = load_job_checkpoint(original)
+    assert restored.replay.cursor == local_source.cursor
+    assert restored.update().optimizer_updated
+    changed = tmp_path / "truncated.distill-job"
+    changed.write_bytes(original.read_bytes()[:-30])
+    with pytest.raises(DistillationContractError, match="ZIP"):
         load_job_checkpoint(changed)
 
 
@@ -312,16 +297,6 @@ def test_unavailable_cuda_rejects_before_source_files_or_http(tmp_path, monkeypa
     with pytest.raises(DistillationContractError, match="CUDA device unavailable"):
         runner.run(arguments)
     assert not list(tmp_path.iterdir())
-
-
-def test_classic_zip_with_exactly_65535_members_does_not_require_a_zip64_locator(tmp_path):
-    """The classic count maximum remains a valid count when size/offset fit classic ZIP."""
-    path = tmp_path / "classic-count-limit.zip"
-    with zipfile.ZipFile(path, "w", allowZip64=False) as archive:
-        for index in range(65535):
-            archive.writestr(f"part-{index:05}", b"")
-    assert path.stat().st_size < 8 * MIB
-    assert _preflight(path) == 65535
 
 
 @pytest.mark.parametrize("change", ["metadata-shape", "raw-budget"])

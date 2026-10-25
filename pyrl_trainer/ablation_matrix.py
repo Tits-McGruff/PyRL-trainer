@@ -4,7 +4,6 @@ This reader never trains, simulates, chooses a profile or declares model maturit
 Paired differences keep one initialization/held-out-fold cell as the analysis unit.
 """
 import argparse
-import ast
 from dataclasses import dataclass
 import hashlib
 import json
@@ -14,7 +13,6 @@ import shutil
 from pathlib import Path
 import statistics
 
-from .source_provenance import measured_sources
 from .tactical_contract import (MAX_ABLATION_UPDATES, SCENARIOS, variants_for_profile,
                                 policies_for_profile)
 
@@ -148,22 +146,12 @@ def read_study(directory):
     for name in names:
         _require(Path(name).name == name and name.endswith(".py"),
                  "confined source basename required")
-    source_bytes = measured_sources(report, root)
-    _require(all(len(value) <= MAX_SUMMARY_BYTES for value in source_bytes.values()),
-             "bounded measured source required")
-    declarations = [node.value for node in ast.parse(source_bytes["distillation_job.py"]).body
-                    if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
-                        and target.id == "SOURCE_FILES" for target in node.targets)]
-    _require(len(declarations) == 1, "measured trainer source inventory missing")
-    inventory = ast.literal_eval(declarations[0])
-    _require(isinstance(inventory, tuple) and len(set(inventory)) == len(inventory),
-             "invalid measured trainer source inventory")
-    trainer_hash = hashlib.sha256(b"slither.distillation-trainer-source.v1\0")
-    for name in inventory:
-        _require(name in source_bytes, "trainer source omitted from measured provenance")
-        trainer_hash.update(name.encode() + b"\0" + source_bytes[name])
-    _require(trainer_hash.hexdigest() == _sha(report["trainerSourceSha256"]),
-             "trainer identity differs from measured source provenance")
+    provenance = report.get("sourceProvenance", {})
+    _sha(report["trainerSourceSha256"])
+    commit = provenance.get("commit")
+    _require(isinstance(commit, str) and len(commit) == 40
+             and all(value in "0123456789abcdef" for value in commit),
+             "an explicit Git source commit is required")
     reference = None
     for variant in report["variants"]:
         name = variant["variant"]

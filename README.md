@@ -573,3 +573,16 @@ and reports per-update cell distributions and differences from Full, including
 both teacher-policy strata. Final-only studies remain supported. Agreement curves
 provide maturity evidence alongside the existing native gameplay and performance
 gates; they do not automatically choose production sensor defaults.
+
+
+Shared format definitions come from Slither's small `contracts/` project, pinned
+in `requirements-contracts.txt`. Install normal dependencies with
+`python -m pip install -r requirements.txt`; for coordinated local development,
+use `python -m pip install -e ../slither_neuroevo/contracts`. Structural bindings
+are generated; training objectives, sampling and strict game-specific checks stay
+in PyRL. Existing binary formats and canonical identities remain compatible.
+
+Routine Quality CI runs lint, ordinary tests and small CPU native format/parity
+smokes. Larger ablations, wide-graph qualification and live distillation are in the
+manual Qualification workflow. New ablation runs require committed source;
+`--allow-dirty` is an explicit local diagnostic option and records dirty paths.

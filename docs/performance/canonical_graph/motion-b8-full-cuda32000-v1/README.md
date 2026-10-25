@@ -14,6 +14,4 @@ The native evaluation uses fourteen short held-out tactical scenarios. These res
 
 `summary.json` records the checkpoint curve and the native receipts. `catalog.json` identifies complete outputs, corpus metadata, aggregate-only counters and Git/path/hash/EOL provenance in the immutable [release asset](https://github.com/Tits-McGruff/PyRL-trainer/releases/tag/qualification-long-curve-20261025). The asset was downloaded afresh, completely restored/rehash-verified and admitted by the maintained study reader. It contains no source snapshots or host process inventories. Compiler and other shared-host activity are covered by aggregate counters; this is not an idle-host timing claim.
 
-```sh
-python -m pyrl_trainer.evidence_store fetch --catalog docs/performance/canonical_graph/motion-b8-full-cuda32000-v1/catalog.json --cache .cache/qualification-evidence
-```
+Download the linked release asset directly and verify its recorded SHA-256 when inspecting historical output.

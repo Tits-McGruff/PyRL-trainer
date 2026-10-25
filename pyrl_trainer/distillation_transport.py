@@ -10,24 +10,19 @@ import json
 import math
 import re
 import struct
+from typing import get_args
+
+from slither_contracts import CONSTANTS, models as wire
 
 import numpy as np
 
-MAX_CHUNK_BYTES = 1024 * 1024
+MAX_CHUNK_BYTES = CONSTANTS["maxTeacherBytes"]
 MAX_PRODUCER_STORAGE_BYTES = 64 * 1024**3
 MAX_JSON_BYTES = 1024 * 1024
-START_REASONS = ("captureStart", "physicalLifeStart", "continuation", "gap", "generationStart")
-END_REASONS = (
-    "maximumSamples",
-    "simulatedSecond",
-    "lifeEnded",
-    "generationEnded",
-    "contractChanged",
-    "captureStopped",
-    "interrupted",
-)
-HEADER_TAIL = struct.Struct("<IBdHQQIQBBH")
-SAMPLE = struct.Struct("<QQfBBBH")
+START_REASONS = get_args(wire.TeacherStartReason)
+END_REASONS = get_args(wire.TeacherEndReason)
+HEADER_TAIL = struct.Struct(CONSTANTS["teacherHeaderTail"])
+SAMPLE = struct.Struct(CONSTANTS["teacherSample"])
 
 
 class DistillationContractError(ValueError):
@@ -52,7 +47,8 @@ def hex_identity(value, width, nonzero=False):
 
 def exact_keys(value, keys):
     """Require the complete versioned metadata object with no alternate fields."""
-    if not isinstance(value, dict) or set(value) != set(keys.split()):
+    expected = keys.__annotations__ if isinstance(keys, type) else keys.split()
+    if not isinstance(value, dict) or set(value) != set(expected):
         raise DistillationContractError("unsupported distillation metadata fields")
 
 
@@ -128,8 +124,7 @@ class TeacherContract:
         """Require every native structural/deployment identity on the HTTP boundary."""
         exact_keys(
             raw,
-            "captureEpoch runId configSha256 sensorSha256 teacherSha256 "
-            "teacherRevision teacherMode controlIntervalSeconds inputSize",
+            wire.TeacherCaptureContract,
         )
         return cls(
             raw["captureEpoch"],
@@ -168,9 +163,7 @@ class TeacherDescriptor:
         """Validate complete metadata without treating width alone as compatibility."""
         exact_keys(
             raw,
-            "captureEpoch sequence generation baselineSlot physicalSnakeId "
-            "firstSample lastSample firstStep lastStep count inputSize configSha256 "
-            "sensorSha256 teacherSha256 startReason endReason byteCount sha256",
+            wire.TeacherChunkDescriptor,
         )
         for key, expected in (
             ("captureEpoch", contract.capture_epoch),
@@ -262,7 +255,7 @@ class TeacherChunk:
         """Prove complete dimensions before allocating any row vectors."""
         if not isinstance(data, bytes) or not 168 <= len(data) <= MAX_CHUNK_BYTES:
             raise DistillationContractError("teacher chunk byte limit")
-        if data[:8] != b"SLTHTCH1":
+        if data[:8] != CONSTANTS["teacherMagic"].encode():
             raise DistillationContractError("unsupported teacher binary version")
         epoch, run_size = data[8:24].hex(), data[24]
         integer(run_size, 1, 128)
@@ -410,10 +403,7 @@ class DatasetManifest:
         """Require a recorded seed; unknown legacy seeds cannot support exact partitioning."""
         exact_keys(
             raw,
-            "schemaVersion runSeed contract sensorContractJson state productionWatermark "
-            "storageWatermark retentionFloor resolvedThrough nativeDroppedChunks "
-            "nativeDroppedSamples nativeDroppedBytes spoolDroppedChunks "
-            "retainedChunks retainedBytes error",
+            wire.DistillationDataset,
         )
         integer(raw["schemaVersion"], 1, 1)
         seed = integer(raw["runSeed"], 0, (1 << 32) - 1)
@@ -423,7 +413,7 @@ class DatasetManifest:
             raise DistillationContractError("sensor metadata byte limit")
         sensor_bytes = sensor_json.encode("utf-8")
         if (
-            hashlib.sha256(b"slither.sensor-contract.v1\0" + sensor_bytes).hexdigest()
+            hashlib.sha256(CONSTANTS["sensorHashDomain"].encode() + sensor_bytes).hexdigest()
             != contract.sensor_sha256
         ):
             raise DistillationContractError("sensor canonical digest mismatch")

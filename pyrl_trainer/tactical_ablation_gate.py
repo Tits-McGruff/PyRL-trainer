@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from .ablation_progress import replace_report, study_lease, variant_inventory
-from .source_provenance import capture, measured_sources
+from .experiment_source import capture
 from .brain_artifact import encode_brain_artifact
 from .canonical_graph import (CanonicalGraph, CanonicalGraphManifest,
                               configure_distillation_precision)
@@ -94,6 +94,8 @@ def _arguments():
     for name in ("corpus", "canonical-runner", "tactical-runner", "directory"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--variant", action="append", choices=VARIANTS)
+    parser.add_argument("--allow-dirty", action="store_true",
+                        help="Local diagnostic only: visibly record dirty Git state")
     parser.add_argument("--resume", action="store_true",
                         help="Verify and reuse completed variants; restart an interrupted variant")
     parser.add_argument("--validation-update", type=int, action="append",
@@ -227,7 +229,7 @@ class AblationStudy:
         """Keep hash identities and Git/patch provenance without duplicate source archives."""
         names = tuple(dict.fromkeys((*SOURCE_FILES, "canonical_parity.py", "tactical_corpus.py",
                                     "tactical_ablation.py", "tactical_ablation_gate.py",
-                                    "tactical_contract.py", "source_provenance.py",
+                                    "tactical_contract.py", "experiment_source.py",
                                     "ablation_progress.py")))
         if getattr(self, "resume_report", None) is not None:
             saved = self.resume_report
@@ -237,7 +239,6 @@ class AblationStudy:
             for name, receipt in saved["sources"].items():
                 _require(_digest(Path(__file__).parent / name) == receipt["sha256"],
                          "resume trainer source changed: " + name)
-            measured_sources(saved, self.args.directory)
             self.source_provenance = saved["sourceProvenance"]
             dependencies = {name: _digest(Path(__file__).parents[1] / name)
                             for name in ("requirements.txt", "constraints.txt",
@@ -246,7 +247,8 @@ class AblationStudy:
             _require(self.source_provenance["dependencies"] == dependencies,
                      "resume dependency identity changed")
         else:
-            self.source_provenance = capture(names, self.args.directory)
+            self.source_provenance = capture(names, self.args.directory,
+                                             allow_dirty=getattr(self.args, "allow_dirty", False))
         return {name: {"sha256": record["sha256"]}
                 for name, record in self.source_provenance["versions"].items()}
 

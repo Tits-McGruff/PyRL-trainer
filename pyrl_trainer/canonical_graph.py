@@ -13,18 +13,20 @@ from pathlib import Path
 import re
 from typing import Optional, Tuple
 
+from slither_contracts import CONSTANTS, models as wire
+
 import numpy as np
 import torch
 from torch import nn
 
-MAX_MANIFEST_BYTES = 1024 * 1024
-EQUATIONS_SHA256_V1 = "bfe2551fbdaa2674edff165d7ef24b7aff7cea3eeb6bd647f6367661e142ee08"
-# Rust TrainingEquations declaration order defines the existing v1 digest.
-# Portable metadata may pass through serde_json::Value, which sorts object keys.
-EQUATION_FIELDS_V1 = (
-    "revision", "dtype", "affine", "gru", "lstm", "rru", "concat", "split", "arithmetic"
-)
-
+MAX_MANIFEST_BYTES = CONSTANTS["maxManifestBytes"]
+EQUATION_FIELDS_V1 = tuple(CONSTANTS["equationFieldOrder"])
+EQUATIONS_SHA256_V1 = hashlib.sha256(
+    CONSTANTS["equationHashDomain"].encode() + json.dumps(
+        {key: CONSTANTS["equations"][key] for key in EQUATION_FIELDS_V1},
+        ensure_ascii=False, separators=(",", ":"),
+    ).encode()
+).hexdigest()
 
 
 class CanonicalGraphError(ValueError):
@@ -40,7 +42,8 @@ def _integer(value, maximum, minimum=0):
 
 def _keys(value, names):
     """Require an exact versioned object shape rather than silently ignoring fields."""
-    if not isinstance(value, dict) or set(value) != set(names.split()):
+    expected = names.__annotations__ if isinstance(names, type) else names.split()
+    if not isinstance(value, dict) or set(value) != set(expected):
         raise CanonicalGraphError("unsupported canonical object fields")
 
 
@@ -95,7 +98,7 @@ def _parameter_views(raw, node, owners):
     result = []
     names = set()
     for block in raw:
-        _keys(block, "name offset length shape strides")
+        _keys(block, wire.TrainingParameterBlock)
         name = block["name"]
         if not isinstance(name, str) or not 1 <= len(name) <= 32 or name in names:
             raise CanonicalGraphError("invalid or duplicate parameter name")
@@ -161,7 +164,7 @@ def _state_views(raw, operation, hidden, state_range, owners):
     offset = _integer(offset, len(owners))
     result = []
     for name, block in zip(expected, raw):
-        _keys(block, "name offset length")
+        _keys(block, wire.TrainingStateBlock)
         _integer(block["offset"], len(owners))
         _integer(block["length"], 512, 1)
         if block["name"] != name or block["offset"] != offset or block["length"] != hidden:
@@ -183,9 +186,7 @@ def _node(raw, prior, parameter_owners, state_owners):
     _keys(
         raw,
         (
-            "id operation inputSize outputSizes hiddenSizes hiddenSize "
-            "parameterOffset parameterLength stateOffset stateLength inputs "
-            "parameterBlocks stateBlocks"
+            wire.TrainingNode
         ),
     )
     identifier = _identifier(raw["id"])
@@ -222,7 +223,7 @@ def _node(raw, prior, parameter_owners, state_owners):
     if not isinstance(raw["inputs"], list) or len(raw["inputs"]) > 128:
         raise CanonicalGraphError("invalid incoming edges")
     for ordinal, edge in enumerate(raw["inputs"]):
-        _keys(edge, "fromId fromPort inputOrdinal")
+        _keys(edge, wire.TrainingInput)
         source = _identifier(edge["fromId"])
         _integer(edge["inputOrdinal"], 127)
         port = _integer(edge["fromPort"], 15)
@@ -308,10 +309,7 @@ class CanonicalGraphManifest:
         _keys(
             raw,
             (
-                "schemaVersion graphSpec architectureKey layoutVersion layoutSha256 "
-                "equations equationsSha256 topologicalOrder nodes outputs "
-                "totalParameters totalStateSize inputSize outputSize sensorCanonicalJson "
-                "sensorSha256 deployment initialization"
+                wire.CanonicalTrainingGraphManifestV1
             ),
         )
         if (
@@ -325,11 +323,13 @@ class CanonicalGraphManifest:
             {name: raw["equations"][name] for name in EQUATION_FIELDS_V1},
             ensure_ascii=False, separators=(",", ":"),
         ).encode()
-        digest = hashlib.sha256(b"slither.training-equations.v1\0" + equations).hexdigest()
+        digest = hashlib.sha256(CONSTANTS["equationHashDomain"].encode() + equations).hexdigest()
         if digest != EQUATIONS_SHA256_V1 or raw["equationsSha256"] != digest:
             raise CanonicalGraphError("unsupported canonical equations")
         sensor_bytes = raw["sensorCanonicalJson"].encode("utf-8")
-        sensor_hash = hashlib.sha256(b"slither.sensor-contract.v1\0" + sensor_bytes).hexdigest()
+        sensor_hash = hashlib.sha256(
+            CONSTANTS["sensorHashDomain"].encode() + sensor_bytes
+        ).hexdigest()
         if len(sensor_bytes) > 65536 or raw["sensorSha256"] != sensor_hash:
             raise CanonicalGraphError("sensor canonical digest mismatch")
         input_size = _integer(raw["inputSize"], 504, 1)
@@ -391,7 +391,7 @@ def _outputs(raw, nodes):
         raise CanonicalGraphError("invalid graph outputs")
     result, offset = [], 0
     for output in raw:
-        _keys(output, "nodeId port offset length")
+        _keys(output, wire.TrainingOutput)
         identifier = _identifier(output["nodeId"])
         _integer(output["offset"], 2)
         _integer(output["length"], 2, 1)
@@ -413,9 +413,7 @@ def _deployment(raw):
     _keys(
         raw,
         (
-            "fixedStepHz controlIntervalSeconds cadence firstPhysicalSample "
-            "lifeStateRule generationStateRule turnOutputIndex boostOutputIndex "
-            "turnMapping boostMapping boostThreshold"
+            wire.TrainingDeploymentManifest
         ),
     )
     interval = raw["controlIntervalSeconds"]

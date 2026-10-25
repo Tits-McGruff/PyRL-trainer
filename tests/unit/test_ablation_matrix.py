@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from pyrl_trainer.source_provenance import capture
+from pyrl_trainer.experiment_source import capture
 from pyrl_trainer.distillation_job import SOURCE_FILES, trainer_source_sha256
 from pyrl_trainer.ablation_matrix import MatrixSpec, combine_studies, read_study
 from pyrl_trainer.tactical_contract import POLICIES, SCENARIOS, VARIANTS
@@ -138,7 +138,7 @@ def write_study(root):
     names = tuple(dict.fromkeys((*SOURCE_FILES, "tactical_ablation.py",
                                 "tactical_ablation_gate.py", "tactical_contract.py",
                                 "tactical_corpus.py")))
-    report["sourceProvenance"] = capture(names, root)
+    report["sourceProvenance"] = capture(names, root, allow_dirty=True)
     report["trainerSourceSha256"] = trainer_source_sha256()
     report["sources"] = {name: {"sha256": record["sha256"]}
                          for name, record in report["sourceProvenance"]["versions"].items()}
@@ -183,12 +183,12 @@ def test_reader_binds_native_reports_originals_and_measured_sources(tmp_path):
         read_study(tmp_path)
 
 
-def test_reader_recomputes_trainer_identity_from_git_inventory(tmp_path):
-    """Matching source filenames alone cannot qualify a different executable trainer source."""
+def test_reader_requires_an_explicit_git_source_commit(tmp_path):
+    """Analysis keeps Git provenance without reconstructing archived source trees."""
     report = write_study(tmp_path)
-    report["trainerSourceSha256"] = digest("different trainer")
+    report["sourceProvenance"]["commit"] = "unidentified source"
     (tmp_path / "summary.json").write_text(json.dumps(report), encoding="utf-8")
-    with pytest.raises(ValueError, match="trainer identity"):
+    with pytest.raises(ValueError, match="Git source commit"):
         read_study(tmp_path)
 
 

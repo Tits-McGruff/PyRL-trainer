@@ -47,7 +47,8 @@ from .distillation_transport import (
 from .sequence_distillation import SequenceTrainingConfig
 
 DISK_RESERVE_BYTES = 1024**3
-MAX_CENTRAL_BYTES = 8 * 1024 * 1024
+# Conservative standard ZIP metadata allowance in the overall file envelope.
+ZIP_OVERHEAD_BYTES = 8 * 1024 * 1024
 INDEX_RECORD = struct.Struct("<QI32s")
 BASE_FILES = {
     "job.json",
@@ -73,7 +74,7 @@ def _checkpoint_byte_limit(replay_bytes, chunks, candidates):
     """Derive a finite on-disk envelope from admitted ownership and bounded fixed roles."""
     return (
         replay_bytes + sum(MEMBER_LIMITS.values()) + candidates * MAX_ARTIFACT_BYTES
-        + MAX_CENTRAL_BYTES + 1024 * (chunks + len(BASE_FILES) + candidates)
+        + ZIP_OVERHEAD_BYTES + 1024 * (chunks + len(BASE_FILES) + candidates)
     )
 
 
@@ -128,55 +129,16 @@ def _directory_sync(directory):
             os.close(descriptor)
 
 
-def _preflight(path):
-    """Bound ZIP directory allocation before constructing Python metadata objects."""
+def _checkpoint_path(path):
+    """Admit an owned local checkpoint; zipfile handles ZIP/ZIP64 and CRC validation.
+
+    Trainer checkpoints are local restart files, not an untrusted archive-upload
+    endpoint. Members are read by exact role and never extracted to filesystem paths.
+    """
     path = Path(path)
-    size = path.stat().st_size
-    if not path.is_file() or not 22 <= size <= MAX_CHECKPOINT_BYTES:
+    if not path.is_file() or not 22 <= path.stat().st_size <= MAX_CHECKPOINT_BYTES:
         raise DistillationContractError("job checkpoint file admission")
-    with path.open("rb") as stream:
-        stream.seek(-22, os.SEEK_END)
-        signature, disk, start_disk, on_disk, count, central_size, offset, comment = struct.unpack(
-            "<4s4H2IH", stream.read(22)
-        )
-        if signature != b"PK\x05\x06" or disk or start_disk or comment or on_disk != count:
-            raise DistillationContractError("unsupported job checkpoint ZIP directory")
-        boundary = size - 22
-        locator = b""
-        if size >= 42:
-            stream.seek(size - 42)
-            locator = stream.read(20)
-        if locator[:4] == b"PK\x06\x07":
-            sig, zip_disk, zip_offset, disks = struct.unpack("<4sIQI", locator)
-            if sig != b"PK\x06\x07" or zip_disk or disks != 1 or zip_offset + 56 != size - 42:
-                raise DistillationContractError("unsupported job ZIP64 locator")
-            stream.seek(zip_offset)
-            values = struct.unpack("<4sQ2H2I4Q", stream.read(56))
-            if (
-                values[0] != b"PK\x06\x06"
-                or values[1] != 44
-                or any(values[4:6])
-                or values[6] != values[7]
-                or any(
-                    value not in (sentinel, wide)
-                    for value, sentinel, wide in (
-                        (count, 65535, values[7]),
-                        (central_size, 0xFFFFFFFF, values[8]),
-                        (offset, 0xFFFFFFFF, values[9]),
-                    )
-                )
-            ):
-                raise DistillationContractError("unsupported job ZIP64 directory")
-            count, central_size, offset, boundary = values[7], values[8], values[9], zip_offset
-        elif central_size == 0xFFFFFFFF or offset == 0xFFFFFFFF:
-            raise DistillationContractError("missing job ZIP64 locator")
-        if (
-            not 7 <= count <= 65547
-            or central_size > MAX_CENTRAL_BYTES
-            or offset + central_size != boundary
-        ):
-            raise DistillationContractError("job central directory exceeds admission")
-    return count
+    return path
 
 
 def _read(archive, name, maximum):
@@ -195,10 +157,12 @@ def _manifest(path):
     # Validate the fixed inventory as one complete admission transaction.
     # pylint: disable=too-many-branches,too-many-statements
     """Verify fixed roles and immutable payloads before accepting a valid snapshot."""
-    count = _preflight(path)
+    path = _checkpoint_path(path)
     with zipfile.ZipFile(path, "r") as archive:
         names = archive.namelist()
-        if len(names) != count or len(set(names)) != count or not BASE_FILES <= set(names):
+        count = len(names)
+        if (not 7 <= count <= 65547 or len(set(names)) != count
+                or not BASE_FILES <= set(names)):
             raise DistillationContractError("job checkpoint missing/duplicate roles")
         for item in archive.infolist():
             if item.compress_type != zipfile.ZIP_STORED or item.flag_bits & 1:
@@ -528,7 +492,10 @@ def load_job_checkpoint(path):
         trainer_source_sha256,
     )  # pylint: disable=import-outside-toplevel
 
-    metadata, payloads = _manifest(path)
+    try:
+        metadata, payloads = _manifest(path)
+    except zipfile.BadZipFile as error:
+        raise DistillationContractError("invalid checkpoint ZIP") from error
     if metadata["trainerSourceSha256"] != trainer_source_sha256():
         raise DistillationContractError("exact job restart requires matching trainer source")
     exact_keys(metadata["config"], "seed device cpu_threads device_bytes")

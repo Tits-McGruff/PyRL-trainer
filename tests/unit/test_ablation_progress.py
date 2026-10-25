@@ -29,7 +29,7 @@ def arguments(root):
         sequence_length=16, burn_in=0, seed=1, device="cpu", cpu_threads=1,
         device_memory_mib=512, canonical_runner=root / "canonical",
         tactical_runner=root / "tactical", directory=root / "study",
-        native_steps=12, native_workers=1, deadline_seconds=60, resume=False,
+        native_steps=12, native_workers=1, deadline_seconds=60, resume=False, allow_dirty=True,
     )
 
 

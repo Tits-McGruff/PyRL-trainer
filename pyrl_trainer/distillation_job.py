@@ -14,6 +14,7 @@ import uuid
 
 import numpy as np
 import torch
+from slither_contracts import IDENTITY as CONTRACT_IDENTITY
 
 from .brain_artifact import encode_brain_artifact
 from .canonical_graph import CanonicalGraph, CanonicalGraphError
@@ -44,6 +45,7 @@ SOURCE_FILES = (
 def _compute_source_sha256():
     """Bind exact restart to the actual canonical/job implementation, independently of Git state."""
     digest = hashlib.sha256(b"slither.distillation-trainer-source.v1\0")
+    digest.update(CONTRACT_IDENTITY.encode("ascii") + b"\0")
     for name in SOURCE_FILES:
         digest.update(name.encode("utf-8") + b"\0")
         digest.update((Path(__file__).parent / name).read_bytes())

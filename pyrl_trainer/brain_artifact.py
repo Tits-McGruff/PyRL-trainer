@@ -7,16 +7,19 @@ from dataclasses import dataclass
 import hashlib
 import json
 import struct
+from typing import get_args
+
+from slither_contracts import CONSTANTS, models as wire
 
 import numpy as np
 
 from .canonical_graph import CanonicalGraphManifest
 from .distillation_transport import DistillationContractError, bounded_json, exact_keys
 
-MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_ARTIFACT_BYTES = CONSTANTS["maxBrainBytes"]
 MAX_PROVENANCE_BYTES = 64 * 1024
-HEADER = struct.Struct("<8sIB3xII32s32s")
-MAGIC = b"SLTHBRN1"
+HEADER = struct.Struct(CONSTANTS["brainHeader"])
+MAGIC = CONSTANTS["brainMagic"].encode()
 
 
 @dataclass(frozen=True)
@@ -61,10 +64,10 @@ def encode_brain_artifact(manifest, weights, provenance):
         or not np.isfinite(np.frombuffer(weights, dtype="<f4")).all()
     ):
         raise DistillationContractError("brain weight count/finite admission")
-    exact_keys(provenance, "schemaVersion sourceKind details")
+    exact_keys(provenance, wire.BrainProvenanceV1)
     if provenance["schemaVersion"] != 1 or isinstance(provenance["schemaVersion"], bool):
         raise DistillationContractError("unsupported brain provenance revision")
-    if provenance["sourceKind"] not in ("distilled", "imported", "manual") or not isinstance(
+    if provenance["sourceKind"] not in get_args(wire.BrainSourceKind) or not isinstance(
         provenance["details"], dict
     ):
         raise DistillationContractError("invalid brain provenance kind/details")
@@ -120,7 +123,7 @@ def read_raw_brain_artifact(data):
     if hashlib.sha256(weights).digest() != raw_digest or raw_digest != stored_digest:
         raise DistillationContractError("brain immutable numeric digest mismatch")
     metadata = bounded_json(data[HEADER.size : HEADER.size + json_bytes])
-    exact_keys(metadata, "schemaVersion graphManifest provenance")
+    exact_keys(metadata, wire.BrainManifestV1)
     if metadata["schemaVersion"] != 1 or isinstance(metadata["schemaVersion"], bool):
         raise DistillationContractError("unsupported brain metadata revision")
     manifest = CanonicalGraphManifest.from_bytes(

@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from .ablation_matrix import read_study
-from .source_provenance import capture
+from .experiment_source import capture
 from .tactical_ablation_gate import AblationStudy
 
 

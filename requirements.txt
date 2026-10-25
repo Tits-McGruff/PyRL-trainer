@@ -8,3 +8,5 @@ tomli-w
 pytest
 pytest-asyncio
 pylint
+
+-r requirements-contracts.txt
