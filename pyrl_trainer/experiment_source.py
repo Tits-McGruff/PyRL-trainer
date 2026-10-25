@@ -28,7 +28,8 @@ def capture(names, directory=None, source_root=None, *, allow_dirty=False):
                        "sha256": hashlib.sha256((modules / name).read_bytes()).hexdigest()}
                 for name in names}
     dependencies = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
-                    for name in ("requirements.txt", "constraints.txt", "requirements-dev.txt")
+                    for name in ("requirements.txt", "constraints.txt",
+                                 "requirements-dev.txt", "requirements-contracts.txt")
                     if (repo / name).is_file()}
     return {"repository": git("remote", "get-url", "origin"), "commit": git("rev-parse", "HEAD"),
             "dirty": bool(dirty), "dirtyPaths": dirty, "versions": versions,

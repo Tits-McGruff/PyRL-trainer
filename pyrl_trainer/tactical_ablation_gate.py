@@ -226,7 +226,7 @@ class AblationStudy:
                    self.corpus.observations[self.training[0].row_offset].tobytes())
 
     def _sources(self):
-        """Keep hash identities and Git/patch provenance without duplicate source archives."""
+        """Keep restart hashes and Git identity without duplicate source archives."""
         names = tuple(dict.fromkeys((*SOURCE_FILES, "canonical_parity.py", "tactical_corpus.py",
                                     "tactical_ablation.py", "tactical_ablation_gate.py",
                                     "tactical_contract.py", "experiment_source.py",
@@ -242,7 +242,7 @@ class AblationStudy:
             self.source_provenance = saved["sourceProvenance"]
             dependencies = {name: _digest(Path(__file__).parents[1] / name)
                             for name in ("requirements.txt", "constraints.txt",
-                                         "requirements-dev.txt")
+                                         "requirements-dev.txt", "requirements-contracts.txt")
                             if (Path(__file__).parents[1] / name).is_file()}
             _require(self.source_provenance["dependencies"] == dependencies,
                      "resume dependency identity changed")
