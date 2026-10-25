@@ -133,7 +133,7 @@ def test_explicit_maximum_batch_and_replay_controls_train_and_exactly_restart(
 @pytest.mark.parametrize("options", [
     ["--seed", "-1"], ["--seed", "4294967296"],
     ["--cpu-threads", "0"], ["--cpu-threads", "3"],
-    ["--device-memory-mib", "511"], ["--device-memory-mib", "8193"],
+    ["--device-memory-mib", "511"], ["--device-memory-mib", str(1 << 63)],
     ["--replay-ram-mib", "63"], ["--replay-ram-mib", "2049"],
     ["--learning-rate", "nan"], ["--learning-rate", "inf"],
     ["--learning-rate", "0.0000009"], ["--learning-rate", "0.010001"],
@@ -223,6 +223,43 @@ def test_cuda_admission_requires_availability_and_physical_capacity(monkeypatch)
         owner.admit_job_device(config)
     smaller = owner.DistillationJobConfig(device_bytes=512 * MIB)
     assert owner.admit_job_device(smaller) == torch.device("cuda:0")
+
+
+def test_cuda_budget_can_use_capacity_above_eight_gib_without_reserving_it(monkeypatch):
+    """A larger GPU admits an explicit ceiling; physical capacity still bounds it."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(torch.cuda, "get_device_properties",
+                        lambda _device: SimpleNamespace(total_memory=16 * 1024**3))
+
+    def no_allocation(*_args, **_kwargs):
+        raise AssertionError("admission must not allocate or reserve the requested budget")
+
+    monkeypatch.setattr(torch, "empty", no_allocation)
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", no_allocation)
+    for mib in (8193, 12288, 16384):
+        config = owner.DistillationJobConfig(device_bytes=mib * MIB)
+        assert owner.admit_job_device(config) == torch.device("cuda:0")
+    with pytest.raises(DistillationContractError, match="physical CUDA capacity"):
+        owner.admit_job_device(owner.DistillationJobConfig(device_bytes=16385 * MIB))
+
+
+def test_larger_public_device_budget_survives_exact_restart(tmp_path, local_source):
+    """The public parser and real checkpoint retain a budget above the former 8-GiB cap."""
+    first = runner.run(new_arguments(tmp_path) + [
+        "--device-memory-mib", "12288", "--cpu-threads", "1",
+        "--batch-size", "1", "--burn-in", "0", "--bptt", "16",
+    ])
+    second = runner.run([
+        "--resume", first["checkpoint"], "--offline", "--updates", "1",
+        "--job-directory", str(tmp_path), "--device-memory-mib", "12288",
+    ])
+    restored = load_job_checkpoint(second["checkpoint"])
+    assert restored.config.device_bytes == 12288 * MIB
+    assert restored.replay.cursor == local_source.cursor
+    assert second["settings"]["deviceMemoryMiB"] == 12288
+    assert restored.trainer.completed_updates == 2
+    assert restored.peak_device_bytes < 512 * MIB
 
 
 def test_replay_ceiling_is_explicit_without_an_eager_capacity_allocation():

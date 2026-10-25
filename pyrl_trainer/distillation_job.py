@@ -119,7 +119,9 @@ class DistillationJobConfig:
     def __post_init__(self):
         integer(self.seed, 0, (1 << 64) - 1)
         integer(self.cpu_threads, 1, max(256, available_trainer_cpus()))
-        integer(self.device_bytes, 128 * 1024**2, 8 * 1024**3)
+        # Keep the historical 128-MiB library/checkpoint minimum; the public CLI
+        # requires 512 MiB. Actual CUDA capacity is checked before any allocation.
+        integer(self.device_bytes, 128 * 1024**2, (1 << 63) - 1)
         if not isinstance(self.device, str) or not re.fullmatch(r"cpu|cuda:[0-7]", self.device):
             raise DistillationContractError("unsupported explicit trainer device")
 

@@ -35,7 +35,7 @@ def _validate_job_controls(parser, args):
     for name, low, high in (
         ("seed", 0, (1 << 32) - 1),
         ("cpu_threads", 1, available_trainer_cpus()),
-        ("device_memory_mib", 512, 8192),
+        ("device_memory_mib", 512, ((1 << 63) - 1) // MIB),
         ("replay_ram_mib", 64, 2048),
         ("spool_gib", 1, 64),
         ("batch_size", 1, 256),
@@ -76,7 +76,7 @@ def _arguments(argv):
     )
     parser.add_argument(
         "--device-memory-mib", type=int,
-        help="512..8192 MiB device ceiling within physical CUDA capacity (default: 8192)",
+        help="512 MiB through physical CUDA capacity; ceiling, not reservation (default: 8192)",
     )
     parser.add_argument(
         "--replay-ram-mib", type=int, help="64..2048 MiB owned replay ceiling (default: 256)",

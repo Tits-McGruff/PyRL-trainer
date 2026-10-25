@@ -225,7 +225,7 @@ VRAM, and actual Torch allocation peaks are checked during updates.
 |---|---:|---|
 | `--seed` | 1 | UInt32 |
 | `--cpu-threads` | min(2, available process CPUs) | 1..available, respecting affinity |
-| `--device-memory-mib` | 8192 | 512..8192, within physical CUDA capacity |
+| `--device-memory-mib` | 8192 | 512 through physical CUDA capacity; a ceiling, not a reservation |
 | `--replay-ram-mib` | 256 | 64..2048 |
 | `--spool-gib` | Observe producer (4 GiB by default) | Require matching 1..64 GiB producer disk quota |
 | `--learning-rate` | 0.0003 | finite 0.000001..0.01 |
