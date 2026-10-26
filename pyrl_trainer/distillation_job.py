@@ -111,6 +111,16 @@ def explicit_trainer_device(value):
     """Validate an explicit CPU/CUDA name without inspecting or initializing a device."""
     if not isinstance(value, str) or not re.fullmatch(r"cpu|cuda:(0|[1-9][0-9]*)", value):
         raise DistillationContractError("expected cpu or explicit cuda:N trainer device")
+    try:
+        # torch.device is a parser, not CUDA initialization. Some builds narrow
+        # indexes to signed bytes (for example cuda:256 becomes cuda:0).
+        represented = str(torch.device(value))
+    except (RuntimeError, ValueError, OverflowError) as error:
+        raise DistillationContractError(
+            "trainer device index cannot be represented by Torch"
+        ) from error
+    if represented != value:
+        raise DistillationContractError("trainer device index cannot be represented by Torch")
     return value
 
 

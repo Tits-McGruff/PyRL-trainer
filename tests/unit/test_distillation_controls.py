@@ -133,6 +133,8 @@ def test_explicit_maximum_batch_and_replay_controls_train_and_exactly_restart(
 @pytest.mark.parametrize("options", [
     ["--device", "cuda"], ["--device", "cuda:-1"],
     ["--device", "cuda:01"], ["--device", "mps"],
+    ["--device", "cuda:128"], ["--device", "cuda:255"], ["--device", "cuda:256"],
+    ["--device", "cuda:99999999999999999999"],
     ["--seed", "-1"], ["--seed", "4294967296"],
     ["--cpu-threads", "0"], ["--cpu-threads", "3"],
     ["--device-memory-mib", "511"], ["--device-memory-mib", str(1 << 63)],
@@ -248,6 +250,19 @@ def test_explicit_cuda_index_uses_actual_availability_instead_of_an_eight_device
     with pytest.raises(DistillationContractError, match="unavailable"):
         owner.admit_job_device(config)
     assert inspected == ["cuda:8"]
+
+
+
+@pytest.mark.parametrize("device", ["cuda:128", "cuda:255", "cuda:256",
+                                    "cuda:99999999999999999999"])
+def test_device_index_cannot_wrap_to_a_different_or_implicit_gpu(device, monkeypatch):
+    """Library/checkpoint configuration cannot silently change a requested physical GPU."""
+    def no_cuda_query():
+        raise AssertionError("invalid device names must fail without CUDA initialization")
+
+    monkeypatch.setattr(torch.cuda, "is_available", no_cuda_query)
+    with pytest.raises(DistillationContractError, match="cannot be represented"):
+        owner.DistillationJobConfig(device=device)
 
 
 def test_cuda_budget_can_use_capacity_above_eight_gib_without_reserving_it(monkeypatch):
