@@ -1,0 +1,556 @@
+{
+  "schemaVersion": 1,
+  "kind": "external-evidence-v1",
+  "repository": "https://github.com/Tits-McGruff/PyRL-trainer.git",
+  "sourceCommit": "53510344f4cc0f9ffdeca373dfe5eb5993ccf247",
+  "bytePolicy": "Exact pre-migration working-tree bytes; no normalization of payloads.",
+  "files": {
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/.study.lock": [
+      "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      1
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/after.resources.jsonl": [
+      "bd2b3c17228119fd6522fa256b232437813b05fb0f4cb35c3628119a6b0d027f",
+      699
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/before.resources.jsonl": [
+      "cb344c971b39d144ae10e980001769b41b0e424d5de2d793efdb25c8209e3c6f",
+      699
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initial.slither-brain": [
+      "009ab4e0efff69f6e71a2aa470934974d0cd7c705e786a519d6090b2123acf78",
+      69362
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initialize.json": [
+      "40dace5472851ad16b0ee8b1117c26e390e707a810567c65edc6f9145c2a8002",
+      2642
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initialized/manifest.json": [
+      "cb43c6301dce4ab9f6544a17cd55be15cd779b8753385a8486c200a45f9bc522",
+      17984
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initialized/outputs.f32": [
+      "f934fa8579364412e8ebfead4ca77984801caebd6ed1aa74b1294772936f5c4b",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initialized/receipt.json": [
+      "73a553b0d45f303cc50fd76bd877767113e4ef437ece6009cebb3e363011b827",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initialized/states.f32": [
+      "f278d46bf361f8ad715dc3d4b0a7489c1cfbc8b58c4e1564db69f8302580b653",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/initialized/weights.f32": [
+      "7b84b0f0188582a9652b2ab017646dd65d3906658827c114b6b94b26ad523821",
+      51016
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-after.json": [
+      "00cc905b6f919ba03d23868bbf189317f6f84b4cb9ffc8efcfdf463e8abd010e",
+      28865
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-before.json": [
+      "3e2c23b712ba7287579384b796ebccdff38db9642b9f5929c2fdecbecea2f996",
+      28828
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-parity/manifest.json": [
+      "cb43c6301dce4ab9f6544a17cd55be15cd779b8753385a8486c200a45f9bc522",
+      17984
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-parity/outputs.f32": [
+      "7424ce4f8b19b1bfee8e33c20fe9f3c5a5ed153578f22f31864b73ef7452df23",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-parity/receipt.json": [
+      "22ca61759fcdcdccb4332fbac72c06c3f6baaa03ec96087f849111775877f774",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-parity/states.f32": [
+      "bbc2d13e8092ce823d7a85dd21e845b16888bc4d944c4e2117b2786a6a90f92e",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/native-parity/weights.f32": [
+      "a3461962c6d92b635f88cd89b1ec2d97e6336ea0d268838493a778f61308fa5a",
+      51016
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/parity.json": [
+      "52ade6d8eaaa710c9da85cb7a75e70ae77079751baac63320240a76cb7a0c8e2",
+      2793
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/trained-weights.f32": [
+      "a3461962c6d92b635f88cd89b1ec2d97e6336ea0d268838493a778f61308fa5a",
+      51016
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/core-only/trained.slither-brain": [
+      "7b142f08d3f325a823407f4e61f73975a0c223597665edbe0aa5f73b60b94f2f",
+      69368
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/corpus.json": [
+      "1f5c1ef5886f5adbdd216647c06fa3891d6018a7234d6d6d5f02c0364c21e595",
+      77172
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initial.slither-brain": [
+      "97bf3e10e03fd951d434688dd4bab314b578517216e1768a0cbae6476fde00a6",
+      85155
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initialize.json": [
+      "1c3d06241db644bf3c64d203e89eb53138819bb98940649ee3cf50fe6095c2bc",
+      1352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initialized/manifest.json": [
+      "c7afd11349f8c59b18d5d2b97b4c210ed6b08ab2ea162ee130b8426a17784800",
+      15350
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initialized/outputs.f32": [
+      "76593ec822864766a41b04b6d5cd2644d53fbd3178ef1338cfb1807bc1a05a86",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initialized/receipt.json": [
+      "3ad3d7ce1e7dd018f9d68321b7225fc830e7aabf6ab9589bad029f4368153f73",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initialized/states.f32": [
+      "d26688d718f3b172e36d091813161c0eab30b0c0fbad95e7d12836a8d0e5fcb1",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/initialized/weights.f32": [
+      "8c375812202a60efe034cc9810fc40d60bea370cee4a5481b0dfde1dd976633b",
+      69448
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-after.json": [
+      "455e7853510b8c175c6a067cc73b03a48690432800746936efb01424218e4599",
+      27732
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-before.json": [
+      "7df0754555941409af75f717dca4e79a84ba7a017f629d1bdde5df5a2e068d80",
+      27832
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-parity/manifest.json": [
+      "c7afd11349f8c59b18d5d2b97b4c210ed6b08ab2ea162ee130b8426a17784800",
+      15350
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-parity/outputs.f32": [
+      "4012b9a02204577146d890b19cdbb8e4e51311819a0452f1104900a5bb02cd1c",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-parity/receipt.json": [
+      "00798b03e3b5ae84e9dc56be4f5caf713588213f25693fb74a81823385dd750b",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-parity/states.f32": [
+      "1ed874afaceabc1b245033e1b9ceab4c1e5d37a13777fa119c1a49632349af60",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/native-parity/weights.f32": [
+      "c6b583532cc04b3fe984ff162a12aa6310880979438c38595f0060f1a76eb46a",
+      69448
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/parity.json": [
+      "de74437ebe79af75152cb46579a5422a35bb5c40cef27d760c6142ed358b4ad3",
+      1493
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/trained-weights.f32": [
+      "c6b583532cc04b3fe984ff162a12aa6310880979438c38595f0060f1a76eb46a",
+      69448
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/full/trained.slither-brain": [
+      "ac34bf03a8f660639a71979dcd40796d5015c313e50c14ca129f2c34a9e2683a",
+      85161
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/initial-observation.f32": [
+      "62401c23ad6ba9863f8b8aea3a097ea8ab9390c64bd7ac1ac489f2b6a2bc5583",
+      576
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initial.slither-brain": [
+      "3845eb762f1e7f46ada1f9eb453162fdcfcf48d5614bd628ae5a983c74e66924",
+      87189
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initialize.json": [
+      "3338b6190a9a08c19fc7186f2e7596f90bdce133a3633c84a069da737972ca9c",
+      3566
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initialized/manifest.json": [
+      "a5dde278b5c9dd23915b08645a38a8c3cfede2921d5a5cedcb63b548ca77ff51",
+      19426
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initialized/outputs.f32": [
+      "0488bc19b05ffc0a84f23b3a0f555f6896d804aa287a14d9b25a3e4662d498b9",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initialized/receipt.json": [
+      "3d009fd4878da992518833c2ff08fb7aa60309cbb0bf425618b2f71b578a0d22",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initialized/states.f32": [
+      "2cb2a3e0f89038866df24bd3d44a14811f25b2f82908529dcfe01af279a51ac7",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/initialized/weights.f32": [
+      "e9c322200f4c7fe8629eab975b52ab6e8b256461cd6f13fb0376ddb8b5c38b11",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-after.json": [
+      "baae2dcff40ee50fd1040ef8a632488792849d06d03d4803d68f9da634044353",
+      29347
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-before.json": [
+      "0a3ec5f90c117c1de7dd8b0cd058686dadb03d2834cd958e9de1d114214449a3",
+      29461
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-parity/manifest.json": [
+      "a5dde278b5c9dd23915b08645a38a8c3cfede2921d5a5cedcb63b548ca77ff51",
+      19426
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-parity/outputs.f32": [
+      "602ec4b4a07477cab7b42521f72c263edb42eed5b829ab08d35751dd00c1ecb3",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-parity/receipt.json": [
+      "cfd7208de5556fdbb69ba4a6ea3adb89b31800806478e6fd61fd527c69588ea4",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-parity/states.f32": [
+      "33598d1285e4a1333301f53003d86c1b73421fd102dde2a6ac3375081781e9fd",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/native-parity/weights.f32": [
+      "f9e54a11fcc7400446db4bb0819ec8582587054c426b8e772f7e051498f0d5cb",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/parity.json": [
+      "fb60e8a9ce897a87af7d6707f18b7b65d180aaf609242034f7e40d175b77dd41",
+      3719
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/trained-weights.f32": [
+      "f9e54a11fcc7400446db4bb0819ec8582587054c426b8e772f7e051498f0d5cb",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-bearing/trained.slither-brain": [
+      "debd323c664f6872428ca9bc90beb0e574ea94a085006b32f780176adc7f5a9c",
+      87195
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initial.slither-brain": [
+      "847640b442bc80882849c4b9252ff65009804a22986575091d0dcae5faafd24c",
+      87187
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initialize.json": [
+      "23bb921285b1890a9bf09ee6de6b2f7efa90344c1b1d4266f2113387e728bec3",
+      3565
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initialized/manifest.json": [
+      "67205a99a45c2aab15bcb3784c73fa5f0313cdef47ddfdf347f707b254c345b0",
+      19424
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initialized/outputs.f32": [
+      "0488bc19b05ffc0a84f23b3a0f555f6896d804aa287a14d9b25a3e4662d498b9",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initialized/receipt.json": [
+      "2a8765a7c8c5202e1c639e84a2392db1e27ab2df527c62292ed48ddde1bb9e9c",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initialized/states.f32": [
+      "2cb2a3e0f89038866df24bd3d44a14811f25b2f82908529dcfe01af279a51ac7",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/initialized/weights.f32": [
+      "e9c322200f4c7fe8629eab975b52ab6e8b256461cd6f13fb0376ddb8b5c38b11",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-after.json": [
+      "c99d2648cb668635651ec527ac8a0366887c9d4e03c1060875d397219805868c",
+      29345
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-before.json": [
+      "23229087a99a33022ef60228f4434260b38abaf1542054a30fad42e2bb9c9cda",
+      29471
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-parity/manifest.json": [
+      "67205a99a45c2aab15bcb3784c73fa5f0313cdef47ddfdf347f707b254c345b0",
+      19424
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-parity/outputs.f32": [
+      "64e517f68cbdde8f66842dc5651a983a25db2bb738c8029ec73954edd023f1e2",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-parity/receipt.json": [
+      "3cce427dc4fff8c8144f2a58048c5afcde1c31de100b630e1e1c5c2cd0047354",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-parity/states.f32": [
+      "9968a5b12bc0256c8ea53a2dfc005120ab2d437a3d36bb9956882488f5873cee",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/native-parity/weights.f32": [
+      "4ff0dfc34e11695ca8608803d1fb9bd782a4223b779a86c80f9edd34877a4a7a",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/parity.json": [
+      "cd70021e156cb669d6b1c93b1ce4c858d8119e62804be012853654653135880a",
+      3718
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/trained-weights.f32": [
+      "4ff0dfc34e11695ca8608803d1fb9bd782a4223b779a86c80f9edd34877a4a7a",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-density/trained.slither-brain": [
+      "47dd7d3492fdb11c8d8e86cc69855f70470e22498347c70131c91201e960526d",
+      87193
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initial.slither-brain": [
+      "f6b7674035ba213de38f29eaf6c6996717a148c214a5920bec948a01163c68bb",
+      84959
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initialize.json": [
+      "b64bcf0dbf5faba6d849f8322df69953a388893050e59e86522740503b9e6ffb",
+      3449
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initialized/manifest.json": [
+      "952ada49868eb723860bd7dec009ac2cea6933873aeb958c3f865a5e09962a5d",
+      19244
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initialized/outputs.f32": [
+      "428c7368af5393f0e45cb9a5b1066ab737f6cef66cc2d43952c3bc0e656b0cb5",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initialized/receipt.json": [
+      "583f9498feffd38ac391a25413534343509f6ac0b06caad3c687e0b5421660c2",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initialized/states.f32": [
+      "b6c7d9f8a507e0c285186a936db91a49ee351c89bc4364279af715d36ba8ac28",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/initialized/weights.f32": [
+      "7747d7426562cd304bcd5f5c52190af4ce4acdfafe0de3b49b067a6f48be5c98",
+      65352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-after.json": [
+      "632772c5c40dfb3e74737d7f21e0ac3e0d031d9452d32d14c3df5ecd30c931e2",
+      29313
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-before.json": [
+      "e17e57915b932d5d45811f48e7c7239c571563e7af64461cf5ff4d6a523483c9",
+      29277
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-parity/manifest.json": [
+      "952ada49868eb723860bd7dec009ac2cea6933873aeb958c3f865a5e09962a5d",
+      19244
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-parity/outputs.f32": [
+      "2067493821669794068082aa37a10589c3bea1ec6b7a282cbdc8a843b820ccf2",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-parity/receipt.json": [
+      "6a5dfe5c7836a44ab8cc245038acd2d44a103ce36162b6388df84e2449aa36f7",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-parity/states.f32": [
+      "1b664e8037a8abc08b429d0969bcc77e825eb063c6087624c37f4a9f645498e5",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/native-parity/weights.f32": [
+      "6592591ef3733b50a6646517de8c24cebff5fd0f63b3ca19261cb3fd1bcb5f53",
+      65352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/parity.json": [
+      "7e7acb6387962c69d2573c3b438c56f356e755493f2a74f625b1358d72cb922d",
+      3602
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/trained-weights.f32": [
+      "6592591ef3733b50a6646517de8c24cebff5fd0f63b3ca19261cb3fd1bcb5f53",
+      65352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-heading/trained.slither-brain": [
+      "7187b8ae93b66e7ad9d506b7ae6f95f8e733a1f22c5d4b8fe62bdbcb4f209514",
+      84965
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initial.slither-brain": [
+      "20e17bea89eb30a1d7a45ca298510acc2e8824ec1b43392bb6adbd244e184efd",
+      87187
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initialize.json": [
+      "052f0e4e9620e33889c5389c73d54e6bb93baac822b0272b2edccfce8eddf349",
+      3565
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initialized/manifest.json": [
+      "cdfc293d6e234f9689c6ab4f775efb6d2c66ec88f24d22253adb46756a70fd49",
+      19424
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initialized/outputs.f32": [
+      "0488bc19b05ffc0a84f23b3a0f555f6896d804aa287a14d9b25a3e4662d498b9",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initialized/receipt.json": [
+      "e0a70c6b716a2b71c8c5800ba002f5e442792d1549b0b380be910d59cf95a558",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initialized/states.f32": [
+      "2cb2a3e0f89038866df24bd3d44a14811f25b2f82908529dcfe01af279a51ac7",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/initialized/weights.f32": [
+      "e9c322200f4c7fe8629eab975b52ab6e8b256461cd6f13fb0376ddb8b5c38b11",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-after.json": [
+      "bc50ca96e74e6d5735f9bced9f9e0773ad360f655f81799f5c7da6d71987f4f6",
+      29363
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-before.json": [
+      "f0bc9e2a7521e855c11855d8ab55554388752c762fb024c3ec9be90e38006932",
+      29473
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-parity/manifest.json": [
+      "cdfc293d6e234f9689c6ab4f775efb6d2c66ec88f24d22253adb46756a70fd49",
+      19424
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-parity/outputs.f32": [
+      "ce83a8c4e0f0d32b5007d9fdf53d48b3464a1234d1a871f1a7b57d2bc67abcea",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-parity/receipt.json": [
+      "f4bbcaac4e3429d5d9ce269e9500a5582b451e800523cd2fd68851aa78920a6a",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-parity/states.f32": [
+      "51401114bd6818f506129440b845eb1f0a94b7017bda2670ac0e719630c44447",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/native-parity/weights.f32": [
+      "59ee750222d2c302ddf776e116458b9bd678bff6f53c7713ea08fe9246943cbf",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/parity.json": [
+      "6fcf72223cf688ba994982712c00fb8d41cf4d5b5c248955b2696a13bb7cdf86",
+      3718
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/trained-weights.f32": [
+      "59ee750222d2c302ddf776e116458b9bd678bff6f53c7713ea08fe9246943cbf",
+      67400
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-urgency/trained.slither-brain": [
+      "45bb45a4623412df87a2bdab25b7bc5662b7a14a3a9580192fb27c64ffbfa809",
+      87193
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initial.slither-brain": [
+      "39b1d431b569c63d612b16bca618527cfd74985e196879fdfadf62930214f9d8",
+      84960
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initialize.json": [
+      "64452758d3be31094b6afec82c05801b65c1f1bfe799d20783b0888c305807fa",
+      3449
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initialized/manifest.json": [
+      "217bcf5c06b642dbf843e4a7d8243b50527dcf4d197dfe8630f6ec7b7d041625",
+      19244
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initialized/outputs.f32": [
+      "428c7368af5393f0e45cb9a5b1066ab737f6cef66cc2d43952c3bc0e656b0cb5",
+      8
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initialized/receipt.json": [
+      "3718397dd517e210a04fcf0f76f9c00b6a1da97cd9eba4e053367801357c63c6",
+      1030
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initialized/states.f32": [
+      "b6c7d9f8a507e0c285186a936db91a49ee351c89bc4364279af715d36ba8ac28",
+      64
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/initialized/weights.f32": [
+      "7747d7426562cd304bcd5f5c52190af4ce4acdfafe0de3b49b067a6f48be5c98",
+      65352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-after.json": [
+      "95010d995059ac9fc5a9d562dcabc502124c780127cf0d08ae03a219bc7a9cab",
+      29335
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-before.json": [
+      "514c20a61e74b1d133b6b940c611cfb2b0669ced0ceb502c59ca612e2320cf30",
+      29274
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-parity/manifest.json": [
+      "217bcf5c06b642dbf843e4a7d8243b50527dcf4d197dfe8630f6ec7b7d041625",
+      19244
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-parity/outputs.f32": [
+      "57d7b40cb69787f9ebbba369dd893a1ae7b413f744e6c6f50815da98114b36d2",
+      2048
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-parity/receipt.json": [
+      "3447424469e772495e48dd05fb84c7b1ee435cdc1000e5de3f1ec7397b129c36",
+      1035
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-parity/states.f32": [
+      "a374f1f6ab93dd21eb5fb93677ceecf06d4749a9e1dbf2effcffe844b562459a",
+      16384
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/native-parity/weights.f32": [
+      "47c01cd916bb298a4ca6c558eb2f70dc721b50110882ff1d27306bebdd3dfd69",
+      65352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/parity-observations.f32": [
+      "3915577eacbb0f90708d1008a3e0cd33f2a432a166677c65832c95367c10b7eb",
+      147456
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/parity.json": [
+      "0798df65e300d13447b5904597fdce822c793be59d38d66d828ca60aa2c7f38d",
+      3604
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/trained-weights.f32": [
+      "47c01cd916bb298a4ca6c558eb2f70dc721b50110882ff1d27306bebdd3dfd69",
+      65352
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/no-velocity/trained.slither-brain": [
+      "a779e7f49ec48eceb4ccd6025ecf510f4ab64ab2a9f6570fc329c7e661311593",
+      84966
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/progress.json": [
+      "c1ac67f6b5c1169f361d4408a3c2d07220b24c88956a011926e5afd5b5745a33",
+      686439
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/provenance.json": [
+      "2099ca4890ba59ff1cb9029263cc452484452c148c40ec167f4fa9b2bab83e60",
+      89754
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/resources.resources.jsonl": [
+      "8e9f529ce659565434ccdcc5727c7f703866104737f965817a0197bb9bd9830c",
+      76721
+    ],
+    "distillation-jobs/profile-motion-b8-resume-20261025/seed-1-fold-2/summary.json": [
+      "c1ac67f6b5c1169f361d4408a3c2d07220b24c88956a011926e5afd5b5745a33",
+      686439
+    ]
+  },
+  "artifact": {
+    "url": "https://github.com/Tits-McGruff/PyRL-trainer/releases/download/qualification-resume-20261025/motion-b8-seed1-fold2-cuda8000.tar.gz",
+    "sha256": "8c1ae74ae80b16a982f647078f9a00a967746adce2e4db9c097728410a6d0d19",
+    "bytes": 1941977,
+    "objects": 105,
+    "decodedBytes": 3683155
+  }
+}

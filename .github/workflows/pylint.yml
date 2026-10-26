@@ -2,13 +2,17 @@ name: Quality
 
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.14"]
+        python-version: ["3.10", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -c constraints.txt pylint pytest pytest-asyncio numpy websockets tomli-w
+          python -m pip install -r requirements-contracts.txt
           if [ "${{ matrix.python-version }}" = "3.10" ]; then python -m pip install -c constraints.txt tomli; fi
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
 
@@ -34,17 +39,54 @@ jobs:
         run: |
           pylint --disable=duplicate-code,too-many-instance-attributes,too-many-locals,try-except-raise $(git ls-files '*.py')
 
+      - name: Reject compressed source and large generated files
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          for name in subprocess.check_output(["git", "ls-files", "-z"], text=True).split("\0"):
+              if not name:
+                  continue
+              path = Path(name)
+              if name.endswith((".py.gz", ".rs.gz", ".ts.gz")) or path.stat().st_size > 2 * 1024**2:
+                  raise SystemExit("Generated payload/source archive must stay outside Git: " + name)
+              if name.startswith("docs/performance/") and path.suffix not in (".md", ".json"):
+                  raise SystemExit("Keep only compact performance metadata in Git: " + name)
+          PY
+
       - name: Full test suite
         run: python -m pytest -q
 
-      - name: Unit tests
-        run: python -m pytest -q -m unit
 
-      - name: Integration tests
-        run: python -m pytest -q -m integration
-
-      - name: System tests
-        run: python -m pytest -q -m system
-
-      - name: End-to-end tests
-        run: python -m pytest -q -m e2e
+  interoperability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Tits-McGruff/slither_neuroevo
+          ref: ed75ef8ec0dfcd98f67c37e188ed2be9e0896fe7
+          path: .slither
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .slither/native
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install CPU interoperability dependencies
+        run: |
+          python -m pip install -c constraints.txt numpy pytest pytest-asyncio
+          python -m pip install -r requirements-contracts.txt
+          python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Build small current format tools
+        run: cargo build --manifest-path .slither/native/Cargo.toml --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate
+      - name: Current encoder, portable brain admission and forged-layout rejection
+        run: |
+          .slither/native/target/debug/teacher_chunk_reference "$RUNNER_TEMP/teacher-reference"
+          PYRL_TEACHER_CHUNK_REFERENCE="$RUNNER_TEMP/teacher-reference" PYRL_BRAIN_ARTIFACT_RUNNER="$GITHUB_WORKSPACE/.slither/native/target/debug/brain_artifact_validate" python -m pytest -q tests/unit/test_distillation_transport.py tests/unit/test_brain_artifact.py -k 'not real_250th'
+      - name: Small optimizer/export/native/reimport smoke
+        run: |
+          python scripts/generate_canonical_graph_fixtures.py --runner .slither/native/target/debug/canonical-training-graph --output-directory "$RUNNER_TEMP/parity-fixtures"
+          python -m pyrl_trainer.canonical_parity --runner .slither/native/target/debug/canonical-training-graph --fixtures "$RUNNER_TEMP/parity-fixtures" --device cpu --output-json "$RUNNER_TEMP/parity.json"

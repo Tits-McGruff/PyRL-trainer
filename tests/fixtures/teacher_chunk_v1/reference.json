@@ -1,0 +1,38 @@
+{
+  "contract": {
+    "captureEpoch": "11111111111111111111111111111111",
+    "configSha256": "1717171717171717171717171717171717171717171717171717171717171717",
+    "controlIntervalSeconds": 0.06,
+    "inputSize": 72,
+    "runId": "codec-α",
+    "sensorSha256": "9da82785f667bb00e8c1d38be38f830adc1a0b72ba6a0eee7252553f2c8ef673",
+    "teacherMode": 1,
+    "teacherRevision": 2,
+    "teacherSha256": "6ae9d74ffc84d1c91add06b5bedbc11430f5ce487dab049f3fa01dfb7fd355e3"
+  },
+  "descriptor": {
+    "baselineSlot": 119,
+    "byteCount": 1115,
+    "captureEpoch": "11111111111111111111111111111111",
+    "configSha256": "1717171717171717171717171717171717171717171717171717171717171717",
+    "count": 3,
+    "endReason": "lifeEnded",
+    "firstSample": "0000000000000001",
+    "firstStep": "000000000000002a",
+    "generation": "ffffffffffffffff",
+    "inputSize": 72,
+    "lastSample": "0000000000000003",
+    "lastStep": "0000000000000032",
+    "physicalSnakeId": "ffffffffffffffff",
+    "sensorSha256": "9da82785f667bb00e8c1d38be38f830adc1a0b72ba6a0eee7252553f2c8ef673",
+    "sequence": "0000000000000007",
+    "sha256": "fa106a3fdcc5ff72b0cefb59708e3887baa318613169e4dc57208c3451bf20d9",
+    "startReason": "captureStart",
+    "teacherSha256": "6ae9d74ffc84d1c91add06b5bedbc11430f5ce487dab049f3fa01dfb7fd355e3"
+  },
+  "runSeed": 42,
+  "schemaVersion": 1,
+  "scope": "synthetic Rust codec reference; no committed-world claim",
+  "sensorContractJson": "{\"schemaVersion\":1,\"layoutVersion\":4,\"profile\":\"basic\",\"bins\":8,\"inputSize\":72,\"scalarCount\":24,\"normalizationRevision\":0,\"geometryRevision\":0,\"releaseStatus\":\"candidate\",\"scalarEncoding\":\"bipolar(x)=2*clamp(x,0,1)-1; arithmetic in f64, final finite Float32; signed zero preserved in numeric samples\",\"angularGeometry\":\"channel-major; centers=-pi+2*pi*i/B relative to heading; centered half-open sectors; +pi wraps to -pi\",\"validityEncoding\":\"all finite Float32; booleans/presence -1/+1; incomplete body/ray clearance -1 with scalar saturation +1; nearest motion fields zero when presence -1; urgency/density absent zero\",\"scalarSemantics\":[{\"label\":\"heading_sin\",\"meaning\":\"sin(absolute heading)\"},{\"label\":\"heading_cos\",\"meaning\":\"cos(absolute heading)\"},{\"label\":\"tactical_size\",\"meaning\":\"bipolar(d/(d+40)); d=max(bodyLength-configuredStartLength,0); fraction also scales sensor ranges\"},{\"label\":\"radius_norm\",\"meaning\":\"bipolar(radius/configuredMaximumRadius)\"},{\"label\":\"speed_norm\",\"meaning\":\"bipolar(speed/configuredBoostSpeed)\"},{\"label\":\"spendable_points_norm\",\"meaning\":\"bipolar(spendablePoints/(spendablePoints+140))\"},{\"label\":\"boost_seconds_norm\",\"meaning\":\"bipolar(T/(T+2)); T=max(spendablePoints-minBoostPoints,0)/actualEffectiveCost; zero cost=+1\"},{\"label\":\"boost_cost_norm\",\"meaning\":\"bipolar(actualEffectiveCost/(actualEffectiveCost+7)); physical movement size curve\"},{\"label\":\"boost_eligible\",\"meaning\":\"actual movement eligibility; zero positive spend impossible => -1; false=-1 true=+1\"},{\"label\":\"actual_boost\",\"meaning\":\"actual boost false=-1 true=+1\"},{\"label\":\"held_boost_request\",\"meaning\":\"held boost request false=-1 true=+1\"},{\"label\":\"held_turn\",\"meaning\":\"clamp(held turn,-1,+1)\"},{\"label\":\"previous_applied_turn\",\"meaning\":\"clamp(previous applied turn,-1,+1)\"},{\"label\":\"angular_velocity_norm\",\"meaning\":\"clamp(completed fixed-step heading change/fixedDt/configuredTurnRate,-1,+1)\"},{\"label\":\"speed_change_norm\",\"meaning\":\"clamp(completed fixed-step speed change/configuredBoostSpeed,-1,+1)\"},{\"label\":\"delivered_wallet_delta_norm\",\"meaning\":\"delta/(abs(delta)+10); delta=wallet minus previous delivered wallet; probes do not consume\"},{\"label\":\"current_life_points_norm\",\"meaning\":\"bipolar(lifePoints/(lifePoints+200)); evolved ledger or ordinary physical points\"},{\"label\":\"assessment_points_norm\",\"meaning\":\"bipolar(selectedAssessment/(selectedAssessment+1000)); no population-relative normalization\"},{\"label\":\"life_age_norm\",\"meaning\":\"bipolar(age/(age+60))\"},{\"label\":\"generation_remaining_fraction\",\"meaning\":\"clamp(1-generationElapsed/configuredDuration,0,1)\"},{\"label\":\"life_budget_used_norm\",\"meaning\":\"evolved off=-1; finite M=Float32(-livesStarted/M); unlimited=+1; baseline/external/retained=0\"},{\"label\":\"first_sample_of_life\",\"meaning\":\"+1 until accepted external or consumed internal observation in this physical life, then -1; takeover preserves flag\"},{\"label\":\"pellet_query_saturated\",\"meaning\":\"pellet query saturated false=-1 true=+1\"},{\"label\":\"body_or_ray_query_saturated\",\"meaning\":\"body or capsule-ray query incomplete false=-1 true=+1\"}],\"channels\":[{\"label\":\"near_food\",\"offset\":24,\"meaning\":\"ring[0,near]; sum((1-distance/far)*clamp(value/foodValue,0,6)); bipolar(strength/(strength+foodK))\",\"absentValue\":-1.0},{\"label\":\"far_food\",\"offset\":32,\"meaning\":\"ring(near,far]; same bounded distance/value weight and saturation as near ring\",\"absentValue\":-1.0},{\"label\":\"body_sector\",\"offset\":40,\"meaning\":\"bipolar(min other-body segment clearance/near); collision radii scaled by configured hitScale; capped/incomplete raw clearance zero\",\"absentValue\":1.0},{\"label\":\"body_ray\",\"offset\":48,\"meaning\":\"bipolar(first capsule intersection distance/near); ray through sector center; sum of collision radii with hitScale; tangency closed; incomplete=-1\",\"absentValue\":1.0},{\"label\":\"wall_ray\",\"offset\":56,\"meaning\":\"bipolar(circular boundary ray clearance/near); arena radius minus observer collision radius\",\"absentValue\":1.0},{\"label\":\"head_clearance\",\"offset\":64,\"meaning\":\"bipolar(min other-head disc clearance/near) in current relative bearing sector\",\"absentValue\":1.0}],\"order\":[\"heading_sin\",\"heading_cos\",\"tactical_size\",\"radius_norm\",\"speed_norm\",\"spendable_points_norm\",\"boost_seconds_norm\",\"boost_cost_norm\",\"boost_eligible\",\"actual_boost\",\"held_boost_request\",\"held_turn\",\"previous_applied_turn\",\"angular_velocity_norm\",\"speed_change_norm\",\"delivered_wallet_delta_norm\",\"current_life_points_norm\",\"assessment_points_norm\",\"life_age_norm\",\"generation_remaining_fraction\",\"life_budget_used_norm\",\"first_sample_of_life\",\"pellet_query_saturated\",\"body_or_ray_query_saturated\",\"near_food_0\",\"near_food_1\",\"near_food_2\",\"near_food_3\",\"near_food_4\",\"near_food_5\",\"near_food_6\",\"near_food_7\",\"far_food_0\",\"far_food_1\",\"far_food_2\",\"far_food_3\",\"far_food_4\",\"far_food_5\",\"far_food_6\",\"far_food_7\",\"body_sector_0\",\"body_sector_1\",\"body_sector_2\",\"body_sector_3\",\"body_sector_4\",\"body_sector_5\",\"body_sector_6\",\"body_sector_7\",\"body_ray_0\",\"body_ray_1\",\"body_ray_2\",\"body_ray_3\",\"body_ray_4\",\"body_ray_5\",\"body_ray_6\",\"body_ray_7\",\"wall_ray_0\",\"wall_ray_1\",\"wall_ray_2\",\"wall_ray_3\",\"wall_ray_4\",\"wall_ray_5\",\"wall_ray_6\",\"wall_ray_7\",\"head_clearance_0\",\"head_clearance_1\",\"head_clearance_2\",\"head_clearance_3\",\"head_clearance_4\",\"head_clearance_5\",\"head_clearance_6\",\"head_clearance_7\"]}",
+  "sourceSha256": "02ce953315ac4261e8ebdd69897c36cc51d41ecfecd8b00aacefa9b9fdbcf1c7"
+}

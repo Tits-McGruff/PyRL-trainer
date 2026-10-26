@@ -203,3 +203,386 @@ CI runs lint, the full suite, and all four marker groups on Python 3.10, 3.11, a
 - `max_actions_per_tick` is retained in config for server alignment but is not directly enforced by actor code.
 - The WebSocket message-size limit has one source, `pyrl_trainer.config.MAX_WS_MESSAGE_BYTES`, controlled by `SLITHER_WS_MAX_MESSAGE`.
 - If connection fails at startup, verify the server is running and reachable at `ws_url`.
+
+
+## Canonical graph distillation tools
+
+Select the canonical job owner with `python -m pyrl_trainer --mode distillation`.
+Its remaining flags go directly to the dedicated distillation runner;
+`python -m pyrl_trainer --mode distillation --help` lists them. The standalone
+`python -m pyrl_trainer.distillation_run` invocation remains available.
+`python -m pyrl_trainer` and `--mode ppo` retain PPO startup from
+`config.toml`/`SLITHER_CONFIG`. Distillation mode does not load that PPO
+configuration or import its actor/learner owners, construct actors, or start a learner queue.
+
+New canonical jobs expose the following immutable settings. All ranges are checked
+before source/checkpoint access; unavailable or physically oversized CUDA requests
+fail explicitly. The initial device admission ceiling remains 8 GiB. The selected
+ceiling need not be entirely free: the admitted graph/window estimate must fit free
+VRAM, and actual Torch allocation peaks are checked during updates.
+
+| CLI control | New-job default | Public range |
+|---|---:|---|
+| `--seed` | 1 | UInt32 |
+| `--cpu-threads` | min(2, available process CPUs) | 1..available, respecting affinity |
+| `--device-memory-mib` | 8192 | 512 through physical CUDA capacity; a ceiling, not a reservation |
+| `--replay-ram-mib` | 256 | 64..2048 |
+| `--spool-gib` | Observe producer (4 GiB by default) | Require matching 1..64 GiB producer disk quota |
+| `--learning-rate` | 0.0003 | finite 0.000001..0.01 |
+| `--batch-size` | 32 | 1..256 sequence windows |
+| `--bptt` | 64 | 16..256 delivered observations |
+| `--burn-in` | 32 | 0..128 delivered observations |
+
+Burn-in plus BPTT must be at most 256; incompatible combinations are rejected.
+Replay RAM bounds raw/decoded chunks and bookkeeping. It is independent of HTTP
+transfers, sampler tensors, model/optimizer memory and disk checkpoint work. Larger
+quotas do not eagerly allocate their capacity. Full loaded resource/soak qualification
+remains open. `--device cpu` explicitly selects CPU training.
+
+Exact resume requires matching trainer source/numerical environment and preserves
+every saved choice. New-job defaults never replace checkpoint settings; library
+defaults and smaller library-only windows remain supported. Omit settings flags to
+use the checkpoint, or repeat the exact same values. Changing thread/device/replay
+budgets, seed, learning rate or
+sequence settings requires a new job. The runner reports effective choices under
+`settings` in its final JSON result. PPO settings and dependencies remain separate.
+
+The HTTP consumer reads the producer's admitted global storage policy before rows.
+Its byte/count/lease ceilings are immutable source provenance in version-2 client
+checkpoints, saved atomically with replay, cursors, sampler, optimizer and RNG.
+Select the producer quota with Slither's `--distillation-spool-gib N`, then use
+`--spool-gib N` to require that value. A policy change stops the fetch before new
+rows or cursor advancement and requires a new job. Offline exact resume retains
+the saved policy without network access. Legacy providers that return 404 for
+`GET /api/distillation/v1/storage` are recorded as unreported, with no guessed
+quota; explicit budget requests require reported admission. Other errors remain
+failures. The ceiling does not reserve that amount of disk or RAM, and loaded
+storage-capacity qualification remains open.
+
+`pyrl_trainer.canonical_graph` provides a separate differentiable representation
+of Rust's deployed graph. It uses one flat Float32 parameter tensor and the
+Rust manifest's exact parameter views, custom recurrent equations, sensor
+identity and output order. It does not use PPO's `PolicyValueNet` or `ActorClient`.
+The graph/loss/parity and bounded sequence-training primitives are implemented.
+The HTTP teacher consumer and strict Rust sample decoder are also implemented;
+Bounded replay and stable whole-stream partitioning are implemented in
+`distillation_replay`; bounded window sampling and an initial standalone durable job owner are now
+implemented. Portable candidates, native upload admission and explicit shadow
+activation/metrics are implemented. Saved-library deployment and integrated
+resource/gameplay qualification remain in progress.
+The sequence API is documented in
+[`docs/canonical-sequence-training.md`](docs/canonical-sequence-training.md).
+
+Run CPU or CUDA qualification with an explicitly built Rust runner:
+
+```powershell
+.venv/Scripts/python.exe -m pyrl_trainer.canonical_parity --runner C:/path/to/canonical-training-graph.exe --fixtures tests/fixtures/canonical_graph --device cuda --output-json new-roundtrip.json
+```
+
+This gate performs real optimizer updates, exports canonical Float32 bytes,
+independently admits them in Rust, evaluates both native math backends, and
+reimports exact bytes into PyTorch. An unavailable requested GPU fails the gate.
+TF32 and autocast are disabled for the initial parity envelope.
+CPU affine rows of width 128 or more use batched 16-term Float32 matrix partials
+and an error-corrected reduction tree to reduce cancellation across CPU BLAS
+implementations and batch shapes. The analytic matrix derivative saves only the
+original input/weight views, avoiding a retained correction graph per delivery.
+Short CPU rows and CUDA retain their direct matrix operation. Parameters,
+activations and gradients stay Float32; gradients and strided views are checked
+against an independent Float64 oracle. Arithmetic remains bound to
+the recorded trainer/native sources and environment; old jobs are not exact
+continuations under a changed trainer source. Unit tests also
+compare every output and next recurrent state over frozen 256-delivery sequences.
+Compact CPU/RTX4080 reports and reproduction notes are under
+[`docs/performance/canonical_graph`](docs/performance/canonical_graph/README.md).
+These synthetic gates measure semantic/optimizer parity, not gameplay quality.
+Use `--include-large` in both `scripts/generate_canonical_graph_fixtures.py`
+and `pyrl_trainer.canonical_parity` to require Motion/B32 GRU/LSTM/RRU graphs
+with five 256-wide feature layers and 96 recurrent units. CI generates these
+with the pinned native runner and requires all 18 CPU optimizer roundtrips;
+missing large fixtures fail rather than being skipped.
+
+
+An existing CPU Torch installation can satisfy the version constraint even
+when the CUDA index is configured. To replace it explicitly inside `.venv`:
+
+```powershell
+.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps -c constraints.txt --index-url https://download.pytorch.org/whl/cu126 torch==2.14.0
+.venv/Scripts/python.exe -m pip check
+.venv/Scripts/python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+
+`pyrl_trainer.distillation_client.DistillationClient` reads the dedicated
+`/api/distillation/v1/` namespace without joining an actor or sending actions.
+Configure a server origin and capture epoch, call `fetch()` to obtain bounded
+chunks and explicit unavailable ranges, then `commit()` only when the job owns
+that proposal. Save `checkpoint_fields()` atomically with replay, sampler,
+optimizer and RNG state. A fetch never advances the local cursor or acknowledges
+a game transaction. Downloads use finite storage pins that are released after
+validation, including on failure. Restarts bind the source, complete native
+contract, canonical sensor bytes and recorded run seed; legacy unknown seeds
+are rejected. The frozen teacher fixture is produced by Rust's
+`teacher_chunk_reference` tool and tests codec interoperability, not gameplay.
+
+Optional native shadow evaluation is explicit. Add all three flags to an online
+new-job invocation of `pyrl_trainer.distillation_run`:
+
+```powershell
+--shadow-slot 0 --shadow-baseline-slot 1 --shadow-config-revision 0000000000000001
+```
+
+The chosen slot is 0..3 and follows one selected baseline teacher. The run must
+already admit baseline v2 and matching v4 sensors/cadence; ordinary v3 production
+defaults remain unchanged pending qualification. Candidate upload alone does not
+activate a student. An opted-in job freezes the complete request and immutable
+candidate in a self-contained checkpoint before issuing the ordered native
+activation. Lost replies retry the same process/request/observed-slot identity;
+a changed process or replaced segment fails explicitly. Exact job resume cannot
+change shadow configuration. Metrics are Rust-computed unweighted summaries,
+including exact counters and separate delivery/publication steps. After activation,
+job polling returns no snapshot while the separate native mailbox still holds
+the exact prior slot; after the new segment is observed, interruptions fail. They never
+consume a dataset cursor, send gameplay ACKs or rewrite controlling weights.
+`DistillationClient.shadow_metrics`, `activate_shadow` and `stop_shadow` also
+expose these bounded diagnostic routes for explicit library use.
+
+
+The live qualification gate accepts `--replay-min-mib` below the selected
+`--replay-mib` capacity to require actual retained ownership before training.
+For a near-capacity 2-GiB case, use `--replay-mib 2048 --replay-min-mib 2040`.
+The floor uses the ordinary replay accounting; its receipt separates raw/decoded
+data bytes from total charged ownership. Only validated samples from the active
+capture epoch can satisfy it. Explicit loading gets a separate absolute
+`--replay-fill-seconds` setup allowance (1..10,800, default 1,800), followed by
+the existing optimizer-work deadline. Resume preserves the requested floor;
+sustain fails if live eviction ever lowers ownership beneath it. This is an
+optional qualification load, outside ordinary job controls and defaults.
+
+The `live-distillation` CI job runs the cross-repository qualification host against
+real Rust v4/v2 capture over HTTP. It trains with the default 32-window batch,
+32-step burn-in and 64-step BPTT, saves at update 125, and launches a second Python
+process to reproduce update 126's complete numeric witness. Update 250 freezes an
+immutable candidate for Rust validation and four actual shadow slots. The host
+uses a disposable database/spool and admits no actor or controller traffic. Its
+compact reports include process RSS, Torch allocator peaks, native step timing and
+full source identities, plus matching producer storage policy across the fresh
+trainer process. CPU CI exercises 4/64 GiB ceilings with one/three Rust workers;
+these are admission/provenance checks, not full-disk allocation benchmarks.
+Local CUDA runs use the same gate with explicit `cuda:0`;
+CPU CI never silently substitutes for CUDA qualification.
+
+The pinned host also trains a second student matching the active Dense world
+architecture. It saves both trained architectures, verifies graph-mismatched
+spawn rejection, exports the compatible portable original exactly, and deploys
+through Rust. After catalog deletion and cold-file reclamation, the live retained
+brain must keep its distilled origin and produce actual neural inference.
+
+The host also accepts `--workload P0|P1 --student-artifact PATH --contention-seconds 60`
+for a sustained contention window. Supply an independently Rust-validated Motion/B16
+portable student with the matching 1/60-second teacher cadence. The disposable world
+uses the modest native graph with 55/300 random evolved individuals and ten stochastic
+v2 teachers. After exact trainer restart and four-shadow activation, a third Python
+process restores the saved job and runs real Adam updates while fetching new live
+chunks for 60..300 seconds. Both optimizer progress and fresh source-cursor progress
+are required. Reports preserve failed real-time gates, replay/RSS/VRAM peaks, capture
+settlement/drops and each shadow's sample progress. The window includes Python startup
+and restore; active optimizer-window duration is reported separately. This does not
+qualify a mature population, crowded geometry, a long soak or production defaults.
+The live CI job includes a 60-second P0 CPU contention smoke and retains its
+measured timing result even when the real-time performance gate fails.
+
+### Canonical TBPTT capacity probe
+
+Use an explicitly Rust-compiled manifest and initialized flat weights to measure
+actual canonical model, Adam and full-window TBPTT allocation:
+
+```powershell
+python -m pyrl_trainer.distillation_capacity_gate --manifest PATH/manifest.json --weights PATH/weights.f32 --device cuda:0 --output capacity.json
+```
+
+The probe shares the running job's conservative memory estimate and rejects an
+oversized request before model/device allocation. Select `--device cpu` explicitly
+for CPU measurement. `--batch-sequences`, `--sequence-length`, `--burn-in`,
+`--cpu-threads` and `--device-memory-mib` use the public job bounds; the combined
+window remains at most 256 deliveries. Reports are create-new and include exact
+source/input identities, completed optimizer work, process RSS and CUDA allocated
+and reserved peaks. An admitted run must complete all requested updates within
+its budget. A rejected case reports `qualificationComplete: false`.
+
+Inputs are synthetic Float32 windows with fully active rows and rare-event weight
+four. This measures training allocation independently of teacher encoding, replay
+RAM, HTTP, trainer checkpoints, live game contention, shadows and the integrated
+soak. The device budget is an admission ceiling; successful probes do not imply
+that the ceiling was allocated or that every graph within a parameter count has
+the same memory cost.
+
+Dataset metadata admits the protocol's 64-GiB producer ceiling while every intake
+and restored manifest must fit the producer's observed byte and object policy.
+This avoids an obsolete 4-GiB parser limit blocking a larger explicitly selected
+spool. Reading a large inventory does not allocate its advertised bytes: chunk
+fetching, decoding and replay retain their independent bounds. Legacy endpoints
+without a reported policy remain explicitly unreported; the client does not guess
+their selected quota.
+
+### Loaded replay RAM probe
+
+Generate a synthetic fixture with Slither's standalone Rust
+`scripts/qualification/teacher-replay-fixture` harness, which calls the production
+teacher encoder and checks each native roundtrip. Then run:
+
+```powershell
+python -m pyrl_trainer.distillation_replay_capacity_gate --fixture PATH --ram-mib 2048 --output replay-capacity.json
+```
+
+Select 64..2048 MiB explicitly. The fixture must load through rotation at the
+selected ceiling; a partial load cannot qualify. The host checks the exact bundle
+hash, genuine decoded chunk identities, per-batch RAM accounting, whole-chunk
+retention, exact-retry idempotence and independent-decode replay restore. It records
+actual process RSS both after filling and while the original and restored replay
+owners coexist. Their combined restore peak is distinct from one buffer's retained
+RAM budget. Reports are create-new; fixture files remain read-only for reuse.
+
+The fixture is length-framed Rust TeacherSampleV1 data, with no Python sample
+encoder. This probe covers decoder/replay/restore memory independently of HTTP,
+optimizer work, durable trainer checkpoint peaks, live game contention and the
+integrated soak. Large synthetic inputs are disposable and should be removed after
+required cross-platform reports are retained.
+
+Capacity probes require Python assertions enabled and reject `python -O` before
+fixture/output or device admission. Replay reports include interpreter, platform,
+NumPy/Torch versions, pointer width and CPU-thread facts alongside measured RSS.
+
+
+### Loaded durable trainer checkpoint probe
+
+Use the same Rust replay fixture and a compatible Rust-produced canonical manifest
+and initialized weights. Keep the new workspace separate from the read-only inputs:
+
+```powershell
+python -m pyrl_trainer.distillation_checkpoint_capacity_gate --fixture PATH --manifest PATH/manifest.json --weights PATH/weights.f32 --ram-mib 2048 --device cuda:0 --workspace NEW_DIRECTORY --output checkpoint-capacity.json
+```
+
+The probe fills the selected 64..2048 MiB replay through retention, completes a real
+default-window Adam update, and saves through the production fsynced job serializer.
+It restores an independent job and requires the next windows, loss, weights, Adam
+moments, recurrent state and private RNG to match exactly. Reports include checkpoint
+bytes and save/restore process peaks while both replay/model owners coexist. CUDA
+uses the existing explicit device admission; `--device cpu` runs the CPU alternative.
+
+The output must be new and outside the new workspace. A complete progress report is
+fsynced before success cleanup; failures retain the checkpoint workspace. The
+fixture is never edited. This offline test does not qualify HTTP, live game
+contention, pending candidate backlog or the integrated
+soak. It rejects disabled Python assertions before input access.
+
+
+Use `--checkpoint-saves 4` to exercise production retention of the latest three
+complete files. The host verifies serial progression, exact retained inventory,
+oldest-file removal and retained physical bytes after every publication, then
+requires exact next-update restore from the latest checkpoint. The default remains
+one publication; reports state the selected publication count explicitly.
+
+
+### Tactical profile and width qualification
+
+The native tactical qualifier can export either v4 Basic or Motion with an
+explicit B8..32 width. `load_tactical_corpus` validates the exact native canonical
+metadata, digest, row bytes and matching teacher policy names before exposing
+read-only arrays. Existing Motion/B16 corpora retain their interpretation.
+
+`tactical_ablation_gate` derives its complete graph input and deployment request
+from that validated contract. Motion keeps its seven declared channel ablations
+at the chosen width; Basic trains Full and rejects unavailable Motion-only
+groups. Window padding, agreement evaluation and native before/after student
+physics use the same declared width. Separate profile corpora contain their
+actual teacher trajectories and do not establish paired cross-profile data.
+These tools enable qualification; they do not select sensor defaults or prove
+policy maturity or real-time performance.
+
+### Replicated tactical ablation evidence
+
+Run `pyrl_trainer.tactical_ablation_gate` separately for each requested initializer
+seed and held-out geometry seed, using one immutable native corpus, runner pair,
+device/environment and optimizer budget. The corpus must contain every held-out
+seed plus training seeds. Each study still trains all seven variants on paired
+windows and performs actual before/after native student trials. Reports now retain
+separate deterministic/stochastic teacher-policy and scenario/policy statistics;
+these strata cannot cancel each other inside one aggregate agreement score.
+
+Each new study atomically records `progress.json` after a variant has completed
+training, native parity and before/after gameplay. To continue an interrupted
+study, rerun its original command with `--resume` and the same directory and
+settings. Resume verifies source/dependency identities, numerical environment,
+corpus, native binaries and every completed output file before reuse. Only a
+completed variant is reused; interrupted optimizer work restarts from its seeded
+initialization, with its partial files retained in a labelled attempt directory.
+One process owns the study at a time. Attempt history keeps observed timings;
+unobserved interruption time is not reconstructed. Older studies without this
+checkpoint format remain preserved diagnostic inputs and require a new study
+directory. Completed studies stay immutable; use the independent matrix reader
+to verify them. Resume never silently upgrades old studies or marks incomplete data complete.
+
+Studies admit 1..32,768 optimizer updates under the existing total deadline,
+sequence/device/memory bounds and at most sixteen held-out checkpoints. Longer
+budgets support explicit plateau screens; they do not establish model maturity.
+Training loss traces retain the original 25-update cadence through 10,000 updates
+and use a recorded coarser interval above that budget, keeping at most 402 samples
+per variant. First/final points, every optimizer update and every requested
+held-out checkpoint remain mandatory. The paired schedule prefix is unchanged.
+
+Combine completed studies with the reader-only `pyrl_trainer.ablation_matrix`:
+
+```text
+python -m pyrl_trainer.ablation_matrix --study SEED1_FOLD2 --study SEED1_FOLD3 --initialization-seed 1 --validation-seed 2 --validation-seed 3 --updates 5000 --output matrix.json
+```
+
+Supply every cell of the requested seed/fold Cartesian grid. A study's `--seed`
+selects initialization/sampling and `--validation-seed` excludes that complete
+native geometry seed from training. Repeated-initialization/fold coverage is
+reported only with at least three distinct identities on each axis; the example
+above intentionally does not meet that coverage. More optimizer updates alone do
+not prove a mature model.
+
+The reader verifies all seven Motion ablations or the sole Basic Full variant,
+matched windows within each cell, matching
+initial parameters across folds, unchanged sources/environment/hyperparameters,
+actual native outcome reports and exact portable bytes. It recomputes the trainer
+source identity from the retained source inventory. Results retain per-cell paired
+differences from Full, cell-wise macro averages and both policy strata. The tool
+never chooses a winner, claims independent folds/confidence intervals, promotes a
+sensor profile or qualifies representative populations, sensing cost or real-time
+performance. Reports preserve the declared profile and B8..32 width. Older
+studies without either field retain their original Motion/B16 interpretation;
+partial declarations reject. Different profiles or widths cannot enter the same
+paired matrix, and Basic statistics retain their own teacher-policy names.
+CI verifies real two-update Basic/B8 and Motion/B32 studies as separate one-cell
+matrices.
+
+Exact job source identity also includes `sensor_contract.py`; a changed sensor
+parser cannot retain the identity of a cold exact trainer restart. Checkpoint files
+remain untouched and exact restoration still requires matching trainer source.
+
+
+For held-out learning curves, add repeated `--validation-update 250 --validation-update 500 --validation-update 1000` flags to each child study. The
+final requested optimizer update is included automatically; checkpoint work is
+bounded at sixteen positive points plus the initial model. Checkpoints evaluate
+the same held-out native lives without changing packed weights, CPU/CUDA RNG or
+the paired Adam trajectory. The matrix reader validates complete matching curves
+and reports per-update cell distributions and differences from Full, including
+both teacher-policy strata. Final-only studies remain supported. Agreement curves
+provide maturity evidence alongside the existing native gameplay and performance
+gates; they do not automatically choose production sensor defaults.
+
+
+Shared format definitions come from Slither's small `contracts/` project, pinned
+in `requirements-contracts.txt`. Install normal dependencies with
+`python -m pip install -r requirements.txt`; for coordinated local development,
+use `python -m pip install -e ../slither_neuroevo/contracts`. Structural bindings
+are generated; training objectives, sampling and strict game-specific checks stay
+in PyRL. Existing binary formats and canonical identities remain compatible.
+
+Routine Quality CI runs lint, ordinary tests and small CPU native format/parity
+smokes. Larger ablations, wide-graph qualification and live distillation are in the
+manual Qualification workflow. New ablation runs require committed source;
+`--allow-dirty` is an explicit local diagnostic option and records dirty paths.

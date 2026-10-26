@@ -1,0 +1,250 @@
+name: Qualification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  canonical-roundtrip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the canonical native contract
+        uses: actions/checkout@v4
+        with:
+          repository: Tits-McGruff/slither_neuroevo
+          ref: ed75ef8ec0dfcd98f67c37e188ed2be9e0896fe7
+          path: .canonical-rust
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .canonical-rust/native
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install constrained CPU parity dependencies
+        run: |
+          python -m pip install -c constraints.txt numpy pytest pytest-asyncio
+          python -m pip install -r requirements-contracts.txt
+          python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Keep run outputs outside source identity
+        run: |
+          cat >> .git/info/exclude <<'EOF'
+          /.canonical-rust/
+          /native-tactical-*/
+          /tactical-*/
+          /tactical-*.json
+          /basic-b8-tactics.json
+          /motion-b32-tactics.json
+          /profile-gameplay-*/
+          /canonical-wide-fixtures/
+          /.teacher-chunk-reference/
+          /canonical-roundtrip-cpu.json
+          EOF
+          test -z "$(git status --porcelain)" || { echo "Commit/WIP source before qualification"; exit 1; }
+      - name: Build the deployed whole-graph runner
+        run: cargo build --manifest-path .canonical-rust/native/Cargo.toml --release --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate --bin baseline-v2-qualification --bin sensor-v4-qualification
+      - name: Fresh committed native tactical corpus interoperability
+        run: |
+          .canonical-rust/native/target/release/baseline-v2-qualification --seed-count 2 --steps 12 --workers 1 --output tactical-report.json --corpus-directory native-tactical-corpus
+          python - <<'PY'
+          from pyrl_trainer.tactical_corpus import load_tactical_corpus
+          corpus = load_tactical_corpus("native-tactical-corpus")
+          training, validation = corpus.split_by_seed({2})
+          assert len(training) == len(validation) == 28
+          assert corpus.observations.shape[1] == 264
+          print({"nativeSourceSha256": corpus.source_sha256, "rows": len(corpus.steps), "sequences": len(corpus.sequences)})
+          PY
+      - name: Paired canonical ablations and actual native student physics
+        run: >-
+          python -m pyrl_trainer.tactical_ablation_gate
+          --corpus native-tactical-corpus
+          --canonical-runner .canonical-rust/native/target/release/canonical-training-graph
+          --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification
+          --directory tactical-ablation-smoke --device cpu --updates 2
+          --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12
+          --validation-seed 2 --validation-update 1
+      - name: Verify paired ablation grid receipts and teacher policy strata
+        run: >-
+          python -m pyrl_trainer.ablation_matrix --study tactical-ablation-smoke
+          --initialization-seed 1 --validation-seed 2 --updates 2
+          --output tactical-ablation-matrix-smoke.json
+      - name: Verify real held-out checkpoint coverage
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("tactical-ablation-matrix-smoke.json").read_bytes())
+          assert report["maturityQualified"] is False
+          for variant in report["variants"].values():
+              points = variant["heldOutLearningCurve"]
+              assert [point["update"] for point in points] == [0, 1, 2]
+              assert all(point["measurements"]["turnMae"]["count"] == 1 for point in points)
+          PY
+      - name: Actual ablation process interruption and exact completed-variant reuse
+        run: >-
+          python -m pyrl_trainer.ablation_resume_gate
+          --canonical-runner .canonical-rust/native/target/release/canonical-training-graph
+          --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification
+          --directory "${{ runner.temp }}/ablation-resume-smoke"
+      - name: Retain actual ablation restart qualification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ablation-resume
+          path: ${{ runner.temp }}/ablation-resume-smoke/
+          if-no-files-found: error
+      - name: Native profile-width corpus and optimizer deployment contracts
+        run: |
+          for profile_case in basic-b8 motion-b32; do
+            if [ "$profile_case" = basic-b8 ]; then profile=basic; bins=8; else profile=motion; bins=32; fi
+            .canonical-rust/native/target/release/baseline-v2-qualification --seed-count 2 --steps 12 --workers 1 --cadence 0.06 --bins "$bins" --corpus-profile "$profile" --output "$profile_case-tactics.json" --corpus-directory "native-tactical-$profile_case"
+            python -m pyrl_trainer.tactical_ablation_gate --corpus "native-tactical-$profile_case" --canonical-runner .canonical-rust/native/target/release/canonical-training-graph --tactical-runner .canonical-rust/native/target/release/baseline-v2-qualification --directory "tactical-profile-$profile_case" --device cpu --updates 2 --batch-sequences 2 --sequence-length 16 --burn-in 0 --native-steps 12 --validation-seed 2 --validation-update 1 --device-memory-mib 512
+            python -B .canonical-rust/scripts/qualification/trained-sensor-cohorts.py --executable .canonical-rust/native/target/release/sensor-v4-qualification --artifact "tactical-profile-$profile_case/full/trained.slither-brain" --profile "$profile" --bins "$bins" --directory "profile-gameplay-$profile_case" --workers 3 --warmup 0 --steps 12
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for case, profile, bins in [("basic-b8", "basic", 8), ("motion-b32", "motion", 32)]:
+              report = json.loads(Path("tactical-profile-" + case, "summary.json").read_bytes())
+              assert report["measurementComplete"] and not report["releaseQualified"]
+              assert report["config"]["sensorProfile"] == profile and report["config"]["sensorBins"] == bins
+              gameplay = json.loads(Path("profile-gameplay-" + case, "summary.json").read_bytes())
+              assert gameplay["measurementComplete"] and not gameplay["releaseQualified"]
+              assert gameplay["sensorProfile"] == profile and gameplay["sensorBins"] == bins
+              assert len(gameplay["records"]) == 4
+              assert {(row["scenario"], row["workers"]) for row in gameplay["records"]} == {
+                  ("P0", 1), ("P0", 3), ("P1", 1), ("P1", 3)}
+              assert len(report["variants"]) == (1 if profile == "basic" else 7)
+              assert len({row["training"]["scheduleSha256"] for row in report["variants"]}) == 1
+              for row in report["variants"]:
+                  assert row["training"]["updates"] == 2
+                  assert [point["update"] for point in row["training"]["validationCurve"]] == [0, 1, 2]
+          PY
+          python -m pyrl_trainer.ablation_matrix --study tactical-profile-motion-b32 --initialization-seed 1 --validation-seed 2 --updates 2 --output tactical-profile-motion-b32-matrix.json
+          python -m pyrl_trainer.ablation_matrix --study tactical-profile-basic-b8 --initialization-seed 1 --validation-seed 2 --updates 2 --output tactical-profile-basic-b8-matrix.json
+      - name: Native teacher codec interoperability
+        run: |
+          .canonical-rust/native/target/release/teacher_chunk_reference .teacher-chunk-reference
+          PYRL_TEACHER_CHUNK_REFERENCE=.teacher-chunk-reference python -m pytest -q tests/unit/test_distillation_transport.py
+      - name: Portable candidate admission and actual 250-update snapshots
+        run: PYRL_BRAIN_ARTIFACT_RUNNER=.canonical-rust/native/target/release/brain_artifact_validate python -m pytest -q tests/unit/test_brain_artifact.py
+      - name: Generate native wide recurrent regression inputs
+        run: >-
+          python scripts/generate_canonical_graph_fixtures.py
+          --runner .canonical-rust/native/target/release/canonical-training-graph
+          --output-directory canonical-wide-fixtures --include-large
+      - name: Optimizer, export, native admission and exact-byte reimport
+        run: >-
+          python -m pyrl_trainer.canonical_parity
+          --runner .canonical-rust/native/target/release/canonical-training-graph
+          --fixtures canonical-wide-fixtures --include-large
+          --device cpu --output-json canonical-roundtrip-cpu.json
+      - name: Retain numerical parity and optimizer evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-roundtrip-cpu
+          path: |
+            canonical-roundtrip-cpu.json
+            tactical-report.json
+            native-tactical-corpus/
+            tactical-ablation-smoke/
+            tactical-ablation-matrix-smoke.json
+            basic-b8-tactics.json
+            motion-b32-tactics.json
+            native-tactical-basic-b8/
+            native-tactical-motion-b32/
+            tactical-profile-basic-b8/
+            tactical-profile-motion-b32/
+            tactical-profile-motion-b32-matrix.json
+            tactical-profile-basic-b8-matrix.json
+            profile-gameplay-basic-b8/*.json
+            profile-gameplay-motion-b32/*.json
+          if-no-files-found: error
+
+
+  live-distillation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the live native qualification host
+        uses: actions/checkout@v4
+        with:
+          repository: Tits-McGruff/slither_neuroevo
+          ref: ed75ef8ec0dfcd98f67c37e188ed2be9e0896fe7
+          path: .live-slither
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .live-slither/native
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: .live-slither/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install constrained CPU trainer and native host dependencies
+        run: |
+          python -m pip install -c constraints.txt numpy
+          python -m pip install -r requirements-contracts.txt
+          printf '/.live-slither/\n/live-distillation-*.json\n' >> .git/info/exclude
+          python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+          npm --prefix .live-slither ci
+      - name: Build production validator and isolated real v4 authority
+        working-directory: .live-slither
+        run: |
+          npm --prefix native run build
+          node node_modules/tsx/dist/cli.mjs scripts/prepare-panic-test-addon.ts
+          node node_modules/typescript/bin/tsc -p scripts/qualification/tsconfig.json
+      - name: Live training, process restart, four shadows and retained library deployment
+        working-directory: .live-slither
+        run: |
+          for workers in 1 3; do
+            spool_gib=4
+            if [ "$workers" = 3 ]; then spool_gib=64; fi
+            node node_modules/tsx/dist/cli.mjs scripts/qualification/live-distillation.ts \
+              --pyrl-root "${{ github.workspace }}" --python "$(command -v python)" \
+              --device cpu --workers "$workers" --spool-gib "$spool_gib" \
+              --report "${{ github.workspace }}/live-distillation-cpu-w${workers}.json"
+          done
+      - name: Live P0 trainer, four shadows and durable generation restarts
+        working-directory: .live-slither
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          fixture = Path("native/fixtures/learned-cohorts-v1/single")
+          record = json.loads((fixture / "fixture.json").read_bytes())["files"]["full-1.slither-brain"]
+          brain = (fixture / "full-1.slither-brain").read_bytes()
+          assert len(brain) == record["bytes"] and hashlib.sha256(brain).hexdigest() == record["sha256"]
+          Path("native/target/contention-student.slither-brain").write_bytes(brain)
+          PY
+          node node_modules/tsx/dist/cli.mjs scripts/qualification/live-distillation.ts \
+            --pyrl-root "${{ github.workspace }}" --python "$(command -v python)" \
+            --device cpu --workers 3 --workload P0 --contention-seconds 60 --generation-boundaries 2 \
+            --workspace "$RUNNER_TEMP/live-replay-occupancy-P0" --replay-min-mib 1 --replay-fill-seconds 120 \
+            --student-artifact native/target/contention-student.slither-brain \
+            --report "${{ github.workspace }}/live-distillation-durability-cpu-P0.json"
+      - name: Remove the exclusive replay qualification workspace
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          parent = Path(os.environ["RUNNER_TEMP"]).resolve()
+          target = parent / "live-replay-occupancy-P0"
+          if target.exists():
+              assert not target.is_symlink() and target.resolve().parent == parent
+              shutil.rmtree(target)
+          PY
+      - name: Retain live pipeline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-distillation-cpu
+          path: |
+            live-distillation-cpu-w*.json
+            live-distillation-durability-cpu-P0.json
+          if-no-files-found: warn

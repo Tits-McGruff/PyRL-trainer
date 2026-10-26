@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Actual first-layer row from the original failing large-LSTM export; bounded CPU compensated dot regression against independent math.fsum, without the full model/corpus.",
+  "origin": "slither_neuroevo/docs/performance/sensor-v4/native-dot-numerics-v1/cases/lstm",
+  "originWeightsSha256": "ab60b46cc91782073818e780cdee5991373ab1a798661b506d336df15a1b9d55",
+  "originObservationsSha256": "32555325f416925467ea59678b70b1b5b9f148f3782f8997daf3f21334b616f0",
+  "layer": "features.layer0.W",
+  "step": 0,
+  "row": 110,
+  "width": 504,
+  "oracle": -8.40496248546323,
+  "legacySequentialFloat32": -8.4049711227417,
+  "maximumAbsoluteError": 2.8790928231122357e-06,
+  "files": {
+    "values.f32": {
+      "sha256": "2e30321df713577a3f6148ea0c435f7d255cf2e5a893c7590114f673156348cc",
+      "bytes": 2016
+    },
+    "weights.f32": {
+      "bytes": 2016,
+      "sha256": "6707eb57c6fc2efed79cf4705ecfe04910d32f87223ae644c2ee0aa4d6d8d668"
+    }
+  }
+}

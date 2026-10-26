@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-tactical-profile-fixtures-v1",
+  "cases": {
+    "basic-b8": {
+      "profile": "basic",
+      "width": 72,
+      "rows": 360,
+      "nativeSourceSha256": "1be436a7c28b73f8eecdc3dcf397a549bc0e46aa095cbf4c0c23536f55fb05b8",
+      "files": {
+        "corpus.json": {
+          "bytes": 23597,
+          "sha256": "b92877d3b25f8a14e75350db60a5ce26f91e9caf672a53fa6663ade5a09ff6a1",
+          "gzipSha256": "e5ea06f26a8c4a99693750981d3bb100244915ecb4346469aab09a49d4000be4"
+        },
+        "observations.f32": {
+          "bytes": 103680,
+          "sha256": "75907c3124ac9877e9591cc5ea3b5b41d726bbe377b6052f47e9ad0c8cc4c70c",
+          "gzipSha256": "e2d6fd0966df46226c581c8c44da858f3c00eb5877eb41231d10e317cd0b027b"
+        },
+        "actions.f32": {
+          "bytes": 2880,
+          "sha256": "53fd6526bdd7071ff6125b979a2e6a1686f324eacd20b8546f823fcffc9fc5d6",
+          "gzipSha256": "5a60fe2b9060b70647b404e287bb6462928438187c0167f49d2422c9948e4842"
+        },
+        "steps.u32": {
+          "bytes": 1440,
+          "sha256": "85b4e7c82bc0ca02b9bd41b50ea2b2c2eb080cd45cb232f6b82cdfa3c8dea845",
+          "gzipSha256": "fc563e54ca7675aa8a9d598a85eccae019d50b93938eb1a353b1f8fa55f25750"
+        },
+        "initialized/manifest.json": {
+          "bytes": 12066,
+          "sha256": "2fae295bbd3d50765a0f6bd997653d9ebf39afef0b4b9ac67964560f6e657828",
+          "gzipSha256": "b2100bc466a63e5bbe63bfe7fec5940cf9f1f6d7a0341312f59c2c1a01689182"
+        },
+        "initialized/weights.f32": {
+          "bytes": 51016,
+          "sha256": "7b84b0f0188582a9652b2ab017646dd65d3906658827c114b6b94b26ad523821",
+          "gzipSha256": "b991aa70959eb31463ad2045fdf4e2d28918eaa426be213d7221c9d41bad4004"
+        },
+        "initialized/receipt.json": {
+          "bytes": 1030,
+          "sha256": "25dd8f6a7dc6f01e592330afc59259b05f0661e38630c40c3cc630bcf66ec9e0",
+          "gzipSha256": "ff6d90df714ef3020b25f7a457366296a444946ee475ebf2bf237e3e9114174a"
+        }
+      }
+    },
+    "motion-b32": {
+      "profile": "motion",
+      "width": 504,
+      "rows": 372,
+      "nativeSourceSha256": "1be436a7c28b73f8eecdc3dcf397a549bc0e46aa095cbf4c0c23536f55fb05b8",
+      "files": {
+        "corpus.json": {
+          "bytes": 35003,
+          "sha256": "1828e833ee78a0539bdced939ad57610ce58eadf8018182a5a33ff8812627821",
+          "gzipSha256": "0653cd8d9c37fea90a9dc568c4b5cc7e1716666ccf938018433381e23f5cbe10"
+        },
+        "observations.f32": {
+          "bytes": 749952,
+          "sha256": "af2b6238792003c6f2334c34bcbd7bba55cd8e32e88877c739f51914e624efc8",
+          "gzipSha256": "c750a6da1fba7a600898fcbeb74b56847636ac5753e12c50563b60d3e5e00f40"
+        },
+        "actions.f32": {
+          "bytes": 2976,
+          "sha256": "cfae124b812af232899190f7849bde1d3eeec627564b41666fe15a6f2879d077",
+          "gzipSha256": "806d9db791098afcb7d3f6681a5c01acb786c4e13523716d6f051a1899675b93"
+        },
+        "steps.u32": {
+          "bytes": 1488,
+          "sha256": "dab359fc8290cb26516d67f3d23e003fd54d47159e64c6b175508273bbf6ad52",
+          "gzipSha256": "cef17c74ce81686873dc2dec6149f972b5f5d04a891db67bf85ebe1485b1e0fc"
+        },
+        "initialized/manifest.json": {
+          "bytes": 23475,
+          "sha256": "c26a1f6f626ff9df254e4eff2ea316396f08c266bc6fe55383d51bbf7c0c6c4f",
+          "gzipSha256": "d34c3900a495dd1d6968a25718787db241d08132cde6dc64105c215dd0888076"
+        },
+        "initialized/weights.f32": {
+          "bytes": 161608,
+          "sha256": "71e27d55d2dc51ba22615b2b762e9d964864be8ce5967aec562b469452ecc144",
+          "gzipSha256": "98c60d5d9d8a95c87282a69297606e7c571e11d2892337164d819d79c2c1107d"
+        },
+        "initialized/receipt.json": {
+          "bytes": 1030,
+          "sha256": "230c7baff45ca23caf0bcf39d86405f7a29c108c614750977c78d315c7bb4b12",
+          "gzipSha256": "41f01721ec0db82e0437314f47eec4aa0a49dad0c145e915ebf8056e3874202d"
+        }
+      }
+    }
+  },
+  "nativeCommit": "147cefc41ef56c116fd4a214615901c2255a5e42"
+}

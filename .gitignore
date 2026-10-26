@@ -208,3 +208,5 @@ __marimo__/
 
 checkpoints/
 config.toml
+# Local canonical distillation job recovery files
+distillation-jobs/
