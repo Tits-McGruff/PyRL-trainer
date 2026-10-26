@@ -33,6 +33,7 @@ class WindowIdentity:
     first_sample: int
     first_training_sample: int
     last_sample: int
+    sample_count: int
 
 
 @dataclass(frozen=True)
@@ -220,7 +221,8 @@ class ReplayWindowSampler:
             item = stream.segments[0].chunk
             identities.append(
                 WindowIdentity(
-                    item.baseline_slot, item.generation, first_sample, training_sample, last_sample
+                    item.baseline_slot, item.generation, first_sample, training_sample, last_sample,
+                    position,
                 )
             )
         data = SequenceBatch(

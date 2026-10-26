@@ -19,7 +19,7 @@ from pyrl_trainer import distillation_checkpoint as snapshots
 from pyrl_trainer import distillation_job as owner
 from pyrl_trainer import distillation_run as runner
 from pyrl_trainer.distillation_checkpoint import load_job_checkpoint
-from pyrl_trainer.distillation_client import DistillationFetch
+from pyrl_trainer.distillation_client import DistillationFetch, DistillationHTTPError
 from pyrl_trainer.distillation_replay import TeacherReplay
 from pyrl_trainer.distillation_transport import DistillationContractError
 
@@ -196,6 +196,41 @@ def test_matching_explicit_controls_resume_and_new_defaults_do_not_override_save
     assert third["updates"] == 3
     assert load_job_checkpoint(third["checkpoint"]).replay.cursor == local_source.cursor
 
+
+
+def test_transient_fetch_failure_checkpoint_resumes_offline_exactly(
+    tmp_path, monkeypatch, local_source, capsys
+):
+    """A transport failure preserves resumable committed state, without replaying HTTP offline."""
+    job = runner._open_job(runner._arguments(new_arguments(tmp_path)))  # pylint: disable=protected-access
+    assert job.replay.cursor == local_source.cursor
+    job.update()
+
+    def unavailable():
+        raise DistillationHTTPError(503, "temporary teacher outage")
+
+    with monkeypatch.context() as transient:
+        clock = iter(index / 4 for index in range(1000))
+        transient.setattr(runner.time, "monotonic", lambda: next(clock))
+        transient.setattr(runner, "_open_job", lambda _args: job)
+        transient.setattr(job.client, "fetch", unavailable)
+        with pytest.raises(DistillationHTTPError, match="temporary teacher outage"):
+            runner.run(new_arguments(tmp_path) + ["--poll-ms", "100"])
+    failure = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert failure["reason"] == "job_failure" and failure["updates"] == 1
+    saved = Path(failure["checkpoint"])
+    expected = load_job_checkpoint(saved)
+    assert expected.status == "running" and expected.checkpoint_allowed
+    assert expected.last_error == "temporary teacher outage"
+    assert expected.update().optimizer_updated
+    monkeypatch.setattr(runner.DistillationClient, "fetch",
+                        lambda _client: pytest.fail("offline resume attempted HTTP intake"))
+    resumed = runner.run(["--resume", str(saved), "--offline", "--updates", "1",
+                          "--job-directory", str(tmp_path)])
+    actual = load_job_checkpoint(resumed["checkpoint"])
+    assert actual.trainer.completed_updates == 2
+    assert actual.model.export_weights() == expected.model.export_weights()
+    assert actual.sampler.checkpoint_fields() == expected.sampler.checkpoint_fields()
 
 def test_cpu_availability_uses_known_process_limits_and_has_safe_fallback(monkeypatch):
     """Missing counts cannot mask a known affinity, and inaccessible affinity is optional."""

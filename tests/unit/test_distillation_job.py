@@ -4,6 +4,7 @@ from pathlib import Path
 import math
 import copy
 import importlib.util
+import json
 import random
 import zipfile
 
@@ -23,7 +24,9 @@ from pyrl_trainer.distillation_job import (
     DistillationJobConfig,
     trainer_source_sha256,
 )
-from pyrl_trainer.distillation_transport import DistillationContractError
+from pyrl_trainer.distillation_replay import TeacherReplay
+from pyrl_trainer.distillation_transport import DatasetManifest, DistillationContractError
+from pyrl_trainer.sequence_distillation import SequenceBoundary
 
 # Load test-only fixture helpers explicitly; no production module imports a test codec.
 SPEC = importlib.util.spec_from_file_location(
@@ -110,6 +113,68 @@ def test_exact_job_restart_reproduces_optimizer_rng_next_sample_and_update(tmp_p
     assert restored.last_validation == job.last_validation
     assert restored.peak_device_bytes <= restored.config.device_bytes
 
+
+
+def gapped_job():
+    """Retain real decoded deliveries 1..3 and 298..300 around dropped whole chunks."""
+    source = HELPERS.replay_fixture((1,), chunks_per_stream=100)
+    chunks = (source.chunks[0], source.chunks[-1])
+    raw = copy.deepcopy(source.manifest.raw)
+    raw.update(retainedChunks=2, retainedBytes=f"{sum(len(c.raw_bytes) for c in chunks):016x}",
+               nativeDroppedChunks=f"{98:016x}", nativeDroppedSamples=f"{294:016x}")
+    replay = TeacherReplay()
+    replay.admit(DistillationFetch(DatasetManifest.from_object(raw), 0, 100, chunks, ((2, 99),)))
+    manifest = CanonicalGraphManifest.read(HELPERS.GRAPH / "manifest.json")
+    return DistillationJob(manifest, (HELPERS.GRAPH / "weights.f32").read_bytes(), replay,
+                           config=DistillationJobConfig(device="cpu"), sequence=HELPERS.config())
+
+
+def test_checkpoint_windows_cross_large_ordinal_gaps_and_restart_exactly(tmp_path):
+    """Delivered-row counts, rather than original ordinal spans, bound recurrent windows."""
+    job = gapped_job()
+    sampled = job.sampler.sample()
+    assert (sampled.batch.boundaries[1:] == SequenceBoundary.GAP).any()
+    assert job.update().optimizer_updated
+    assert all(window.first_training_sample - window.first_sample > 3
+               and window.last_sample - window.first_sample > 256 for window in job.last_windows)
+    saved_windows = job.last_windows
+    saved = job.save(tmp_path)
+    expected = job.update()
+    restored = load_job_checkpoint(saved)
+    assert restored.last_windows == saved_windows
+    actual = restored.update()
+    assert actual.loss == expected.loss
+    assert torch.equal(actual.next_state, expected.next_state)
+    assert restored.model.export_weights() == job.model.export_weights()
+    assert_optimizer_equal(restored.trainer.optimizer.state_dict(),
+                           job.trainer.optimizer.state_dict())
+    assert restored.sampler.checkpoint_fields() == job.sampler.checkpoint_fields()
+
+
+@pytest.mark.parametrize("change", ["zero-count", "too-many", "burn-prefix", "training-count"])
+def test_gapped_window_checkpoint_rejects_forged_delivery_counts(tmp_path, change):
+    """Accepting ordinal gaps must retain bounded counts and metric/chronology validation."""
+    job = gapped_job()
+    job.update()
+    with zipfile.ZipFile(job.save(tmp_path)) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    metadata = json.loads(files["job.json"])
+    window = metadata["lastWindows"][0]
+    if change == "zero-count":
+        window["sample_count"] = 0
+    elif change == "too-many":
+        window["sample_count"] = 257
+    elif change == "burn-prefix":
+        window["first_training_sample"] = window["first_sample"]
+    else:
+        metadata["training"]["training_samples"] += 1
+    files["job.json"] = json.dumps(metadata).encode("utf-8")
+    changed = tmp_path / "bad-window.distill-job"
+    with zipfile.ZipFile(changed, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    with pytest.raises(DistillationContractError):
+        load_job_checkpoint(changed)
 
 def test_checkpoints_rotate_three_valid_and_ignore_incomplete_temp_files(tmp_path):
     """Retention follows complete valid files, with interrupted publications never counted."""
@@ -307,7 +372,6 @@ def test_validation_preserves_canonical_weights_optimizer_and_existing_gradients
 
 def test_checkpoint_source_environment_and_compression_are_independently_admitted(tmp_path):
     """A repaired ZIP CRC cannot override exact-source/environment or payload encoding checks."""
-    import json  # pylint: disable=import-outside-toplevel
 
     saved = make_job().save(tmp_path)
     for change in ("source", "environment", "compression"):

@@ -266,9 +266,13 @@ def run(argv=None):
                 latest = job.save(args.job_directory)
         latest = job.save(args.job_directory)
     except (RuntimeError, MemoryError, DistillationContractError) as error:
-        job.status, job.last_error = "paused", str(error)[:1024]
+        job.last_error = str(error)[:1024]
         if job.checkpoint_allowed:
+            # Intake/publication failures do not invalidate committed trainer
+            # state. Keep its running/waiting status resumable, including offline.
             latest = job.save(args.job_directory)
+        else:
+            job.status = "paused"
         # Failed partial optimizer state is never published; the last valid boundary survives.
         result = {
             "schemaVersion": 1,

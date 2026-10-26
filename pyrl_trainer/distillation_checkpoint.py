@@ -591,13 +591,22 @@ def load_job_checkpoint(path):
         raise DistillationContractError("job sampled-window cursor admission")
     windows = []
     for item in metadata["lastWindows"]:
-        exact_keys(item, "baseline_slot generation first_sample first_training_sample last_sample")
+        exact_keys(item, "baseline_slot generation first_sample "
+                   "first_training_sample last_sample sample_count")
         integer(item["baseline_slot"], 0, 119)
         integer(item["generation"], 1, (1 << 64) - 1)
         first = integer(item["first_sample"], 1, (1 << 64) - 1)
         train = integer(item["first_training_sample"], first, (1 << 64) - 1)
         last = integer(item["last_sample"], train, (1 << 64) - 1)
-        if train - first != sequence.burn_in_steps or last - first >= 256:
+        # Original ordinals can jump across recorded gaps. Bound the actual
+        # delivered rows, including burn-in, rather than the numeric ordinal span.
+        count = integer(item["sample_count"], sequence.burn_in_steps + 1,
+                        sequence.burn_in_steps + sequence.bptt_steps)
+        training_count = count - sequence.burn_in_steps
+        if train - first < sequence.burn_in_steps or last - train < training_count - 1:
+            raise DistillationContractError("job sampled-window chronology admission")
+        if ((sequence.burn_in_steps == 0 and train != first)
+                or (training_count == 1 and last != train)):
             raise DistillationContractError("job sampled-window chronology admission")
         windows.append(WindowIdentity(**item))
     if metadata["status"] not in ("running", "waiting", "paused"):
@@ -609,6 +618,12 @@ def load_job_checkpoint(path):
     ):
         raise DistillationContractError("job error admission")
     _metrics(metadata["training"], metadata["validation"], sequence)
+    if bool(windows) != (metadata["training"] is not None) or windows and (
+        sum(item.sample_count - sequence.burn_in_steps for item in windows)
+        != metadata["training"]["training_samples"]
+        or len(windows) * sequence.burn_in_steps != metadata["training"]["burn_in_samples"]
+    ):
+        raise DistillationContractError("job sampled-window delivered counts mismatch")
     online_state(metadata["onlineMetrics"])
     candidates = []
     with zipfile.ZipFile(path, "r") as archive:
