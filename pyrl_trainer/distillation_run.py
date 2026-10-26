@@ -21,6 +21,7 @@ from .distillation_job import (
     DistillationJobConfig,
     admit_job_device,
     available_trainer_cpus,
+    explicit_trainer_device,
 )
 from .distillation_replay import TeacherReplay
 from .distillation_transport import DistillationContractError, integer
@@ -68,7 +69,10 @@ def _arguments(argv):
     parser.add_argument("--shadow-baseline-slot", type=int)
     parser.add_argument("--shadow-config-revision")
     parser.add_argument("--job-directory", type=Path, required=True)
-    parser.add_argument("--device", choices=("cpu", *(f"cuda:{index}" for index in range(8))))
+    parser.add_argument(
+        "--device", type=explicit_trainer_device,
+        help="cpu or explicit cuda:N; checked against available devices",
+    )
     parser.add_argument("--seed", type=int, help="new-job UInt32 seed (default: 1)")
     parser.add_argument(
         "--cpu-threads", type=int,

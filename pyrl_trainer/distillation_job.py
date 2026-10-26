@@ -107,6 +107,13 @@ def available_trainer_cpus():
     return max(1, min(counts or [1]))
 
 
+def explicit_trainer_device(value):
+    """Validate an explicit CPU/CUDA name without inspecting or initializing a device."""
+    if not isinstance(value, str) or not re.fullmatch(r"cpu|cuda:(0|[1-9][0-9]*)", value):
+        raise DistillationContractError("expected cpu or explicit cuda:N trainer device")
+    return value
+
+
 @dataclass(frozen=True)
 class DistillationJobConfig:
     """Isolated process settings; explicitly requested CUDA never falls back to CPU."""
@@ -122,8 +129,7 @@ class DistillationJobConfig:
         # Keep the historical 128-MiB library/checkpoint minimum; the public CLI
         # requires 512 MiB. Actual CUDA capacity is checked before any allocation.
         integer(self.device_bytes, 128 * 1024**2, (1 << 63) - 1)
-        if not isinstance(self.device, str) or not re.fullmatch(r"cpu|cuda:[0-7]", self.device):
-            raise DistillationContractError("unsupported explicit trainer device")
+        explicit_trainer_device(self.device)
 
 
 def admit_job_device(config):

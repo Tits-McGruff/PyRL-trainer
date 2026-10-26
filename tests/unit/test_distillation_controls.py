@@ -131,6 +131,8 @@ def test_explicit_maximum_batch_and_replay_controls_train_and_exactly_restart(
 
 
 @pytest.mark.parametrize("options", [
+    ["--device", "cuda"], ["--device", "cuda:-1"],
+    ["--device", "cuda:01"], ["--device", "mps"],
     ["--seed", "-1"], ["--seed", "4294967296"],
     ["--cpu-threads", "0"], ["--cpu-threads", "3"],
     ["--device-memory-mib", "511"], ["--device-memory-mib", str(1 << 63)],
@@ -223,6 +225,29 @@ def test_cuda_admission_requires_availability_and_physical_capacity(monkeypatch)
         owner.admit_job_device(config)
     smaller = owner.DistillationJobConfig(device_bytes=512 * MIB)
     assert owner.admit_job_device(smaller) == torch.device("cuda:0")
+
+
+def test_explicit_cuda_index_uses_actual_availability_instead_of_an_eight_device_cap(
+    tmp_path, monkeypatch
+):
+    """The public device choice names the requested GPU and still rejects unavailable indexes."""
+    args = runner._arguments(new_arguments(tmp_path, "cuda:8"))  # pylint: disable=protected-access
+    config = owner.DistillationJobConfig(device=args.device)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 9)
+    inspected = []
+
+    def properties(device):
+        inspected.append(str(device))
+        return SimpleNamespace(total_memory=16 * 1024**3)
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", properties)
+    assert owner.admit_job_device(config) == torch.device("cuda:8")
+    assert inspected == ["cuda:8"]
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 8)
+    with pytest.raises(DistillationContractError, match="unavailable"):
+        owner.admit_job_device(config)
+    assert inspected == ["cuda:8"]
 
 
 def test_cuda_budget_can_use_capacity_above_eight_gib_without_reserving_it(monkeypatch):
