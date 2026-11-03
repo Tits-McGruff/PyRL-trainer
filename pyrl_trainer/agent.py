@@ -192,6 +192,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                     msg.get("snakeId"),
                     msg.get("resumeToken"),
                     reclaimed=bool(msg.get("reclaimed", False)),
+                    replacement_reason=msg.get("replacementReason"),
                 )
                 break
             if msg.get("type") == "error":
@@ -248,6 +249,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         snake_id: int,
         resume_token: str,
         reclaimed: bool = False,
+        replacement_reason: Optional[str] = None,
     ) -> None:
         if not isinstance(snake_id, int) or snake_id <= 0:
             raise RuntimeError("server assignment omitted a valid snakeId")
@@ -296,7 +298,10 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             )
 
         if previous_snake is not None:
-            await self._finalize_terminal_episode()
+            if replacement_reason == "generation":
+                await self._finalize_truncated_episode()
+            else:
+                await self._finalize_terminal_episode()
 
         self.snake_id = int(snake_id)
         self.resume_token = resume_token
@@ -315,6 +320,35 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             if (time.monotonic() - self.last_sent_time) < min_interval:
                 return False
         return True
+
+    async def _finalize_truncated_episode(self) -> None:
+        """Flush a server-forced cutoff without death reward or terminal GAE."""
+        had_episode = (
+            self.snake_id is not None
+            or self.episode_actions > 0
+            or self.pending_transition is not None
+            or bool(self.rollout)
+        )
+        bootstrap = (
+            float(self.pending_transition.value)
+            if self.pending_transition is not None
+            else 0.0
+        )
+        self.pending_transition = None
+
+        if self.rollout:
+            await self.experience_q.put(
+                (self.actor_id, list(self.rollout), bootstrap)
+            )
+            self.rollout.clear()
+
+        lifetime_ticks = 0
+        if self.last_assign_tick is not None and self.last_sensor_tick is not None:
+            lifetime_ticks = max(
+                0, int(self.last_sensor_tick - self.last_assign_tick)
+            )
+        if had_episode:
+            self._record_episode(lifetime_ticks)
 
     async def _finalize_terminal_episode(
         self, death_penalty: Optional[float] = None
@@ -440,6 +474,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                     msg.get("snakeId"),
                     msg.get("resumeToken"),
                     reclaimed=bool(msg.get("reclaimed", False)),
+                    replacement_reason=msg.get("replacementReason"),
                 )
                 continue
 
