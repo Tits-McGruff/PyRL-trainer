@@ -164,7 +164,7 @@ class SynchronousSharedState(SharedState):
         return float(value.item())
 
 
-class SynchronousActorClient(ActorClient):
+class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-methods
     """Actor that contributes at most one rollout to each collection epoch."""
 
     def __init__(self, *args, **kwargs):
