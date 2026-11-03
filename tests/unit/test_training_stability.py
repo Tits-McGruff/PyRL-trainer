@@ -1,17 +1,19 @@
-"""Regression tests for PPO stability safeguards and best-policy retention."""
+"""Regression tests for PPO policy coherence and best-policy retention."""
 
 # pylint: disable=import-error,protected-access
 
+import numpy as np
 import pytest
 import torch
 
+from pyrl_trainer.agent import Transition
 from pyrl_trainer.checkpointing import (
     load_checkpoint_if_present,
     save_best_checkpoint,
     save_checkpoint,
 )
 from pyrl_trainer.config import Config
-from pyrl_trainer.learner import SharedState
+from pyrl_trainer.learner import SharedState, split_rollout_by_policy_version
 from pyrl_trainer.sensor_contract import SensorContract
 
 pytestmark = pytest.mark.unit
@@ -42,8 +44,22 @@ def _state(cfg: Config) -> SharedState:
     )
 
 
-def test_ppo_skips_update_when_policy_is_already_over_target_kl():
-    """A stale/high-drift minibatch cannot push the policy even farther away."""
+def _transition(version: int, value: float) -> Transition:
+    return Transition(
+        obs=np.zeros(2, dtype=np.float32),
+        action_turn=0.0,
+        turn_latent=0.0,
+        action_boost=0.0,
+        logp=0.0,
+        value=value,
+        reward=0.1,
+        done=0.0,
+        policy_version=version,
+    )
+
+
+def test_stale_batch_is_rejected_before_any_optimizer_step():
+    """Already-off-policy behavior is discarded before PPO mutates the model."""
     torch.manual_seed(123)
     cfg = _config()
     state = _state(cfg)
@@ -78,25 +94,87 @@ def test_ppo_skips_update_when_policy_is_already_over_target_kl():
 
     metrics = state._ppo_update_batch_sync(batch)
 
-    assert metrics["kl_early_stopped"] == 1.0
+    assert metrics["stale_batch"] == 1.0
+    assert metrics["kl_early_stopped"] == 0.0
     assert metrics["optimizer_steps"] == 0.0
-    assert metrics["approx_kl"] > metrics["target_kl"]
+    assert metrics["initial_kl"] > metrics["target_kl"]
     assert state.update_steps == 0
     for key, value in state.train_model.state_dict().items():
         assert torch.equal(value, before[key])
 
 
-def test_best_checkpoint_tracks_lifetime_record_and_survives_resume(tmp_path):
-    """A long-lived policy is kept separately and its record persists in latest saves."""
+def test_rollout_is_split_at_policy_version_boundaries():
+    """Mixed live rollouts become contiguous behavior-policy segments before PPO."""
+    rollout = [
+        _transition(10, 0.1),
+        _transition(10, 0.2),
+        _transition(12, 0.3),
+        _transition(12, 0.4),
+    ]
+
+    segments = split_rollout_by_policy_version(rollout, bootstrap_value=9.0)
+
+    assert [version for version, _segment, _boot in segments] == [10, 12]
+    assert [len(segment) for _version, segment, _boot in segments] == [2, 2]
+    assert segments[0][2] == pytest.approx(0.3)
+    assert segments[1][2] == pytest.approx(9.0)
+
+
+def test_frozen_evaluator_policy_does_not_change_when_training_publishes():
+    """An evaluator episode keeps one immutable policy while training advances."""
+    cfg = _config()
+    state = _state(cfg)
+    with torch.no_grad():
+        for parameter in state.train_model.parameters():
+            parameter.fill_(0.25)
+    state.sync_infer_from_train()
+
+    snapshot, evaluator_model = state.begin_evaluation_policy()
+    frozen = {
+        key: value.detach().clone()
+        for key, value in evaluator_model.state_dict().items()
+    }
+
+    with torch.no_grad():
+        for parameter in state.train_model.parameters():
+            parameter.add_(1.0)
+    state.update_steps = 9
+    state.sync_infer_from_train()
+
+    assert snapshot["update_steps"] == 0
+    assert state.published_policy_version == 9
+    for key, value in evaluator_model.state_dict().items():
+        assert torch.equal(value, frozen[key])
+        assert torch.equal(value.cpu(), snapshot["model"][key])
+
+
+def test_best_checkpoint_contains_exact_evaluator_policy_and_survives_resume(tmp_path):
+    """The archived best model is the frozen policy that actually ran the episode."""
     cfg = _config(tmp_path)
     state = _state(cfg)
 
-    state.record_episode(1.3, 17996)
+    with torch.no_grad():
+        for parameter in state.train_model.parameters():
+            parameter.fill_(0.25)
+    state.sync_infer_from_train()
+    snapshot, _evaluator_model = state.begin_evaluation_policy()
+
+    with torch.no_grad():
+        for parameter in state.train_model.parameters():
+            parameter.fill_(0.75)
+    state.update_steps = 42
+    state.sync_infer_from_train()
+
+    state.record_episode(
+        1.3,
+        17996,
+        policy_snapshot=snapshot,
+        include_runtime_stats=False,
+    )
     assert state.best_checkpoint_pending
     assert state.best_lifetime_ticks == 17996
     assert state.best_episode_return == pytest.approx(1.3)
 
-    state.update_steps = 42
     best_path = save_best_checkpoint(cfg, state)
     state.mark_best_checkpoint_saved()
 
@@ -106,6 +184,12 @@ def test_best_checkpoint_tracks_lifetime_record_and_survives_resume(tmp_path):
     best_payload = torch.load(best_path, map_location="cpu")
     assert best_payload["best_lifetime_ticks"] == 17996
     assert best_payload["best_episode_return"] == pytest.approx(1.3)
+    assert best_payload["update_steps"] == snapshot["update_steps"]
+    assert best_payload["policy_snapshot"] is True
+    assert best_payload["optimizer_reset_for_policy_snapshot"] is True
+    for key, value in best_payload["model"].items():
+        assert torch.equal(value, snapshot["model"][key])
+        assert not torch.equal(value, state.train_model.state_dict()[key].cpu())
 
     state.record_episode(-0.4, 360)
     assert not state.best_checkpoint_pending
@@ -116,6 +200,8 @@ def test_best_checkpoint_tracks_lifetime_record_and_survives_resume(tmp_path):
     loaded = load_checkpoint_if_present(cfg, restored)
 
     assert loaded is not None
+    assert restored.update_steps == 42
     assert restored.best_lifetime_ticks == 17996
     assert restored.best_episode_return == pytest.approx(1.3)
+    assert restored.best_policy_snapshot is None
     assert not restored.best_checkpoint_pending
