@@ -460,14 +460,10 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
     async def _store_training_action(
         self,
         obs: np.ndarray,
-        turn: float,
-        boost: float,
-        logp: float,
-        value: float,
-        turn_latent: float,
-        policy_version: int,
+        sampled_action: Tuple[float, float, float, float, float, int],
     ) -> None:
         """Finish the prior transition and stage the newly sampled training action."""
+        turn, boost, logp, value, turn_latent, policy_version = sampled_action
         if self.pending_transition is not None:
             self.rollout.append(self.pending_transition)
             self.pending_transition = None
@@ -526,19 +522,10 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         if not self._should_send_action(tick):
             return
 
-        turn, boost, logp, value, turn_latent, policy_version = (
-            self._sample_action(obs)
-        )
+        sampled_action = self._sample_action(obs)
+        turn, boost, _logp, _value, _turn_latent, _policy_version = sampled_action
         if not self.evaluation:
-            await self._store_training_action(
-                obs,
-                turn,
-                boost,
-                logp,
-                value,
-                turn_latent,
-                policy_version,
-            )
+            await self._store_training_action(obs, sampled_action)
 
         self.steps += 1
         self.episode_actions += 1
