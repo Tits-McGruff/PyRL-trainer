@@ -30,8 +30,6 @@ jobs:
       - name: Remove one-shot patch machinery
         run: rm .github/scripts/apply_async_observation_docs.py .github/workflows/apply-async-observation-docs.yml
       - name: Verify
-        id: verify
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -44,9 +42,6 @@ jobs:
         with:
           name: pyrl-async-observation-verification
           path: verify.log
-      - name: Fail on verification error
-        if: steps.verify.outcome != 'success'
-        run: exit 1
       - name: Commit verified patch
         run: |
           git config user.name github-actions[bot]
