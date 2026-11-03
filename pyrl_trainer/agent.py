@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -33,10 +33,11 @@ class Transition:  # pylint: disable=too-few-public-methods
     value: float
     reward: float
     done: float  # 1.0 if episode ended at this step else 0.0
+    policy_version: int = 0
 
 
 class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
-    """WebSocket client that controls a single snake."""
+    """WebSocket client that controls one training or frozen-evaluation snake."""
 
     def __init__(
         self,
@@ -44,11 +45,14 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         cfg: Config,
         shared_state: Any,  # Avoid circular type hint for SharedState.
         experience_q: asyncio.Queue,
+        *,
+        evaluation: bool = False,
     ):
         self.actor_id = actor_id
         self.cfg = cfg
         self.shared_state = shared_state
         self.experience_q = experience_q
+        self.evaluation = bool(evaluation)
 
         self.snake_id: Optional[int] = None
         self.resume_token: Optional[str] = None
@@ -75,6 +79,12 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.pending_transition: Optional[Transition] = None
         self.episode_return: float = 0.0
         self.episode_actions: int = 0
+        self.episode_policy_snapshot: Optional[Dict[str, Any]] = None
+        self.episode_policy_model: Optional[Any] = None
+
+    @property
+    def _log_label(self) -> str:
+        return "eval" if self.evaluation else f"actor {self.actor_id}"
 
     def _reset_per_snake_state(self) -> None:
         self.last_obs = None
@@ -83,12 +93,24 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_sent_tick = None
         self.episode_return = 0.0
         self.episode_actions = 0
+        self.episode_policy_snapshot = None
+        self.episode_policy_model = None
 
     def _reset_connection_state(self) -> None:
         """Reset socket-local fields while retaining reclaimable snake state."""
         self.sensor_order = []
         self.sensor_idx = {}
         self.last_sent_time = 0.0
+
+    def _start_evaluation_policy(self) -> None:
+        if not self.evaluation:
+            return
+        callback = getattr(self.shared_state, "begin_evaluation_policy", None)
+        if not callable(callback):
+            raise RuntimeError("evaluation actor requires frozen-policy support")
+        snapshot, model = callback()
+        self.episode_policy_snapshot = snapshot
+        self.episode_policy_model = model
 
     async def _truncate_disconnected_rollout(self) -> None:
         """Flush completed PPO work without inventing a terminal transition."""
@@ -99,7 +121,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         )
         self.pending_transition = None
 
-        if self.rollout:
+        if self.rollout and not self.evaluation:
             await self.experience_q.put(
                 (self.actor_id, list(self.rollout), bootstrap)
             )
@@ -109,19 +131,34 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_sent_tick = None
 
     def _record_reward_components(self, components: Dict[str, float]) -> None:
+        if self.evaluation:
+            return
         callback = getattr(self.shared_state, "record_reward_components", None)
         if callable(callback):
             callback(components)
 
     def _record_episode(self, lifetime_ticks: int) -> None:
         callback = getattr(self.shared_state, "record_episode", None)
-        if callable(callback):
+        if not callable(callback):
+            return
+        if self.evaluation:
+            callback(
+                self.episode_return,
+                lifetime_ticks,
+                policy_snapshot=self.episode_policy_snapshot,
+                include_runtime_stats=False,
+            )
+        else:
             callback(self.episode_return, lifetime_ticks)
 
     async def run(self) -> None:
         """Connect to the server and keep the control loop alive."""
         url = self.cfg.ws_url
-        name = f"{self.cfg.bot_name}-{self.actor_id:03d}"
+        name = (
+            f"{self.cfg.bot_name}-eval"
+            if self.evaluation
+            else f"{self.cfg.bot_name}-{self.actor_id:03d}"
+        )
         while True:
             try:
                 self._reset_connection_state()
@@ -137,7 +174,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 await self._truncate_disconnected_rollout()
                 print(
-                    f"[actor {self.actor_id}] disconnected, "
+                    f"[{self._log_label}] disconnected, "
                     f"reason={type(exc).__name__}: {exc}"
                 )
                 await asyncio.sleep(0.5)
@@ -278,7 +315,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             self.resume_token = resume_token
             self.last_sent_tick = None
             print(
-                f"[actor {self.actor_id}] reclaimed snake {snake_id}, "
+                f"[{self._log_label}] reclaimed snake {snake_id}, "
                 f"assigns={self.assign_count}"
             )
             return
@@ -290,12 +327,12 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
 
         if lived is None:
             print(
-                f"[actor {self.actor_id}] assign {previous_snake} -> {snake_id}, "
+                f"[{self._log_label}] assign {previous_snake} -> {snake_id}, "
                 f"assigns={self.assign_count}"
             )
         else:
             print(
-                f"[actor {self.actor_id}] assign {previous_snake} -> {snake_id}, "
+                f"[{self._log_label}] assign {previous_snake} -> {snake_id}, "
                 f"lived_ticks={lived}{size_str}, assigns={self.assign_count}"
             )
 
@@ -308,6 +345,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.snake_id = int(snake_id)
         self.resume_token = resume_token
         self._reset_per_snake_state()
+        self._start_evaluation_policy()
         self.episodes += 1
         self.last_assign_tick = now_tick
 
@@ -338,7 +376,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         )
         self.pending_transition = None
 
-        if self.rollout:
+        if self.rollout and not self.evaluation:
             await self.experience_q.put(
                 (self.actor_id, list(self.rollout), bootstrap)
             )
@@ -361,12 +399,16 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             or self.pending_transition is not None
             or bool(self.rollout)
         )
-        if self.pending_transition is not None:
-            penalty = (
-                -float(self.cfg.reward_death_penalty_magnitude)
-                if death_penalty is None
-                else float(death_penalty)
-            )
+        penalty = (
+            -float(self.cfg.reward_death_penalty_magnitude)
+            if death_penalty is None
+            else float(death_penalty)
+        )
+
+        if self.evaluation:
+            if had_episode:
+                self.episode_return += penalty
+        elif self.pending_transition is not None:
             self.pending_transition.reward += penalty
             self.pending_transition.done = 1.0
             self.rollout.append(self.pending_transition)
@@ -375,7 +417,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             if penalty:
                 self._record_reward_components({"death": penalty})
 
-        if self.rollout:
+        if self.rollout and not self.evaluation:
             await self.experience_q.put(
                 (self.actor_id, list(self.rollout), 0.0)
             )
@@ -389,47 +431,39 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         if had_episode:
             self._record_episode(lifetime_ticks)
 
-    async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
-        if self.snake_id is None:
-            return
-        if int(msg.get("snakeId", -1)) != self.snake_id:
-            return
-
-        tick = int(msg.get("tick", 0))
-        self.last_sensor_tick = tick
-        if self.last_assign_tick is None:
-            self.last_assign_tick = tick
-
-        sensors = msg.get("sensors")
-        if sensors is None:
-            sensors = []
-        obs = np.asarray(sensors, dtype=np.float32)
-        if obs.shape[0] != len(self.sensor_order):
-            return
-
-        if self.last_obs is not None and self.pending_transition is not None:
-            components = default_reward_components(
-                self.last_obs, obs, self.sensor_idx, self.cfg
+    def _sample_action(
+        self, obs: np.ndarray
+    ) -> Tuple[float, float, float, float, float, int]:
+        """Sample from the live training policy or the episode's frozen evaluator."""
+        policy_version = int(
+            getattr(self.shared_state, "published_policy_version", 0)
+        )
+        policy_model = None
+        if self.evaluation:
+            if self.episode_policy_model is None:
+                raise RuntimeError("evaluation episode has no frozen policy")
+            policy_model = self.episode_policy_model
+            policy_version = int(
+                (self.episode_policy_snapshot or {}).get(
+                    "update_steps", policy_version
+                )
             )
-            reward = float(sum(components.values()))
-            self.pending_transition.reward += reward
-            self.episode_return += reward
-            self._record_reward_components(components)
-
-        self.last_obs = obs
-
-        if not self._should_send_action(tick):
-            return
 
         with torch.no_grad():
-            (
-                turn,
-                boost,
-                logp,
-                value,
-                turn_latent,
-            ) = self.shared_state.act(obs, turn_std=self.cfg.turn_std)
+            turn, boost, logp, value, turn_latent = self.shared_state.act(
+                obs,
+                turn_std=self.cfg.turn_std,
+                policy_model=policy_model,
+            )
+        return turn, boost, logp, value, turn_latent, policy_version
 
+    async def _store_training_action(
+        self,
+        obs: np.ndarray,
+        sampled_action: Tuple[float, float, float, float, float, int],
+    ) -> None:
+        """Finish the prior transition and stage the newly sampled training action."""
+        turn, boost, logp, value, turn_latent, policy_version = sampled_action
         if self.pending_transition is not None:
             self.rollout.append(self.pending_transition)
             self.pending_transition = None
@@ -449,7 +483,50 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             value=value,
             reward=0.0,
             done=0.0,
+            policy_version=policy_version,
         )
+
+    async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
+        if self.snake_id is None:
+            return
+        if int(msg.get("snakeId", -1)) != self.snake_id:
+            return
+
+        tick = int(msg.get("tick", 0))
+        self.last_sensor_tick = tick
+        if self.last_assign_tick is None:
+            self.last_assign_tick = tick
+
+        sensors = msg.get("sensors")
+        if sensors is None:
+            sensors = []
+        obs = np.asarray(sensors, dtype=np.float32)
+        if obs.shape[0] != len(self.sensor_order):
+            return
+
+        reward_ready = self.pending_transition is not None or (
+            self.evaluation and self.episode_actions > 0
+        )
+        if self.last_obs is not None and reward_ready:
+            components = default_reward_components(
+                self.last_obs, obs, self.sensor_idx, self.cfg
+            )
+            reward = float(sum(components.values()))
+            if self.pending_transition is not None:
+                self.pending_transition.reward += reward
+            self.episode_return += reward
+            self._record_reward_components(components)
+
+        self.last_obs = obs
+
+        if not self._should_send_action(tick):
+            return
+
+        sampled_action = self._sample_action(obs)
+        turn, boost, _logp, _value, _turn_latent, _policy_version = sampled_action
+        if not self.evaluation:
+            await self._store_training_action(obs, sampled_action)
+
         self.steps += 1
         self.episode_actions += 1
 
@@ -497,7 +574,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 if generation is not None and generation != self.last_gen:
                     self.last_gen = generation
                     print(
-                        f"[actor {self.actor_id}] gen={generation}, "
+                        f"[{self._log_label}] gen={generation}, "
                         f"tick={msg.get('tick')}, "
                         f"alive={msg.get('alive')}/{msg.get('aliveTotal')}"
                     )

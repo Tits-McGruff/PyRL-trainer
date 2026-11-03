@@ -73,7 +73,7 @@ async def _supervise_tasks(tasks: Iterable[asyncio.Task]) -> None:
 
 
 async def main() -> None:
-    """Start the PPO learner and actor tasks after explicit/default owner selection."""
+    """Start PPO training actors plus one frozen-policy evaluator."""
     import torch
     import websockets
     from .agent import ActorClient
@@ -102,7 +102,8 @@ async def main() -> None:
     print(
         f"[main] ws={cfg.ws_url}, obs_dim={obs_dim}, "
         f"sensor_layout={sensor_contract.layout_version}, actors={cfg.actors}, "
-        f"train_device={cfg.train_device}, infer_device={cfg.infer_device}, "
+        f"evaluator=1, train_device={cfg.train_device}, "
+        f"infer_device={cfg.infer_device}, "
         f"network={cfg.net_hidden}x{cfg.net_layers}"
     )
 
@@ -131,6 +132,15 @@ async def main() -> None:
         actor = ActorClient(actor_id, cfg, shared_state, experience_q)
         tasks.append(asyncio.create_task(actor.run()))
 
+    evaluator = ActorClient(
+        cfg.actors,
+        cfg,
+        shared_state,
+        experience_q,
+        evaluation=True,
+    )
+    tasks.append(asyncio.create_task(evaluator.run()))
+
     await _supervise_tasks(tasks)
 
 
@@ -139,7 +149,7 @@ def run(argv=None):
     selector = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     selector.add_argument(
         "--mode", choices=("ppo", "distillation"), default="ppo",
-        help="PPO actors (default) or a canonical graph distillation job",
+        help="PPO actors (default) or a canonical graph distillation job runner",
     )
     selected, remaining = selector.parse_known_args(argv)
     if selected.mode == "distillation":
