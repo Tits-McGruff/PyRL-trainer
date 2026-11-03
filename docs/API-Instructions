@@ -49,13 +49,10 @@ current Rust-authoritative server interface and `server/config.toml`.
 9. `sensors.meta` is optional in the schema but is always included by the
    current server build. No additional fields are emitted. Clients should
    ignore unknown fields if they ever appear.
-10. `stats` broadcasts about once per second. `fitnessData` is included by
-    default in the current build but should be treated as optional.
-    `fitnessHistory` is omitted unless a new generation entry has been
-    appended since the last broadcast. `viz` is included only when viz
-    streaming is enabled and MT inference is off (`mtEnabled` in
-    `server/config.toml`). `hofEntry` is included only when a new HoF entry
-    is produced.
+10. `stats` is replaceable display/diagnostic output and should be treated as
+    optional by training clients. PPO actors should drive their control and
+    reward chronology from `sensors`, `assign`, and lifecycle messages rather
+    than assuming a particular stats cadence or legacy inference-pool mode.
 11. Protocol errors attempt to send `{ "type": "error", "message": "..." }`
     before closing. If sending fails, the server may close without a payload
     or with a minimal `{ "type": "error" }`. Clients should treat
@@ -95,19 +92,24 @@ current Rust-authoritative server interface and `server/config.toml`.
     CLI) and cannot be changed live.
 17. Exceeding `maxActionsPerSecond` drops actions silently. There is no
     error message or stats counter exposed to clients.
-18. `tickRateHz` is clamped to `[1, 240]` by `server/config.ts`. The
-    `welcome.tickRate` value is the effective runtime tick rate after
-    clamping.
+18. The Rust-authoritative simulation uses a fixed 60 Hz physics step. The
+    `welcome.tickRate` value is the client-facing cadence metadata and should
+    be used rather than assuming a retired configurable TypeScript tick loop.
 
 ### SensorSpec contract details
 
-19. `sensorSpec.layoutVersion` is `"v3"`. This is the only supported version.
-    Legacy layouts (`v2` and `legacy`) are no longer supported.
-20. `sensorSpec.sensorCount` always equals 19 + (4 * bins). The scalar count
-    is fixed at 19.
-21. All four binned channels (`food`, `hazard`, `wall`, `head`) are always
-    present in the v3 layout.
-22. All sensor values are clamped into `[-1, 1]` by `buildSensors`.
+19. `welcome.sensorSpec` is the canonical sensor contract for the connected
+    server. Current servers can expose the frozen v3 layout or admitted v4
+    Basic/Motion layouts; clients must not infer semantics from vector width.
+20. `sensorSpec.sensorCount` and `sensorSpec.order` define the exact active
+    vector. PyRL validates the complete discovered contract before constructing
+    or resuming a model.
+21. V4 widths depend on profile and bin count, and current Motion/B16 runs use
+    264 inputs. Equal widths do not imply equal channel meanings; use the
+    server-provided contract identity and order.
+22. Sensor numeric semantics are owned by the Rust server contract. Training
+    code should consume the advertised order instead of duplicating a hard-coded
+    v3 formula.
 
 ### Optional UI-oriented messages and binary frames
 
@@ -150,7 +152,7 @@ current Rust-authoritative server interface and `server/config.toml`.
 3. Receive `welcome` (sensor spec, tick rate, versions).
 4. Send `join` with `mode: "player"` and a `name`.
 5. Receive `assign` with your `snakeId`.
-6. Receive `sensors` each tick and send `action` updates.
+6. Receive the ordered asynchronous `sensors` stream and send paced `action` updates.
 7. Handle reassignments when the snake dies.
 
 The server requires `hello` before `join`, and `join` before `action`, `view`,
@@ -256,18 +258,18 @@ The server requires `hello` before `join`, and `join` before `action`, `view`,
   "worldSeed": 987654,
   "cfgHash": "...",
   "sensorSpec": {
-    "sensorCount": 55,
+    "sensorCount": 264,
     "order": ["heading_sin", "heading_cos"],
-    "layoutVersion": "v2"
+    "layoutVersion": "v4"
   },
   "serializerVersion": 1,
   "frameByteLength": 123456
 }
 ```
 
-- `sensorSpec` defines the exact sensor ordering and size.
-- `tickRate` is the effective runtime tick frequency in Hz after config
-  clamping.
+- `sensorSpec` defines the exact sensor ordering, size, layout identity, and
+  any canonical v4 contract metadata supplied by the server.
+- `tickRate` is the server-advertised simulation cadence.
 - `serializerVersion` describes the binary frame layout (UI only).
 - `frameByteLength` is the byte size of a sample frame buffer; real frames
   are variable length.
@@ -296,6 +298,11 @@ The server requires `hello` before `join`, and `join` before `action`, `view`,
 
 - `sensors` is the observation vector for the assigned snake.
 - `meta` contains head position and heading for debugging or overlays.
+- Sensor packets are ordered asynchronous output from committed server steps.
+  The server does not wait for PyRL to acknowledge a packet or return an action
+  before computing the next ordinary step. `tick` identifies the source
+  boundary; PyRL may process several observations between sent actions when its
+  configured action pacing requires that.
 
 #### `stats`
 
