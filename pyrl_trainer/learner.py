@@ -233,7 +233,66 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
     def _evaluate_policy_batch_sync(  # pylint: disable=too-many-locals
         self, batch: Dict[str, torch.Tensor]
     ) -> Dict[str, float]:
-        """Evaluate PPO losses and drift without applying an optimizer step."""
+        """Measure whole-batch PPO drift without building an autograd graph."""
+        with torch.no_grad():
+            obs = batch["obs"]
+            act_turn_latent = batch["act_turn_latent"]
+            act_boost = batch["act_boost"]
+            old_logp = batch["old_logp"]
+            returns = batch["returns"]
+            adv = batch["adv"]
+
+            turn_mean, boost_logit, value = self.train_model(obs)
+            (
+                _action_turn,
+                logp,
+                entropy_turn_values,
+                entropy_boost_values,
+            ) = self._joint_logp_entropy(
+                turn_mean,
+                boost_logit,
+                act_turn_latent,
+                act_boost,
+                self.cfg.turn_std,
+            )
+
+            log_ratio = logp - old_logp
+            ratio = torch.exp(log_ratio)
+            clipped_ratio = torch.clamp(
+                ratio, 1.0 - self.cfg.ppo_clip, 1.0 + self.cfg.ppo_clip
+            )
+            policy_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
+            value_loss = ((returns - value) ** 2).mean()
+            entropy_turn = entropy_turn_values.mean()
+            entropy_boost = entropy_boost_values.mean()
+            entropy = entropy_turn + entropy_boost
+            loss = (
+                policy_loss
+                + self.cfg.vf_coef * value_loss
+                - self.cfg.ent_coef * entropy
+            )
+            approx_kl = ((ratio - 1.0) - log_ratio).mean()
+            clip_fraction = (
+                (torch.abs(ratio - 1.0) > self.cfg.ppo_clip)
+                .to(torch.float32)
+                .mean()
+            )
+
+        return {
+            "loss": float(loss.item()),
+            "policy_loss": float(policy_loss.item()),
+            "value_loss": float(value_loss.item()),
+            "entropy": float(entropy.item()),
+            "entropy_turn": float(entropy_turn.item()),
+            "entropy_boost": float(entropy_boost.item()),
+            "approx_kl": float(approx_kl.item()),
+            "clip_fraction": float(clip_fraction.item()),
+        }
+
+    def _ppo_minibatch_sync(  # pylint: disable=too-many-locals
+        self, batch: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """Run one PPO minibatch, stopping before a step when drift is too large."""
         obs = batch["obs"]
         act_turn_latent = batch["act_turn_latent"]
         act_boost = batch["act_boost"]
@@ -279,6 +338,14 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
                 .mean()
             )
 
+        should_step = float(approx_kl.item()) <= _TARGET_KL
+        if should_step:
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.train_model.parameters(), 1.0)
+            self.optimizer.step()
+            self.update_steps += 1
+
         return {
             "loss": float(loss.item()),
             "policy_loss": float(policy_loss.item()),
@@ -288,57 +355,8 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             "entropy_boost": float(entropy_boost.item()),
             "approx_kl": float(approx_kl.item()),
             "clip_fraction": float(clip_fraction.item()),
+            "optimizer_step": 1.0 if should_step else 0.0,
         }
-
-    def _ppo_minibatch_sync(
-        self, batch: Dict[str, torch.Tensor]
-    ) -> Dict[str, float]:
-        """Evaluate one PPO minibatch and update unless policy drift is too large."""
-        metrics = self._evaluate_policy_batch_sync(batch)
-        should_step = metrics["approx_kl"] <= _TARGET_KL
-        if should_step:
-            self.optimizer.zero_grad(set_to_none=True)
-            loss = (
-                self._evaluate_policy_batch_sync(batch)["loss"]
-            )
-            # Re-evaluate with gradients after the detached metrics pass.
-            obs = batch["obs"]
-            act_turn_latent = batch["act_turn_latent"]
-            act_boost = batch["act_boost"]
-            old_logp = batch["old_logp"]
-            returns = batch["returns"]
-            adv = batch["adv"]
-            turn_mean, boost_logit, value = self.train_model(obs)
-            _turn, logp, entropy_turn_values, entropy_boost_values = (
-                self._joint_logp_entropy(
-                    turn_mean,
-                    boost_logit,
-                    act_turn_latent,
-                    act_boost,
-                    self.cfg.turn_std,
-                )
-            )
-            ratio = torch.exp(logp - old_logp)
-            clipped_ratio = torch.clamp(
-                ratio, 1.0 - self.cfg.ppo_clip, 1.0 + self.cfg.ppo_clip
-            )
-            policy_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
-            value_loss = ((returns - value) ** 2).mean()
-            entropy = entropy_turn_values.mean() + entropy_boost_values.mean()
-            loss_tensor = (
-                policy_loss
-                + self.cfg.vf_coef * value_loss
-                - self.cfg.ent_coef * entropy
-            )
-            if not np.isfinite(loss):
-                raise RuntimeError("non-finite PPO loss")
-            loss_tensor.backward()
-            torch.nn.utils.clip_grad_norm_(self.train_model.parameters(), 1.0)
-            self.optimizer.step()
-            self.update_steps += 1
-
-        metrics["optimizer_step"] = 1.0 if should_step else 0.0
-        return metrics
 
     def _post_update_diagnostics_sync(
         self, batch: Dict[str, torch.Tensor]
