@@ -31,6 +31,9 @@ current Rust-authoritative server interface and `server/config.toml`.
 3. No auth headers, API keys, allowlists, or session tokens are required or
    supported for WebSocket connections. The server does not inspect custom
    headers for WS auth.
+   Trainer actors advertise `binarySensors: true` in the Protocol 2 `hello`.
+   Supporting servers then send `sensors` observations as compact `SNS2` binary
+   packets; lifecycle, stats, assignment, replacement, and error traffic stays JSON.
 4. The server does not implement idle socket timeouts. Client `ping` is
    optional and acts only as a keepalive for intermediaries.
 5. The server explicitly closes with code `1008` on protocol errors only.

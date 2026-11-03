@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import websockets
 
+from .binary_sensors import decode_binary_sensors
 from .config import Config, MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION
 from .sensor_contract import SensorContract, SensorContractError
 from .utils import (
@@ -146,6 +147,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             "type": "hello",
             "clientType": "bot",
             "version": PROTOCOL_VERSION,
+            "binarySensors": True,
         }
         await ws.send(json.dumps(hello))
 
@@ -398,7 +400,9 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         if self.last_assign_tick is None:
             self.last_assign_tick = tick
 
-        sensors = msg.get("sensors") or []
+        sensors = msg.get("sensors")
+        if sensors is None:
+            sensors = []
         obs = np.asarray(sensors, dtype=np.float32)
         if obs.shape[0] != len(self.sensor_order):
             return
@@ -464,6 +468,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         while True:
             raw = await ws.recv()
             if isinstance(raw, (bytes, bytearray)):
+                await self._handle_sensors(decode_binary_sensors(raw), ws)
                 continue
 
             msg = json.loads(raw)
