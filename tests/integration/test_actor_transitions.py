@@ -187,6 +187,54 @@ async def test_terminal_death_uses_configured_penalty_once():
 
 
 @pytest.mark.asyncio
+async def test_generation_replacement_truncates_without_death_penalty():
+    """Generation rollover bootstraps completed PPO work without a fake death."""
+    cfg = Config(reward_death_penalty_magnitude=0.75)
+    experience_q = asyncio.Queue()
+    actor = ActorClient(0, cfg, DummySharedState(), experience_q)
+    actor.snake_id = 1
+    actor.last_assign_tick = 100
+    actor.last_sensor_tick = 160
+    actor.rollout = [
+        Transition(
+            obs=np.zeros(1, dtype=np.float32),
+            action_turn=0.0,
+            turn_latent=0.0,
+            action_boost=0.0,
+            logp=0.0,
+            value=0.1,
+            reward=0.25,
+            done=0.0,
+        )
+    ]
+    actor.pending_transition = Transition(
+        obs=np.ones(1, dtype=np.float32),
+        action_turn=0.0,
+        turn_latent=0.0,
+        action_boost=0.0,
+        logp=0.0,
+        value=0.4,
+        reward=0.0,
+        done=0.0,
+    )
+
+    await actor._on_assign(
+        2,
+        "next-token",
+        replacement_reason="generation",
+    )
+    actor_id, rollout, bootstrap = await experience_q.get()
+
+    assert actor_id == 0
+    assert len(rollout) == 1
+    assert rollout[0].reward == pytest.approx(0.25)
+    assert rollout[0].done == 0.0
+    assert bootstrap == pytest.approx(0.4)
+    assert actor.snake_id == 2
+    assert actor.resume_token == "next-token"
+
+
+@pytest.mark.asyncio
 async def test_state_replacement_applies_zero_death_penalty():
     """State replacement terminates the transition without a death contribution."""
     cfg = Config(reward_death_penalty_magnitude=0.75)
