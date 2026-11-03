@@ -67,11 +67,31 @@ def _expected_sensor_contract(shared_state: Any) -> Optional[SensorContract]:
     return contract
 
 
-def _checkpoint_payload(cfg: Config, shared_state: Any) -> Dict[str, Any]:
-    """Build one checkpoint payload, including persisted best-run metadata."""
-    step = int(shared_state.update_steps)
+def _checkpoint_payload(
+    cfg: Config,
+    shared_state: Any,
+    policy_snapshot: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a recovery or exact-policy checkpoint payload."""
+    snapshot_mode = policy_snapshot is not None
+    if snapshot_mode:
+        if not isinstance(policy_snapshot, dict):
+            raise ValueError("policy snapshot must be a dictionary")
+        model_state = policy_snapshot.get("model")
+        if not isinstance(model_state, dict):
+            raise ValueError("policy snapshot omitted model state")
+        try:
+            step = int(policy_snapshot["update_steps"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("policy snapshot omitted update_steps") from exc
+        optimizer_state = shared_state.fresh_optimizer_state_dict()
+    else:
+        step = int(shared_state.update_steps)
+        model_state = shared_state.train_model.state_dict()
+        optimizer_state = shared_state.optimizer.state_dict()
+
     if step < 0:
-        raise ValueError("shared_state.update_steps must be >= 0")
+        raise ValueError("checkpoint update_steps must be >= 0")
 
     payload: Dict[str, Any] = {
         "checkpoint_schema_version": CHECKPOINT_SCHEMA_VERSION,
@@ -81,12 +101,16 @@ def _checkpoint_payload(cfg: Config, shared_state: Any) -> Dict[str, Any]:
         "net_layers": int(cfg.net_layers),
         "reward_config_version": REWARD_CONFIG_VERSION,
         "reward_config": reward_config_record(cfg),
-        "model": shared_state.train_model.state_dict(),
-        "optimizer": shared_state.optimizer.state_dict(),
+        "model": model_state,
+        "optimizer": optimizer_state,
         "best_lifetime_ticks": max(
             0, int(getattr(shared_state, "best_lifetime_ticks", 0))
         ),
     }
+    if snapshot_mode:
+        payload["policy_snapshot"] = True
+        payload["optimizer_reset_for_policy_snapshot"] = True
+
     best_return = float(
         getattr(shared_state, "best_episode_return", float("-inf"))
     )
@@ -119,9 +143,12 @@ def save_checkpoint(cfg: Config, shared_state: Any) -> None:
 
 
 def save_best_checkpoint(cfg: Config, shared_state: Any) -> Path:
-    """Persist the best observed policy separately from normal recovery files."""
+    """Persist the exact frozen evaluator policy that set the lifetime record."""
     ensure_dir(cfg.ckpt_dir)
-    payload = _checkpoint_payload(cfg, shared_state)
+    snapshot = getattr(shared_state, "best_policy_snapshot", None)
+    if snapshot is None:
+        raise ValueError("best checkpoint requested without a policy snapshot")
+    payload = _checkpoint_payload(cfg, shared_state, policy_snapshot=snapshot)
     directory = Path(cfg.ckpt_dir)
     best_arch = directory / f"best_h{cfg.net_hidden}_l{cfg.net_layers}.pt"
     best = directory / "best.pt"
@@ -348,6 +375,7 @@ def _restore_best_metadata(payload: Dict[str, Any], shared_state: Any) -> None:
         episode_return = float("-inf")
     if math.isfinite(episode_return):
         shared_state.best_episode_return = episode_return
+    shared_state.best_policy_snapshot = None
     shared_state.best_checkpoint_pending = False
 
 
