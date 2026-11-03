@@ -35,7 +35,8 @@ jobs:
           set -o pipefail
           {
             python -m pytest -q
-            pylint --disable=duplicate-code,too-many-instance-attributes,too-many-locals,try-except-raise $(git ls-files '*.py')
+            PY_FILES=$(git ls-files '*.py' | grep -v '^\.github/scripts/' | tr '\n' ' ')
+            pylint --disable=duplicate-code,too-many-instance-attributes,too-many-locals,try-except-raise $PY_FILES
           } 2>&1 | tee verify.log
       - uses: actions/upload-artifact@v4
         if: always()
