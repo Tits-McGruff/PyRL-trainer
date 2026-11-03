@@ -16,6 +16,7 @@ from pyrl_trainer.sync_ppo import (
     _coherent_policy_version,
     _write_exact_best_metadata,
     apply_stable_learning_rate_default,
+    enforce_optimizer_learning_rate,
     restore_exact_best_metadata,
     synchronous_learner_loop,
 )
@@ -100,6 +101,17 @@ def test_explicit_learning_rate_environment_override_is_preserved(tmp_path, monk
 
     assert cfg.lr == pytest.approx(3e-4)
     assert "lr = 0.0003" in path.read_text(encoding="utf-8")
+
+
+def test_resumed_optimizer_uses_current_configured_learning_rate():
+    """Checkpoint Adam metadata cannot silently restore the old aggressive rate."""
+    cfg = _config(lr=1e-4)
+    state = _state(cfg)
+    state.optimizer.param_groups[0]["lr"] = 3e-4
+
+    enforce_optimizer_learning_rate(state)
+
+    assert state.optimizer.param_groups[0]["lr"] == pytest.approx(1e-4)
 
 
 def test_legacy_best_does_not_block_new_exact_evaluator_leaderboard(tmp_path):
