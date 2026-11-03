@@ -87,9 +87,9 @@ def test_boost_entropy_changes_with_logits():
 
 
 def test_ppo_update_uses_all_shuffled_minibatches_and_reports_diagnostics():
-    """PPO covers each epoch and reports entropy and turn-saturation diagnostics."""
+    """PPO covers each epoch when policy drift stays below the KL safety limit."""
     torch.manual_seed(7)
-    cfg = _config(batch_size=8, minibatch=3, epochs=2)
+    cfg = _config(batch_size=8, minibatch=3, epochs=2, lr=1e-8)
     state = SharedState(obs_dim=2, cfg=cfg)
 
     transitions = []
@@ -114,6 +114,7 @@ def test_ppo_update_uses_all_shuffled_minibatches_and_reports_diagnostics():
 
     assert metrics["samples"] == 8.0
     assert metrics["optimizer_steps"] == 6.0
+    assert metrics["kl_early_stopped"] == 0.0
     assert state.update_steps == 6
     assert metrics["entropy"] == pytest.approx(
         metrics["entropy_turn"] + metrics["entropy_boost"], abs=1e-7

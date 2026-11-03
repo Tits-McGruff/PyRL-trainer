@@ -67,9 +67,8 @@ def _expected_sensor_contract(shared_state: Any) -> Optional[SensorContract]:
     return contract
 
 
-def save_checkpoint(cfg: Config, shared_state: Any) -> None:
-    """Persist a schema-v2 checkpoint atomically and rotate old recovery files."""
-    ensure_dir(cfg.ckpt_dir)
+def _checkpoint_payload(cfg: Config, shared_state: Any) -> Dict[str, Any]:
+    """Build one checkpoint payload, including persisted best-run metadata."""
     step = int(shared_state.update_steps)
     if step < 0:
         raise ValueError("shared_state.update_steps must be >= 0")
@@ -84,10 +83,27 @@ def save_checkpoint(cfg: Config, shared_state: Any) -> None:
         "reward_config": reward_config_record(cfg),
         "model": shared_state.train_model.state_dict(),
         "optimizer": shared_state.optimizer.state_dict(),
+        "best_lifetime_ticks": max(
+            0, int(getattr(shared_state, "best_lifetime_ticks", 0))
+        ),
     }
+    best_return = float(
+        getattr(shared_state, "best_episode_return", float("-inf"))
+    )
+    if math.isfinite(best_return):
+        payload["best_episode_return"] = best_return
+
     contract = _expected_sensor_contract(shared_state)
     if contract is not None:
         payload.update(contract.checkpoint_fields())
+    return payload
+
+
+def save_checkpoint(cfg: Config, shared_state: Any) -> None:
+    """Persist a schema-v2 checkpoint atomically and rotate old recovery files."""
+    ensure_dir(cfg.ckpt_dir)
+    payload = _checkpoint_payload(cfg, shared_state)
+    step = int(payload["update_steps"])
 
     directory = Path(cfg.ckpt_dir)
     numbered = directory / (
@@ -100,6 +116,19 @@ def save_checkpoint(cfg: Config, shared_state: Any) -> None:
     _atomic_torch_save(payload, latest_arch)
     _atomic_torch_save(payload, latest)
     _rotate_numbered(cfg)
+
+
+def save_best_checkpoint(cfg: Config, shared_state: Any) -> Path:
+    """Persist the best observed policy separately from normal recovery files."""
+    ensure_dir(cfg.ckpt_dir)
+    payload = _checkpoint_payload(cfg, shared_state)
+    directory = Path(cfg.ckpt_dir)
+    best_arch = directory / f"best_h{cfg.net_hidden}_l{cfg.net_layers}.pt"
+    best = directory / "best.pt"
+
+    _atomic_torch_save(payload, best_arch)
+    _atomic_torch_save(payload, best)
+    return best_arch
 
 
 def _checkpoint_candidates(cfg: Config) -> List[Tuple[int, Path]]:
@@ -307,6 +336,21 @@ def _load_candidate(
     return payload, schema_version, legacy_assumption, None
 
 
+def _restore_best_metadata(payload: Dict[str, Any], shared_state: Any) -> None:
+    """Restore optional best-run metadata from new checkpoints."""
+    lifetime = _integer_field(payload, "best_lifetime_ticks", 0)
+    if lifetime is not None:
+        shared_state.best_lifetime_ticks = lifetime
+
+    try:
+        episode_return = float(payload.get("best_episode_return", float("-inf")))
+    except (TypeError, ValueError):
+        episode_return = float("-inf")
+    if math.isfinite(episode_return):
+        shared_state.best_episode_return = episode_return
+    shared_state.best_checkpoint_pending = False
+
+
 def load_checkpoint_if_present(cfg: Config, shared_state: Any) -> Optional[Path]:
     """Load the highest-update compatible recoverable checkpoint transactionally."""
     candidates = _checkpoint_candidates(cfg)
@@ -360,6 +404,7 @@ def load_checkpoint_if_present(cfg: Config, shared_state: Any) -> Optional[Path]
             shared_state.sync_infer_from_train()
             continue
 
+        _restore_best_metadata(payload, shared_state)
         contract = _expected_sensor_contract(shared_state)
         layout = contract.layout_version if contract is not None else "none"
         reward_version = (

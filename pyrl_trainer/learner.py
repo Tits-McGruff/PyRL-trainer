@@ -9,11 +9,14 @@ import torch
 from torch import optim
 
 from .agent import Transition  # Circular import if not careful, but Transition is data
-from .checkpointing import save_checkpoint
+from .checkpointing import save_best_checkpoint, save_checkpoint
 from .config import Config
 from .network import PolicyValueNet
 from .sensor_contract import SensorContract
 from .utils import REWARD_COMPONENT_KEYS
+
+
+_TARGET_KL = 0.025
 
 
 class SharedState:  # pylint: disable=too-many-instance-attributes
@@ -51,6 +54,10 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         self._episode_count = 0
         self._episode_return_sum = 0.0
         self._episode_lifetime_sum = 0.0
+
+        self.best_lifetime_ticks = 0
+        self.best_episode_return = float("-inf")
+        self.best_checkpoint_pending = False
 
     def _sync_infer_from_train(self) -> None:
         """Copy training weights to the actor inference model."""
@@ -125,10 +132,27 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
                 self._reward_totals[key] += float(value)
 
     def record_episode(self, episode_return: float, lifetime_ticks: int) -> None:
-        """Accumulate one completed episode for interval diagnostics."""
+        """Accumulate diagnostics and flag a new lifetime record for preservation."""
+        normalized_return = float(episode_return)
+        normalized_lifetime = max(0, int(lifetime_ticks))
+
         self._episode_count += 1
-        self._episode_return_sum += float(episode_return)
-        self._episode_lifetime_sum += float(max(0, lifetime_ticks))
+        self._episode_return_sum += normalized_return
+        self._episode_lifetime_sum += float(normalized_lifetime)
+
+        if normalized_lifetime <= 0:
+            return
+        better_lifetime = normalized_lifetime > self.best_lifetime_ticks
+        tied_lifetime = normalized_lifetime == self.best_lifetime_ticks
+        better_tiebreak = normalized_return > self.best_episode_return
+        if better_lifetime or (tied_lifetime and better_tiebreak):
+            self.best_lifetime_ticks = normalized_lifetime
+            self.best_episode_return = normalized_return
+            self.best_checkpoint_pending = True
+
+    def mark_best_checkpoint_saved(self) -> None:
+        """Clear the pending best-save flag after a successful atomic save."""
+        self.best_checkpoint_pending = False
 
     def drain_runtime_stats(self) -> Dict[str, float]:
         """Return and reset bounded actor-side training diagnostics."""
@@ -155,7 +179,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
     def _ppo_minibatch_sync(  # pylint: disable=too-many-locals
         self, batch: Dict[str, torch.Tensor]
     ) -> Dict[str, float]:
-        """Run one optimizer step for one shuffled PPO minibatch."""
+        """Evaluate one PPO minibatch and update unless policy drift is too large."""
         obs = batch["obs"]
         act_turn_latent = batch["act_turn_latent"]
         act_boost = batch["act_boost"]
@@ -202,12 +226,14 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
                 .mean()
             )
 
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.train_model.parameters(), 1.0)
-        self.optimizer.step()
+        should_step = float(approx_kl.item()) <= _TARGET_KL
+        if should_step:
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.train_model.parameters(), 1.0)
+            self.optimizer.step()
+            self.update_steps += 1
 
-        self.update_steps += 1
         return {
             "loss": float(loss.item()),
             "policy_loss": float(policy_loss.item()),
@@ -217,12 +243,13 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             "entropy_boost": float(entropy_boost.item()),
             "approx_kl": float(approx_kl.item()),
             "clip_fraction": float(clip_fraction.item()),
+            "optimizer_step": 1.0 if should_step else 0.0,
         }
 
     def _ppo_update_batch_sync(
         self, batch: Dict[str, torch.Tensor]
     ) -> Dict[str, float]:
-        """Run shuffled PPO minibatches for all configured epochs."""
+        """Run shuffled PPO minibatches, stopping early if target KL is exceeded."""
         sample_count = int(batch["obs"].shape[0])
         if sample_count <= 0:
             raise ValueError("PPO batch must contain at least one sample")
@@ -240,6 +267,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         }
         weighted_samples = 0
         optimizer_steps = 0
+        kl_early_stopped = False
 
         for _ in range(max(1, int(self.cfg.epochs))):
             order = torch.randperm(sample_count, device=batch["obs"].device)
@@ -249,12 +277,18 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
                     key: value.index_select(0, index)
                     for key, value in batch.items()
                 }
-                metrics = self._ppo_minibatch_sync(mini)
+                mini_metrics = self._ppo_minibatch_sync(mini)
                 weight = int(index.numel())
                 weighted_samples += weight
-                optimizer_steps += 1
+                optimizer_steps += int(mini_metrics["optimizer_step"])
                 for key in totals:
-                    totals[key] += metrics[key] * weight
+                    totals[key] += mini_metrics[key] * weight
+
+                if mini_metrics["optimizer_step"] < 0.5:
+                    kl_early_stopped = True
+                    break
+            if kl_early_stopped:
+                break
 
         with torch.no_grad():
             turn_mean, _boost_logit, values = self.train_model(batch["obs"])
@@ -285,6 +319,8 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         metrics["turn_saturated_fraction"] = turn_saturated_fraction
         metrics["optimizer_steps"] = float(optimizer_steps)
         metrics["samples"] = float(sample_count)
+        metrics["target_kl"] = _TARGET_KL
+        metrics["kl_early_stopped"] = 1.0 if kl_early_stopped else 0.0
         return metrics
 
     async def ppo_update_async(
@@ -433,6 +469,22 @@ async def learner_loop(  # pylint: disable=too-many-locals
         metrics = await shared_state.ppo_update_async(batch)
         updates += 1
 
+        if shared_state.best_checkpoint_pending:
+            try:
+                best_path = save_best_checkpoint(cfg, shared_state)
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(
+                    f"[learner] best checkpoint save failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            else:
+                shared_state.mark_best_checkpoint_saved()
+                print(
+                    f"[learner] best checkpoint saved path={best_path}, "
+                    f"lifetime_ticks={shared_state.best_lifetime_ticks}, "
+                    f"ep_return={shared_state.best_episode_return:.3f}"
+                )
+
         if cfg.save_every_updates > 0 and (updates % cfg.save_every_updates) == 0:
             try:
                 save_checkpoint(cfg, shared_state)
@@ -464,6 +516,7 @@ async def learner_loop(  # pylint: disable=too-many-locals
                 f"entropy_turn={metrics['entropy_turn']:.4f}, "
                 f"entropy_boost={metrics['entropy_boost']:.4f}, "
                 f"kl={metrics['approx_kl']:.5f}, "
+                f"kl_stop={int(metrics['kl_early_stopped'])}, "
                 f"clip={metrics['clip_fraction']:.3f}, "
                 f"ev={metrics['explained_variance']:.3f}, "
                 f"turn_abs_mean={metrics['turn_mean_abs_mean']:.3f}, "
