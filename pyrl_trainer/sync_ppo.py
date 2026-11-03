@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -16,6 +18,7 @@ from .agent import ActorClient, Transition
 from .checkpointing import save_best_checkpoint, save_checkpoint
 from .config import Config
 from .learner import SharedState, collate_rollouts
+from .utils import default_reward_components
 
 
 _STABLE_PPO_LR = 1e-4
@@ -54,22 +57,32 @@ def apply_stable_learning_rate_default(cfg: Config, config_path: str) -> None:
             pass
 
 
+def enforce_optimizer_learning_rate(shared_state: "SynchronousSharedState") -> None:
+    """Keep a resumed Adam optimizer on the configured LR instead of checkpoint LR."""
+    target = float(shared_state.cfg.lr)
+    for param_group in shared_state.optimizer.param_groups:
+        param_group["lr"] = target
+
+
 def _best_meta_path(cfg: Config) -> Path:
     return Path(cfg.ckpt_dir) / _EXACT_BEST_META
 
 
 def restore_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedState") -> None:
     """Separate legacy training-actor records from exact frozen-evaluator records."""
-    shared_state.legacy_best_lifetime_ticks = max(
+    checkpoint_lifetime = max(
         0, int(getattr(shared_state, "best_lifetime_ticks", 0))
     )
-    legacy_return = float(getattr(shared_state, "best_episode_return", float("-inf")))
-    shared_state.legacy_best_episode_return = legacy_return
+    checkpoint_return = float(
+        getattr(shared_state, "best_episode_return", float("-inf"))
+    )
 
     shared_state.best_lifetime_ticks = 0
     shared_state.best_episode_return = float("-inf")
     shared_state.best_policy_snapshot = None
     shared_state.best_checkpoint_pending = False
+    shared_state.legacy_best_lifetime_ticks = checkpoint_lifetime
+    shared_state.legacy_best_episode_return = checkpoint_return
 
     path = _best_meta_path(cfg)
     try:
@@ -82,13 +95,21 @@ def restore_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedSta
     try:
         lifetime = int(payload["lifetime_ticks"])
         episode_return = float(payload["episode_return"])
+        legacy_lifetime = int(payload.get("legacy_lifetime_ticks", 0))
+        legacy_return = float(payload.get("legacy_episode_return", float("-inf")))
     except (KeyError, TypeError, ValueError):
         return
-    if lifetime <= 0:
+    if lifetime <= 0 or not math.isfinite(episode_return):
         return
 
     shared_state.best_lifetime_ticks = lifetime
     shared_state.best_episode_return = episode_return
+    if legacy_lifetime > 0:
+        shared_state.legacy_best_lifetime_ticks = legacy_lifetime
+        shared_state.legacy_best_episode_return = legacy_return
+    elif checkpoint_lifetime == lifetime:
+        shared_state.legacy_best_lifetime_ticks = 0
+        shared_state.legacy_best_episode_return = float("-inf")
 
 
 def _write_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedState") -> None:
@@ -100,7 +121,12 @@ def _write_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedStat
         "lifetime_ticks": int(shared_state.best_lifetime_ticks),
         "episode_return": float(shared_state.best_episode_return),
         "policy_version": int(snapshot.get("update_steps", -1)),
+        "legacy_lifetime_ticks": int(shared_state.legacy_best_lifetime_ticks),
     }
+    if math.isfinite(shared_state.legacy_best_episode_return):
+        payload["legacy_episode_return"] = float(
+            shared_state.legacy_best_episode_return
+        )
     temp_path = path.with_name(f".{path.name}.tmp")
     try:
         temp_path.write_text(
@@ -256,7 +282,7 @@ class SynchronousActorClient(ActorClient):
         if had_episode:
             self._record_episode(lifetime_ticks)
 
-    async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
+    async def _handle_sensors(self, msg: Dict[str, object], ws) -> None:
         if self.snake_id is None:
             return
         if int(msg.get("snakeId", -1)) != self.snake_id:
@@ -280,7 +306,9 @@ class SynchronousActorClient(ActorClient):
             self.evaluation and self.episode_actions > 0
         )
         if self.last_obs is not None and reward_ready:
-            components = self._reward_components(self.last_obs, obs)
+            components = default_reward_components(
+                self.last_obs, obs, self.sensor_idx, self.cfg
+            )
             reward = float(sum(components.values()))
             if self.pending_transition is not None:
                 self.pending_transition.reward += reward
@@ -330,13 +358,7 @@ class SynchronousActorClient(ActorClient):
         }
         await ws.send(json.dumps(action_msg))
         self.last_sent_tick = tick
-        self.last_sent_time = asyncio.get_running_loop().time()
-
-    def _reward_components(self, previous: np.ndarray, current: np.ndarray) -> Dict[str, float]:
-        """Call the canonical reward helper while keeping the overridden sensor loop compact."""
-        from .utils import default_reward_components  # pylint: disable=import-outside-toplevel
-
-        return default_reward_components(previous, current, self.sensor_idx, self.cfg)
+        self.last_sent_time = time.monotonic()
 
 
 def _save_pending_exact_best(cfg: Config, shared_state: SynchronousSharedState) -> None:
@@ -383,8 +405,6 @@ async def synchronous_learner_loop(
     experience_q: asyncio.Queue,
 ) -> None:
     """Wait for one contribution from every actor, update once, then publish the next policy."""
-    import time  # pylint: disable=import-outside-toplevel
-
     last_log = time.time()
     update_rounds = 0
     total_steps = 0
