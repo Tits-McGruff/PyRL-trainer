@@ -73,15 +73,23 @@ async def _supervise_tasks(tasks: Iterable[asyncio.Task]) -> None:
 
 
 async def main() -> None:
-    """Start PPO training actors plus one frozen-policy evaluator."""
+    """Start synchronized PPO training actors plus one frozen-policy evaluator."""
     import torch
     import websockets
-    from .agent import ActorClient
     from .checkpointing import load_checkpoint_if_present
     from .config import load_or_create_config
-    from .learner import SharedState, learner_loop
+    from .sync_ppo import (
+        SynchronousActorClient,
+        SynchronousSharedState,
+        apply_stable_learning_rate_default,
+        enforce_optimizer_learning_rate,
+        restore_exact_best_metadata,
+        synchronous_learner_loop,
+    )
 
-    cfg = load_or_create_config(os.environ.get("SLITHER_CONFIG", "config.toml"))
+    config_path = os.environ.get("SLITHER_CONFIG", "config.toml")
+    cfg = load_or_create_config(config_path)
+    apply_stable_learning_rate_default(cfg, config_path)
 
     if str(cfg.train_device).startswith("cuda") and torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -103,11 +111,11 @@ async def main() -> None:
         f"[main] ws={cfg.ws_url}, obs_dim={obs_dim}, "
         f"sensor_layout={sensor_contract.layout_version}, actors={cfg.actors}, "
         f"evaluator=1, train_device={cfg.train_device}, "
-        f"infer_device={cfg.infer_device}, "
-        f"network={cfg.net_hidden}x{cfg.net_layers}"
+        f"infer_device={cfg.infer_device}, lr={cfg.lr:g}, "
+        f"network={cfg.net_hidden}x{cfg.net_layers}, collection=barrier"
     )
 
-    shared_state = SharedState(
+    shared_state = SynchronousSharedState(
         obs_dim=obs_dim,
         cfg=cfg,
         sensor_contract=sensor_contract,
@@ -115,24 +123,33 @@ async def main() -> None:
 
     try:
         loaded = load_checkpoint_if_present(cfg, shared_state)
+        enforce_optimizer_learning_rate(shared_state)
+        restore_exact_best_metadata(cfg, shared_state)
         if loaded is not None:
             print(
                 f"[main] resumed from {loaded} "
-                f"at update_steps={shared_state.update_steps}"
+                f"at update_steps={shared_state.update_steps}, "
+                f"exact_best={shared_state.best_lifetime_ticks}, "
+                f"legacy_best={shared_state.legacy_best_lifetime_ticks}, "
+                f"lr={shared_state.optimizer.param_groups[0]['lr']:g}"
             )
     except (OSError, RuntimeError) as exc:
         print(f"[main] checkpoint load failed: {type(exc).__name__}: {exc}")
 
-    experience_q: asyncio.Queue = asyncio.Queue(maxsize=cfg.actors * 4)
+    experience_q: asyncio.Queue = asyncio.Queue(maxsize=cfg.actors * 2)
 
     tasks = [
-        asyncio.create_task(learner_loop(cfg, shared_state, experience_q))
+        asyncio.create_task(
+            synchronous_learner_loop(cfg, shared_state, experience_q)
+        )
     ]
     for actor_id in range(cfg.actors):
-        actor = ActorClient(actor_id, cfg, shared_state, experience_q)
+        actor = SynchronousActorClient(
+            actor_id, cfg, shared_state, experience_q
+        )
         tasks.append(asyncio.create_task(actor.run()))
 
-    evaluator = ActorClient(
+    evaluator = SynchronousActorClient(
         cfg.actors,
         cfg,
         shared_state,
