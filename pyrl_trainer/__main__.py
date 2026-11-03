@@ -82,6 +82,7 @@ async def main() -> None:
         SynchronousActorClient,
         SynchronousSharedState,
         apply_stable_learning_rate_default,
+        enforce_optimizer_learning_rate,
         restore_exact_best_metadata,
         synchronous_learner_loop,
     )
@@ -122,13 +123,15 @@ async def main() -> None:
 
     try:
         loaded = load_checkpoint_if_present(cfg, shared_state)
+        enforce_optimizer_learning_rate(shared_state)
         restore_exact_best_metadata(cfg, shared_state)
         if loaded is not None:
             print(
                 f"[main] resumed from {loaded} "
                 f"at update_steps={shared_state.update_steps}, "
                 f"exact_best={shared_state.best_lifetime_ticks}, "
-                f"legacy_best={shared_state.legacy_best_lifetime_ticks}"
+                f"legacy_best={shared_state.legacy_best_lifetime_ticks}, "
+                f"lr={shared_state.optimizer.param_groups[0]['lr']:g}"
             )
     except (OSError, RuntimeError) as exc:
         print(f"[main] checkpoint load failed: {type(exc).__name__}: {exc}")
