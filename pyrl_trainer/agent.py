@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -431,6 +431,65 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         if had_episode:
             self._record_episode(lifetime_ticks)
 
+    def _sample_action(
+        self, obs: np.ndarray
+    ) -> Tuple[float, float, float, float, float, int]:
+        """Sample from the live training policy or the episode's frozen evaluator."""
+        policy_version = int(
+            getattr(self.shared_state, "published_policy_version", 0)
+        )
+        policy_model = None
+        if self.evaluation:
+            if self.episode_policy_model is None:
+                raise RuntimeError("evaluation episode has no frozen policy")
+            policy_model = self.episode_policy_model
+            policy_version = int(
+                (self.episode_policy_snapshot or {}).get(
+                    "update_steps", policy_version
+                )
+            )
+
+        with torch.no_grad():
+            turn, boost, logp, value, turn_latent = self.shared_state.act(
+                obs,
+                turn_std=self.cfg.turn_std,
+                policy_model=policy_model,
+            )
+        return turn, boost, logp, value, turn_latent, policy_version
+
+    async def _store_training_action(
+        self,
+        obs: np.ndarray,
+        turn: float,
+        boost: float,
+        logp: float,
+        value: float,
+        turn_latent: float,
+        policy_version: int,
+    ) -> None:
+        """Finish the prior transition and stage the newly sampled training action."""
+        if self.pending_transition is not None:
+            self.rollout.append(self.pending_transition)
+            self.pending_transition = None
+
+        if len(self.rollout) >= self.cfg.horizon:
+            await self.experience_q.put(
+                (self.actor_id, list(self.rollout), float(value))
+            )
+            self.rollout.clear()
+
+        self.pending_transition = Transition(
+            obs=obs,
+            action_turn=turn,
+            turn_latent=turn_latent,
+            action_boost=boost,
+            logp=logp,
+            value=value,
+            reward=0.0,
+            done=0.0,
+            policy_version=policy_version,
+        )
+
     async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
         if self.snake_id is None:
             return
@@ -467,59 +526,18 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         if not self._should_send_action(tick):
             return
 
-        policy_version = int(
-            getattr(self.shared_state, "published_policy_version", 0)
+        turn, boost, logp, value, turn_latent, policy_version = (
+            self._sample_action(obs)
         )
-        with torch.no_grad():
-            if self.evaluation:
-                if self.episode_policy_model is None:
-                    raise RuntimeError("evaluation episode has no frozen policy")
-                policy_version = int(
-                    (self.episode_policy_snapshot or {}).get(
-                        "update_steps", policy_version
-                    )
-                )
-                (
-                    turn,
-                    boost,
-                    logp,
-                    value,
-                    turn_latent,
-                ) = self.shared_state.act(
-                    obs,
-                    turn_std=self.cfg.turn_std,
-                    policy_model=self.episode_policy_model,
-                )
-            else:
-                (
-                    turn,
-                    boost,
-                    logp,
-                    value,
-                    turn_latent,
-                ) = self.shared_state.act(obs, turn_std=self.cfg.turn_std)
-
         if not self.evaluation:
-            if self.pending_transition is not None:
-                self.rollout.append(self.pending_transition)
-                self.pending_transition = None
-
-            if len(self.rollout) >= self.cfg.horizon:
-                await self.experience_q.put(
-                    (self.actor_id, list(self.rollout), float(value))
-                )
-                self.rollout.clear()
-
-            self.pending_transition = Transition(
-                obs=obs,
-                action_turn=turn,
-                turn_latent=turn_latent,
-                action_boost=boost,
-                logp=logp,
-                value=value,
-                reward=0.0,
-                done=0.0,
-                policy_version=policy_version,
+            await self._store_training_action(
+                obs,
+                turn,
+                boost,
+                logp,
+                value,
+                turn_latent,
+                policy_version,
             )
 
         self.steps += 1
