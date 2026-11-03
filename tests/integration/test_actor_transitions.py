@@ -78,6 +78,50 @@ async def test_transitions_align_with_stride(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_burst_observation_stream_processes_every_sensor_between_actions(monkeypatch):
+    """Queued sensor bursts remain ordered even when action pacing skips ticks."""
+    cfg = Config(max_actions_per_second=0, horizon=20)
+    actor = ActorClient(0, cfg, DummySharedState(), asyncio.Queue())
+    actor.snake_id = 1
+    actor.stride = 3
+    actor.sensor_order = ["points_delta_norm"]
+    actor.sensor_idx = {"points_delta_norm": 0}
+
+    monkeypatch.setattr(
+        "pyrl_trainer.agent.default_reward_components",
+        lambda prev, obs, idx, reward_cfg: {
+            "growth": float(obs[0] - prev[0]),
+            "food_approach": 0.0,
+            "survival": 0.0,
+            "wall": 0.0,
+            "hazard": 0.0,
+        },
+    )
+
+    ws = DummyWS()
+    for tick in [10, 11, 12, 13, 14]:
+        await actor._handle_sensors(
+            {
+                "type": "sensors",
+                "tick": tick,
+                "snakeId": 1,
+                "sensors": [float(tick)],
+            },
+            ws,
+        )
+
+    assert len(ws.sent) == 2
+    assert [json.loads(value)["tick"] for value in ws.sent] == [10, 13]
+    assert actor.last_sensor_tick == 14
+    assert actor.last_obs is not None
+    assert actor.last_obs[0] == pytest.approx(14.0)
+    assert len(actor.rollout) == 1
+    assert actor.rollout[0].reward == pytest.approx(3.0)
+    assert actor.pending_transition is not None
+    assert actor.pending_transition.reward == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
 async def test_import_replacement_rejoins_without_stale_token():
     """A live import ends the old episode and sends one fresh Protocol 2 join."""
     actor = ActorClient(
