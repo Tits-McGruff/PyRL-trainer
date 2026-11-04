@@ -586,3 +586,6 @@ Routine Quality CI runs lint, ordinary tests and small CPU native format/parity
 smokes. Larger ablations, wide-graph qualification and live distillation are in the
 manual Qualification workflow. New ablation runs require committed source;
 `--allow-dirty` is an explicit local diagnostic option and records dirty paths.
+
+Large production graphs, completed-model export and the explicit admission-only
+checkpoint migration are documented in [large-brain recovery](docs/large-brain-recovery.md).

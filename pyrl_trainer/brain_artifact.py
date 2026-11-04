@@ -60,7 +60,8 @@ def encode_brain_artifact(manifest, weights, provenance):
     if not isinstance(manifest, CanonicalGraphManifest) or not isinstance(weights, bytes):
         raise DistillationContractError("invalid canonical brain export inputs")
     if (
-        len(weights) != manifest.total_parameters * 4
+        not 0 <= manifest.total_parameters <= CONSTANTS["maxBrainParameters"]
+        or len(weights) != manifest.total_parameters * 4
         or not np.isfinite(np.frombuffer(weights, dtype="<f4")).all()
     ):
         raise DistillationContractError("brain weight count/finite admission")
@@ -114,7 +115,7 @@ def read_raw_brain_artifact(data):
         or encoding != 0
         or data[13:16] != b"\0\0\0"
         or json_bytes > 1024 * 1024
-        or count > 1000000
+        or count > CONSTANTS["maxBrainParameters"]
         or stored != count * 4
         or len(data) != HEADER.size + json_bytes + stored
     ):

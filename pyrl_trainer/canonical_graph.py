@@ -19,6 +19,9 @@ import numpy as np
 import torch
 from torch import nn
 
+MAX_PARAMETERS = CONSTANTS["maxBrainParameters"]
+MAX_TENSOR_WIDTH = CONSTANTS["maxBrainTensorWidth"]
+MAX_STATE_FLOATS = CONSTANTS["maxBrainStateFloats"]
 MAX_MANIFEST_BYTES = CONSTANTS["maxManifestBytes"]
 EQUATION_FIELDS_V1 = tuple(CONSTANTS["equationFieldOrder"])
 EQUATIONS_SHA256_V1 = hashlib.sha256(
@@ -103,11 +106,11 @@ def _parameter_views(raw, node, owners):
         if not isinstance(name, str) or not 1 <= len(name) <= 32 or name in names:
             raise CanonicalGraphError("invalid or duplicate parameter name")
         names.add(name)
-        shape = tuple(_integer(size, 512, 1) for size in block["shape"])
-        strides = tuple(_integer(size, 513, 1) for size in block["strides"])
+        shape = tuple(_integer(size, MAX_TENSOR_WIDTH, 1) for size in block["shape"])
+        strides = tuple(_integer(size, MAX_TENSOR_WIDTH + 1, 1) for size in block["strides"])
         if len(shape) not in (1, 2) or len(strides) != len(shape):
             raise CanonicalGraphError("invalid parameter view rank")
-        count = _integer(block["length"], 1_000_000, 1)
+        count = _integer(block["length"], MAX_PARAMETERS, 1)
         offset = _integer(block["offset"], len(owners))
         if count != math.prod(shape):
             raise CanonicalGraphError("parameter shape/count mismatch")
@@ -166,7 +169,7 @@ def _state_views(raw, operation, hidden, state_range, owners):
     for name, block in zip(expected, raw):
         _keys(block, wire.TrainingStateBlock)
         _integer(block["offset"], len(owners))
-        _integer(block["length"], 512, 1)
+        _integer(block["length"], MAX_TENSOR_WIDTH, 1)
         if block["name"] != name or block["offset"] != offset or block["length"] != hidden:
             raise CanonicalGraphError("hidden/cell layout mismatch")
         if offset is None or offset + hidden > len(owners):
@@ -202,10 +205,11 @@ def _node(raw, prior, parameter_owners, state_owners):
         "Split",
     ):
         raise CanonicalGraphError("duplicate node or unsupported operation")
-    input_size = _integer(raw["inputSize"], 512, 1)
-    output_sizes = tuple(_integer(size, 512, 1) for size in raw["outputSizes"])
-    hidden_sizes = tuple(_integer(size, 512, 1) for size in raw["hiddenSizes"])
-    if not 1 <= len(output_sizes) <= 16 or sum(output_sizes) > 512 or len(hidden_sizes) > 8:
+    input_size = _integer(raw["inputSize"], MAX_TENSOR_WIDTH, 1)
+    output_sizes = tuple(_integer(size, MAX_TENSOR_WIDTH, 1) for size in raw["outputSizes"])
+    hidden_sizes = tuple(_integer(size, MAX_TENSOR_WIDTH, 1) for size in raw["hiddenSizes"])
+    if (not 1 <= len(output_sizes) <= 16 or sum(output_sizes) > MAX_TENSOR_WIDTH
+            or len(hidden_sizes) > 8):
         raise CanonicalGraphError("invalid node widths")
     if operation != "Split" and len(output_sizes) != 1:
         raise CanonicalGraphError("multiple outputs on nonsplit node")
@@ -213,7 +217,7 @@ def _node(raw, prior, parameter_owners, state_owners):
         raise CanonicalGraphError("hidden layers on non-MLP node")
     hidden = raw["hiddenSize"]
     if operation in ("GRU", "LSTM", "RRU"):
-        hidden = _integer(hidden, 512, 1)
+        hidden = _integer(hidden, MAX_TENSOR_WIDTH, 1)
         if output_sizes != (hidden,):
             raise CanonicalGraphError("recurrent hidden/output mismatch")
     elif hidden is not None:
@@ -336,8 +340,8 @@ class CanonicalGraphManifest:
         sensor = json.loads(sensor_bytes)
         if sensor["inputSize"] != input_size or len(sensor["order"]) != input_size:
             raise CanonicalGraphError("sensor width/order mismatch")
-        parameters = _integer(raw["totalParameters"], 1_000_000)
-        state_size = _integer(raw["totalStateSize"], 16384)
+        parameters = _integer(raw["totalParameters"], MAX_PARAMETERS)
+        state_size = _integer(raw["totalStateSize"], MAX_STATE_FLOATS)
         parameter_owners, state_owners = bytearray(parameters), bytearray(state_size)
         if not isinstance(raw["nodes"], list) or not 1 <= len(raw["nodes"]) <= 64:
             raise CanonicalGraphError("invalid node count")

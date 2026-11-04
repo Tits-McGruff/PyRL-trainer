@@ -12,6 +12,8 @@ from pathlib import Path
 import sys
 import time
 
+from slither_contracts import CONSTANTS
+
 import torch
 
 from .canonical_graph import CanonicalGraph, CanonicalGraphManifest
@@ -49,7 +51,8 @@ def _arguments():
         parser.error("burn-in plus BPTT exceeds 256 deliveries")
     if args.output.exists() or not args.output.parent.is_dir():
         parser.error("report must be new with an existing parent")
-    if args.manifest.stat().st_size > 1024**2 or args.weights.stat().st_size > 4_000_000:
+    if (args.manifest.stat().st_size > 1024**2
+            or args.weights.stat().st_size > CONSTANTS["maxBrainWeightBytes"]):
         parser.error("canonical source file exceeds admission")
     return args
 
