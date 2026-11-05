@@ -68,6 +68,8 @@ def reward(kind="initial", *, snake_id=7):
                        observationSequence="0000000000000001",
                        previousObservationSequence=None, toStep=payload["fromStep"])
         payload["deltas"] = {name: 0 for name in payload["deltas"]}
+        payload["state"]["bodyLength"] = payload["state"]["startingLength"]
+        payload["state"]["retainedGrowth"] = 0
     else:
         payload["transitionKind"] = kind
         payload["reason"] = {
@@ -195,6 +197,8 @@ async def test_multiple_observations_accumulate_without_new_decisions(motion_spe
                                  "sensors": np.zeros(motion_spec["sensorCount"]),
                                  "reward": first}, socket)
     second = deepcopy(first)
+    second["state"]["bodyLength"] += 1
+    second["state"]["retainedGrowth"] += 1
     second.update(observationSequence="0000000000000004",
                   previousObservationSequence=first["observationSequence"],
                   fromStep=first["toStep"], toStep="0000000000000002")
@@ -243,6 +247,8 @@ async def test_barrier_wait_counts_received_events_without_mutating_submitted_re
                                  "reward": first}, Socket())
     contribution = queue.get_nowait()
     second = deepcopy(first)
+    second["state"]["bodyLength"] += 1
+    second["state"]["retainedGrowth"] += 1
     second.update(observationSequence="0000000000000004",
                   previousObservationSequence=first["observationSequence"],
                   fromStep=first["toStep"], toStep="0000000000000002")
@@ -340,6 +346,10 @@ async def test_evaluator_caps_at_complete_reward_boundary_without_death(actor_ty
     assert result["duration_overshoot_seconds"] == pytest.approx(1 / 60 - 0.01)
     assert result["raw_deltas"]["foodValueDelta"] == 1
     assert result["raw_deltas"]["retainedGrowthDelta"] == 1
+    assert result["starting_body_length"] == 12
+    assert result["initial_observed_body_length"] == 12
+    assert result["final_body_length"] == 13
+    assert result["retained_growth"] == 1
     assert result["reward_components"]["death"] == 0
     assert result["episode_return"] == pytest.approx(0.35)
     assert result["sampling_seed"] == 41
@@ -449,6 +459,8 @@ async def test_valid_zero_step_death_can_be_first_negative_incumbent(motion_spec
     closure = reward("terminal")
     closure["toStep"] = closure["fromStep"]
     closure["deltas"] = {name: 0 for name in closure["deltas"]}
+    closure["state"]["bodyLength"] = closure["state"]["startingLength"]
+    closure["state"]["retainedGrowth"] = 0
     await actor._handle_transition({"type": "transition", "reward": closure})
     assert state.best_episode_return == -0.5
     assert state.best_lifetime_ticks == 0

@@ -41,6 +41,9 @@ def _reward(tick, *, initial=False, kind="live", events=True):
         value["deltas"] = {name: 0 for name in value["deltas"]}
     if not initial:
         value["deltas"]["elapsedSeconds"] = 1 / 60
+    growth = tick if initial or events else tick - 1
+    value["state"]["bodyLength"] = value["state"]["startingLength"] + growth
+    value["state"]["retainedGrowth"] = growth
     return value
 
 

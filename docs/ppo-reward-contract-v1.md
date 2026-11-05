@@ -60,6 +60,16 @@ Real death uses zero bootstrap. A generation cutoff requires the final old-life
 observation; the replacement snake's observation and the pending transition's
 starting value are not valid substitutes.
 
+Every envelope also has required `state.startingLength`, `state.bodyLength`, and
+`state.retainedGrowth` measurements in exact integer body segments. Starting
+length is a positive constant for the physical life; body length is positive and
+frozen before terminal cleanup; retained growth is
+`max(bodyLength - startingLength, 0)`. Initial deltas remain zero even if the
+initial snapshot already contains growth. Stream admission verifies that the
+two signed length deltas match successive snapshots and that starting length
+does not change when rebasing a known life after a gap. These measurements do
+not add reward components.
+
 Native generation assignments now retain the old-life closure JSON and a final
 sensor vector for live cutoffs through the existing receipt-driven handoff.
 Terminal closures have no bootstrap vector. God Mode death before the cutoff and
@@ -157,9 +167,10 @@ Each `[eval] result=...` JSON record includes exact policy-parameter SHA-256,
 policy version, sampling seed, run/world/life identity, initial and cutoff steps,
 cutoff observation sequence, physical and credited time, all raw reward deltas,
 all weighted components, repaired return, ending reason, and integrity status.
-Length and retained-growth entries are exact changes since the admitted baseline.
-The current raw contract does not supply absolute final body length; the
-evaluator does not reconstruct it from normalized sensor values.
+Raw length and retained-growth deltas are exact changes since the admitted
+baseline. Results separately report the life starting length, initially observed
+length/growth, absolute final body length, and final retained growth directly
+from the authoritative state snapshots. No normalized sensor values are used.
 
 Transport gaps and state replacement record an incomplete prefix and exclude it
 from promotion. Valid zero-step deaths and negative scores can establish the
@@ -200,6 +211,18 @@ distinct native life/lease identities after reconnect. A configured checkout
 with missing dependencies or an unavailable/stale addon fails startup explicitly.
 The interoperability CI job builds the production server and runs both checks.
 
+The same module also runs a four-actor PPO smoke scenario. Existing UI controls
+place a snake on real food, kill that physical life through ordinary game death
+semantics, and finish two generations. Rust supplies every reward event and
+cutoff observation. Two complete actor barriers feed the actual PPO optimizer;
+the checks cover nonzero survival/food/growth, boost expenditure, one terminal
+penalty, old-life truncation values, coherent policy versions, near-zero initial
+KL, finite updates, and exact evaluator/recovery checkpoint roundtrips. A
+separate frozen evaluator supplies the saved best candidate. Placements arrange
+events only in this test; no scripted reward or food steering enters training.
+The smoke keeps horizon 256 and closes partial contributions at explicit lifecycle
+boundaries rather than waiting for untrained gameplay to discover useful events.
+
 Slither's native real-socket regression also exercises food consumption, retained
 growth, terminal death and manual-generation truncation through the production
 addon and negotiated binary transport. The Motion actor tests exercise the real
@@ -209,5 +232,5 @@ policy parameterization version 2 reject historical fixed-variance objectives.
 
 These checks establish implementation behavior. They do not establish useful
 learning or gameplay quality; the plan's separate learning qualification remains
-required. Publishing the paired dependency revision and a full engine-to-PPO
-smoke run remain part of the rollout work.
+required. Publishing the paired dependency revision and qualifying command/epoch
+application boundaries remain part of the rollout work.

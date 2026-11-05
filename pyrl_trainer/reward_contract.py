@@ -14,6 +14,7 @@ from slither_contracts.models import (
     ExternalRewardDeltasV1,
     ExternalRewardEndReason,
     ExternalRewardEnvelopeV1,
+    ExternalRewardStateV1,
     ExternalRewardTransitionKind,
 )
 
@@ -118,6 +119,11 @@ def parse_reward(raw: Any) -> ExternalRewardEnvelopeV1:
     if int(raw["toStep"], 16) < int(raw["fromStep"], 16):
         raise RewardContractError("reward interval steps run backwards")
     _validate_lifecycle(raw)
+    state = dict(_shape(raw["state"], ExternalRewardStateV1, "state"))
+    for name, value in state.items():
+        _integer(value, name, 0 if name == "retainedGrowth" else 1, _MAX_EXACT)
+    if state["retainedGrowth"] != max(state["bodyLength"] - state["startingLength"], 0):
+        raise RewardContractError("reward boundary state has inconsistent retained growth")
     deltas = dict(_shape(raw["deltas"], ExternalRewardDeltasV1, "deltas"))
     for name, value in deltas.items():
         if name in _SIGNED_INTEGERS:
@@ -137,8 +143,8 @@ def parse_reward(raw: Any) -> ExternalRewardEnvelopeV1:
         deltas["pointsDelta"], accounted, rel_tol=1e-9, abs_tol=1e-9
     ):
         raise RewardContractError("reward point-accounting identity failed")
-    # Own the two shallow maps: a transport decoder cannot mutate admitted data.
-    return cast(ExternalRewardEnvelopeV1, dict(raw, deltas=dict(deltas)))
+    # Own each shallow map: a transport decoder cannot mutate admitted data.
+    return cast(ExternalRewardEnvelopeV1, dict(raw, state=state, deltas=dict(deltas)))
 
 
 def _life(reward: ExternalRewardEnvelopeV1) -> tuple[str, str, str, str, int]:
@@ -154,6 +160,7 @@ class RewardStream:
         self._sequence: str | None = None
         self._step: str | None = None
         self._closed = False
+        self._state: ExternalRewardStateV1 | None = None
 
     def accept(self, raw: Any, *, snake_id: int) -> ExternalRewardEnvelopeV1:
         """Admit once, only after all identity and predecessor checks pass."""
@@ -170,6 +177,14 @@ class RewardStream:
               or reward["previousObservationSequence"] != self._sequence
               or reward["fromStep"] != self._step):
             raise RewardDiscontinuityError("reward identity, predecessor, or interval has a gap")
+        if self._state is not None:
+            previous, current = self._state, reward["state"]
+            if (current["startingLength"] != previous["startingLength"]
+                    or current["bodyLength"] - previous["bodyLength"]
+                    != reward["deltas"]["lengthDelta"]
+                    or current["retainedGrowth"] - previous["retainedGrowth"]
+                    != reward["deltas"]["retainedGrowthDelta"]):
+                raise RewardDiscontinuityError("reward boundary state and length deltas disagree")
         self._commit(reward)
         return reward
 
@@ -198,10 +213,14 @@ class RewardStream:
         self._commit(reward)
 
     def _commit(self, reward: ExternalRewardEnvelopeV1) -> None:
+        if (self._state is not None and self._life == _life(reward)
+                and self._state["startingLength"] != reward["state"]["startingLength"]):
+            raise RewardDiscontinuityError("starting length changed within the same reward life")
         self._life = _life(reward)
         self._sequence = reward["observationSequence"]
         self._step = reward["toStep"]
         self._closed = reward["transitionKind"] in ("terminal", "truncated")
+        self._state = dict(reward["state"])
 
 
 @dataclass(frozen=True)

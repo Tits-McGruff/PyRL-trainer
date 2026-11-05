@@ -26,6 +26,8 @@ def _sensors(tick, snake_id):
                   transitionKind="initial" if tick == 1 else "live", reason=None)
     if tick == 1:
         reward["deltas"] = {name: 0 for name in reward["deltas"]}
+    reward["state"]["bodyLength"] = reward["state"]["startingLength"] + tick - 1
+    reward["state"]["retainedGrowth"] = tick - 1
     payload = json.dumps(reward).encode("utf-8")
     return (struct.pack("<4sBBHQIddd", b"SNS2", 2, 0, 1, tick, snake_id, 0, 0, 0)
             + struct.pack("<fI", 0.0, len(payload)) + payload)

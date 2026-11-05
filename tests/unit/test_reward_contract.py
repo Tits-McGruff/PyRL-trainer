@@ -33,6 +33,8 @@ def initial():
                    previousObservationSequence=None, toStep="0000000000000000",
                    transitionKind="initial", reason=None)
     payload["deltas"] = {name: 0 for name in payload["deltas"]}
+    payload["state"]["bodyLength"] = payload["state"]["startingLength"]
+    payload["state"]["retainedGrowth"] = 0
     return payload
 
 
@@ -151,6 +153,8 @@ def test_successor_baseline_cannot_consume_predecessor_reward():
                     observationSequence=owner["previousObservationSequence"],
                     previousObservationSequence=None, toStep=owner["fromStep"])
     baseline["deltas"] = {name: 0 for name in baseline["deltas"]}
+    baseline["state"]["bodyLength"] = baseline["state"]["startingLength"]
+    baseline["state"]["retainedGrowth"] = 0
     with pytest.raises(RewardDiscontinuityError, match="after life closure"):
         stream.accept(baseline, snake_id=20)
     assert stream.rebase(baseline, snake_id=20) is None
@@ -192,6 +196,8 @@ def test_multiple_intervals_are_admitted_once_before_closure():
     last.update(observationSequence="0000000000000004",
                 previousObservationSequence="0000000000000003",
                 fromStep="0000000000000001", toStep="0000000000000002")
+    last["state"]["bodyLength"] += 1
+    last["state"]["retainedGrowth"] += 1
     second = stream.accept(last, snake_id=7)
     assert first["deltas"]["foodCountDelta"] + second["deltas"]["foodCountDelta"] == 2
     assert sum(reward_components(first).values()) + sum(
@@ -212,6 +218,8 @@ def test_reclaim_requires_explicit_discard_and_rebase():
     tail.update(previousObservationSequence=missed["observationSequence"],
                 observationSequence="0000000000000004",
                 fromStep=missed["toStep"], toStep="0000000000000002")
+    tail["state"]["bodyLength"] += 1
+    tail["state"]["retainedGrowth"] += 1
     assert stream.accept(tail, snake_id=7)["transitionKind"] == "terminal"
 
 
@@ -290,3 +298,69 @@ def test_invalid_coefficients_and_weighted_overflow_fail():
         reward_components(parse_reward(live()), RewardCoefficients(points=1e308))
     with pytest.raises(RewardContractError, match="overflow"):
         reward_components(parse_reward(live()), RewardCoefficients(food=1e308, points=5e306))
+
+
+@pytest.mark.parametrize("change", [
+    {"startingLength": 0}, {"bodyLength": 0}, {"bodyLength": True},
+    {"bodyLength": 1.5}, {"startingLength": 2**53}, {"retainedGrowth": -1},
+    {"retainedGrowth": 0}, {"retainedGrowth": float("nan")},
+])
+def test_invalid_boundary_state_fails_without_sensor_reconstruction(change):
+    """Absolute body measurements are mandatory exact authoritative facts."""
+    payload = live()
+    payload["state"].update(change)
+    with pytest.raises(RewardContractError):
+        parse_reward(payload)
+
+
+def test_missing_or_unknown_boundary_state_fields_fail():
+    """A missing snapshot cannot degrade into normalized size-sensor inference."""
+    payload = live()
+    payload.pop("state")
+    with pytest.raises(RewardContractError):
+        parse_reward(payload)
+    payload = live()
+    payload["state"]["size_norm"] = 1
+    with pytest.raises(RewardContractError, match="state"):
+        parse_reward(payload)
+
+
+@pytest.mark.parametrize("change", ["body", "starting", "lengthDelta", "retainedGrowthDelta"])
+def test_boundary_state_disagreement_does_not_advance_stream(change):
+    """A coherent sequence cannot conceal a length/delta mismatch."""
+    stream = RewardStream()
+    stream.accept(initial(), snake_id=7)
+    wrong = live()
+    if change == "body":
+        wrong["state"].update(bodyLength=14, retainedGrowth=2)
+    elif change == "starting":
+        wrong["state"].update(startingLength=13, bodyLength=14)
+    else:
+        wrong["deltas"][change] = 0
+    with pytest.raises(RewardDiscontinuityError, match="state and length"):
+        stream.accept(wrong, snake_id=7)
+    assert stream.accept(live(), snake_id=7)["state"]["bodyLength"] == 13
+
+
+def test_prebaseline_growth_is_reported_but_never_paid_as_spawn_reward():
+    """The first snapshot can already contain growth; its deltas still start at zero."""
+    stream = RewardStream()
+    baseline = initial()
+    baseline["state"].update(bodyLength=13, retainedGrowth=1)
+    assert sum(reward_components(stream.accept(baseline, snake_id=7)).values()) == 0
+    following = live()
+    following["state"].update(bodyLength=14, retainedGrowth=2)
+    result = stream.accept(following, snake_id=7)
+    assert result["state"]["retainedGrowth"] == 2
+    assert reward_components(result)["growth"] == pytest.approx(0.05)
+
+
+def test_rebase_cannot_change_starting_length_of_a_known_life():
+    """A transport gap discards unknown rewards but does not rewrite life identity facts."""
+    stream = RewardStream()
+    stream.accept(initial(), snake_id=7)
+    bad = live()
+    bad["state"].update(startingLength=13, bodyLength=14)
+    with pytest.raises(RewardDiscontinuityError, match="starting length"):
+        stream.rebase(bad, snake_id=7)
+    assert stream.accept(live(), snake_id=7)["state"]["startingLength"] == 12

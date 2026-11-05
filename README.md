@@ -142,6 +142,8 @@ PPO requires authoritative reward contract version 1 and binary sensor-envelope 
 
 Survival uses `aliveSecondsDelta`. Food uses consumed food value, not proximity or pellet count. Growth uses the signed delta of `max(finalizedBodyLength - startingLength, 0)`, so losing and regaining the same growth does not pay twice. Points use `pointsDelta - survivalPointsDelta`, preserving boost costs while excluding a second survival payment. Kills use authoritative credited kills. Food, growth and economic progress intentionally overlap: one food-value unit worth 20 points and one retained segment contributes `0.35` task reward.
 
+Each reward envelope includes unweighted `state.startingLength`, `state.bodyLength`, and `state.retainedGrowth` snapshots in finalized body segments. PyRL checks their continuity against the signed deltas and reports absolute evaluator final length directly from the pre-cleanup snapshot. Initial observations still pay zero reward, including when they already contain growth.
+
 A reliable `transition` message closes the old life before reassignment. Real death receives one death penalty and zero bootstrap. Generation truncation receives no death penalty and bootstraps from its final old-life observation. Reset/import or a socket gap without a valid final state discards the unresolved tail while keeping completed work. Reassignment itself never manufactures death.
 
 All coefficients are finite and nonnegative. Historical sensor-derived helpers and configuration fields remain for explicit historical tests; current actors never select them. See [the reward contract](docs/ppo-reward-contract-v1.md) for identity, delivery and accounting semantics.
