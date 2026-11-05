@@ -40,3 +40,16 @@ The report uses the same intact scenario set for every policy, lists missing
 or incomplete episodes, and rejects changes in a policy snapshot or scenario
 configuration. Review the paired returns and task metrics alongside the
 behavior observations required by the qualification plan.
+
+After all training seeds reach their budgets, the matrix runner can launch
+the complete declared comparison from the run directories.
+
+```powershell
+python -m scripts.run_ppo_qualification_matrix --slither-root $slitherRoot --output $newOutput @runDirectories
+```
+
+It reads effective architecture, device, pacing, and reward settings from
+the training startup records. It checks the original Slither revision and
+uses a fresh loopback server for each case. The output keeps the server logs,
+episode records, and paired report. Each case's disposable database is
+removed after its server exits.
