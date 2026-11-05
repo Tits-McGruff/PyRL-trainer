@@ -12,7 +12,7 @@ import pytest
 import numpy as np
 import torch
 
-from pyrl_trainer.__main__ import discover_sensor_contract
+from pyrl_trainer.__main__ import discover_sensor_contract, main
 from pyrl_trainer.config import Config
 from pyrl_trainer.checkpointing import (
     save_checkpoint, load_checkpoint_if_present, save_best_checkpoint,
@@ -290,4 +290,36 @@ async def test_native_events_reach_two_synchronized_ppo_updates_and_exact_checkp
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_seeded_native_run_stops_and_preserves_both_policies(tmp_path, monkeypatch, capsys):
+    """The qualification entry point completes over real sockets and keeps the baseline."""
+    fixture = Path(__file__).resolve().parents[1] / "fixtures/reward_smoke_server.mjs"
+    loader = (Path(_SLITHER_ROOT) / "node_modules/tsx/dist/loader.mjs").resolve().as_uri()
+    process = await asyncio.create_subprocess_exec(
+        "node", "--import", loader, str(fixture), str(_SLITHER_ROOT),
+        str(tmp_path / "server.sqlite"), "ppo", stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        ready = await asyncio.wait_for(read_fixture_packet(process), timeout=15)
+        checkpoints = tmp_path / "checkpoints"
+        monkeypatch.setenv("SLITHER_CONFIG", str(tmp_path / "trainer.toml"))
+        for key, value in {
+            "WS_URL": f"ws://127.0.0.1:{ready['port']}", "CKPT_DIR": str(checkpoints),
+            "ACTORS": "4", "HORIZON": "4", "NET_HIDDEN": "8", "NET_LAYERS": "1",
+            "TRAIN_DEVICE": "cpu", "INFER_DEVICE": "cpu", "MAX_APS": "0",
+        }.items():
+            monkeypatch.setenv(f"SLITHER_{key}", value)
+        await asyncio.wait_for(main(training_seed=17, decision_budget=5), timeout=20)
+        initial = torch.load(checkpoints / "initial/latest.pt", weights_only=True)
+        candidate = torch.load(checkpoints / "latest.pt", weights_only=True)
+        assert initial["update_steps"] == 0 < candidate["update_steps"]
+        assert policy_snapshot_sha256(initial) != policy_snapshot_sha256(candidate)
+        log = capsys.readouterr().out
+        assert f"initial_policy_sha256={policy_snapshot_sha256(initial)}" in log
+        assert "admitted_decisions=16, decision_budget=5" in log
+    finally:
         await stop_server(process)

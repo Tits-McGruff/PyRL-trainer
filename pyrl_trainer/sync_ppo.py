@@ -372,11 +372,14 @@ async def synchronous_learner_loop(
     cfg: Config,
     shared_state: SynchronousSharedState,
     experience_q: asyncio.Queue,
+    *,
+    decision_budget: Optional[int] = None,
 ) -> None:
     """Wait for one contribution from every actor, update once, then publish the next policy."""
     last_log = time.time()
     update_rounds = 0
     total_steps = 0
+    total_alive_seconds = 0.0
     pending: Dict[int, Dict[int, Tuple[List[Transition], float]]] = {}
 
     while True:
@@ -407,6 +410,22 @@ async def synchronous_learner_loop(
             batch = collate_rollouts(nonempty, cfg, device=cfg.train_device)
             metrics = await shared_state.ppo_update_async(batch)
             update_rounds += 1
+
+        if decision_budget is not None:
+            total_alive_seconds += sum(
+                item.alive_seconds for rollout, _value in nonempty for item in rollout
+            )
+            if metrics is not None and metrics["stale_batch"]:
+                raise RuntimeError("bounded PPO run received a stale batch")
+            if total_steps >= decision_budget:
+                _save_pending_exact_best(cfg, shared_state)
+                save_checkpoint(cfg, shared_state)
+                print(
+                    f"[qualification] admitted_decisions={total_steps}, "
+                    f"decision_budget={decision_budget}, alive_seconds={total_alive_seconds:.6f}, "
+                    f"updates={update_rounds}, policy_v={shared_state.published_policy_version}"
+                )
+                return
 
         shared_state.advance_collection_epoch()
         _save_pending_exact_best(cfg, shared_state)

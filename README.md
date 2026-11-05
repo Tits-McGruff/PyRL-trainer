@@ -174,6 +174,14 @@ Frozen evaluator promotion uses total undiscounted repaired return. Lifetime rem
 
 The separate evaluator uses its own sampling RNG and caps scoring at the first accepted observation at or after 240 simulated seconds. `[evaluation]` configures `evaluation_max_seconds` and `evaluation_seed`; environment overrides are `SLITHER_EVALUATION_MAX_SECONDS` and `SLITHER_EVALUATION_SEED`. Actual exposure and overshoot are reported. A duration cutoff adds no death penalty and starts a fresh connection identity without reclaiming the capped life. Ordinary server disconnect grace still applies. Complete result JSON includes raw deltas, weighted components, ending reason, policy hash and seed; interrupted episodes are excluded from promotion. The winning result accompanies the exact best-policy artifact. Different evaluation configurations have separate comparable leaderboards.
 
+For a bounded qualification run, point `SLITHER_CONFIG` to the declared
+trainer configuration and `SLITHER_CKPT_DIR` to a fresh directory for the seed.
+Run `python -m pyrl_trainer --training-seed 17 --decision-budget 1000000`.
+This saves `initial/latest.pt` before collection and `latest.pt` after the
+first complete actor barrier that reaches the budget. The final log reports
+actual admitted decisions, credited live seconds, and learner updates.
+Asynchronous command timing can vary across runs even with the same seed.
+
 ## Testing
 
 Run the complete suite:
