@@ -372,6 +372,24 @@ def _restore_best_metadata(payload: Dict[str, Any], shared_state: Any) -> None:
     shared_state.best_checkpoint_pending = False
 
 
+def load_frozen_evaluation_checkpoint(path: Path, cfg: Config, shared_state: Any) -> None:
+    """Publish the exact requested policy in an isolated evaluation state."""
+    payload = torch.load(path, map_location=cfg.train_device, weights_only=True)
+    _schema, _legacy, rejection = _inspect_payload(payload, cfg, shared_state)
+    if rejection is not None:
+        raise ValueError(f"evaluation checkpoint is incompatible: {rejection}")
+    model = payload["model"]
+    current = shared_state.train_model.state_dict()
+    if any(not isinstance(value, torch.Tensor) or value.dtype != current[key].dtype
+           for key, value in model.items()):
+        raise ValueError("evaluation checkpoint tensor types differ from the policy")
+    if any(not bool(torch.isfinite(value).all()) for value in model.values()):
+        raise ValueError("evaluation checkpoint contains nonfinite policy parameters")
+    shared_state.train_model.load_state_dict(model)
+    shared_state.update_steps = int(payload["update_steps"])
+    shared_state.sync_infer_from_train()
+
+
 def load_checkpoint_if_present(cfg: Config, shared_state: Any) -> Optional[Path]:
     """Load the highest-update compatible recoverable checkpoint transactionally."""
     candidates = _checkpoint_candidates(cfg)

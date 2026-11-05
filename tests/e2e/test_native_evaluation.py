@@ -19,10 +19,12 @@ from pyrl_trainer.checkpointing import (
 )
 from pyrl_trainer.evaluation import policy_snapshot_sha256
 from pyrl_trainer.learner import collate_rollouts
+from pyrl_trainer.reward_contract import RewardContractError
 from pyrl_trainer.sync_ppo import (
     SynchronousActorClient, SynchronousSharedState, _coherent_policy_version,
     _write_exact_best_metadata,
 )
+from scripts.evaluate_ppo_episode import evaluate_one
 
 _SLITHER_ROOT = os.environ.get("PYRL_SLITHER_ROOT")
 pytestmark = [pytest.mark.e2e, pytest.mark.skipif(
@@ -321,5 +323,44 @@ async def test_seeded_native_run_stops_and_preserves_both_policies(tmp_path, mon
         log = capsys.readouterr().out
         assert f"initial_policy_sha256={policy_snapshot_sha256(initial)}" in log
         assert "admitted_decisions=16, decision_budget=5" in log
+    finally:
+        await stop_server(process)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reference", [None, "full-lock", "straight"])
+async def test_matched_evaluator_uses_exact_policy_or_reference(tmp_path, reference):
+    """Each comparison starts a fresh server and uses its authoritative episode result."""
+    fixture = Path(__file__).resolve().parents[1] / "fixtures/reward_smoke_server.mjs"
+    loader = (Path(_SLITHER_ROOT) / "node_modules/tsx/dist/loader.mjs").resolve().as_uri()
+    process = await asyncio.create_subprocess_exec(
+        "node", "--import", loader, str(fixture), str(_SLITHER_ROOT),
+        str(tmp_path / "server.sqlite"), stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        ready = await asyncio.wait_for(read_fixture_packet(process), timeout=15)
+        cfg, _contract, state = await training_state(ready["port"], tmp_path)
+        options = {"reference": reference}
+        if reference is None:
+            save_checkpoint(cfg, state)
+            options = {"checkpoint": Path(cfg.ckpt_dir) / "latest.pt"}
+        with pytest.raises(RewardContractError, match="declared world seed"):
+            await evaluate_one(cfg, scenario_seed=43, timeout=5, **options)
+
+        result = await evaluate_one(cfg, scenario_seed=42, timeout=10, **options)
+        assert result["world_seed"] == 42 and result["config_hash"]
+        assert result["integrity"] and result["reason"] == "evaluationTimeLimit"
+        assert result["issued_decisions"] > 0
+        if reference is None:
+            assert result["policy_sha256"] == policy_snapshot_sha256(
+                {"model": state.train_model.state_dict()}
+            )
+            assert result["learned_turn_std"] == pytest.approx(0.50)
+        else:
+            full_lock = float(reference == "full-lock")
+            assert result["fixed_controls"] == (full_lock, 0.0)
+            assert result["sampled_turn_saturation"] == full_lock
+            assert result["learned_turn_std"] is None
     finally:
         await stop_server(process)
