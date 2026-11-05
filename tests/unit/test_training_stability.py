@@ -205,3 +205,20 @@ def test_best_checkpoint_contains_exact_evaluator_policy_and_survives_resume(tmp
     assert restored.best_episode_return == pytest.approx(1.3)
     assert restored.best_policy_snapshot is None
     assert not restored.best_checkpoint_pending
+
+
+def test_evaluator_promotion_uses_return_and_accepts_negative_first_result(tmp_path):
+    """A long idle life cannot displace a shorter policy with greater task return."""
+    state = _state(_config(tmp_path))
+    snapshot, _model = state.begin_evaluation_policy()
+    state.record_episode(-0.4, 100, policy_snapshot=snapshot, include_runtime_stats=False)
+    assert state.best_episode_return == pytest.approx(-0.4)
+    assert state.best_checkpoint_pending
+    state.mark_best_checkpoint_saved()
+    state.record_episode(-0.45, 20_000, policy_snapshot=snapshot, include_runtime_stats=False)
+    assert not state.best_checkpoint_pending
+    assert state.best_lifetime_ticks == 100
+    state.record_episode(0.2, 50, policy_snapshot=snapshot, include_runtime_stats=False)
+    assert state.best_checkpoint_pending
+    assert state.best_lifetime_ticks == 50
+    assert state.best_episode_return == pytest.approx(0.2)

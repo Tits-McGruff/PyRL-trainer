@@ -15,7 +15,16 @@ MAX_WS_MESSAGE_BYTES = int(
 )
 
 CHECKPOINT_SCHEMA_VERSION = 2
-REWARD_CONFIG_VERSION = 1
+REWARD_CONFIG_VERSION = 2
+
+AUTHORITATIVE_REWARD_CONFIG = {
+    "reward_survival_per_second": 0.001,
+    "reward_food_value_scale": 0.10,
+    "reward_retained_growth_scale": 0.05,
+    "reward_task_points_scale": 0.01,
+    "reward_kills_scale": 1.0,
+    "reward_death_penalty_magnitude": 0.50,
+}
 
 LEGACY_REWARD_CONFIG = {
     "reward_growth_scale": 10.0,
@@ -111,6 +120,8 @@ class Config:  # pylint: disable=too-many-instance-attributes
     ws_url: str = "ws://localhost:5174"
     bot_name: str = "NNTrainer"
     actors: int = 4
+    evaluation_max_seconds: float = 240.0
+    evaluation_seed: int = 0
 
     max_actions_per_tick: int = 1
     max_actions_per_second: int = 120
@@ -122,7 +133,7 @@ class Config:  # pylint: disable=too-many-instance-attributes
     ppo_clip: float = 0.2
     ent_coef: float = 0.001
     vf_coef: float = 0.5
-    lr: float = 3e-4
+    lr: float = 1e-4
     minibatch: int = 256
     epochs: int = 4
 
@@ -132,7 +143,7 @@ class Config:  # pylint: disable=too-many-instance-attributes
     net_hidden: int = 0
     net_layers: int = 0
 
-    turn_std: float = 0.15
+    turn_std: float = 0.50  # Initialization only; the policy learns turn_log_std.
 
     reward_growth_scale: float = 10.0
     reward_food_approach_scale: float = 0.5
@@ -143,10 +154,15 @@ class Config:  # pylint: disable=too-many-instance-attributes
     reward_hazard_threshold: float = -0.5
     reward_hazard_penalty_magnitude: float = 0.1
     reward_death_penalty_magnitude: float = 0.5
+    reward_survival_per_second: float = 0.001
+    reward_food_value_scale: float = 0.10
+    reward_retained_growth_scale: float = 0.05
+    reward_task_points_scale: float = 0.01
+    reward_kills_scale: float = 1.0
 
     log_every_seconds: float = 5.0
 
-    ckpt_dir: str = "./checkpoints"
+    ckpt_dir: str = "./checkpoints/authoritative-reward-v1"
     save_every_updates: int = 100
     keep_last: int = 5
 
@@ -155,7 +171,7 @@ def reward_config_record(cfg: Config) -> Dict[str, float]:
     """Return the normalized reward settings persisted in checkpoints."""
     return {
         key: float(getattr(cfg, key))
-        for key in LEGACY_REWARD_CONFIG
+        for key in AUTHORITATIVE_REWARD_CONFIG
     }
 
 
@@ -178,6 +194,10 @@ def _config_sections(cfg: Config) -> Dict[str, Dict[str, Any]]:
             "max_actions_per_tick": cfg.max_actions_per_tick,
             "max_actions_per_second": cfg.max_actions_per_second,
         },
+        "evaluation": {
+            "evaluation_max_seconds": cfg.evaluation_max_seconds,
+            "evaluation_seed": cfg.evaluation_seed,
+        },
         "training": {
             "horizon": cfg.horizon,
             "batch_size": cfg.batch_size,
@@ -192,15 +212,8 @@ def _config_sections(cfg: Config) -> Dict[str, Dict[str, Any]]:
             "turn_std": cfg.turn_std,
         },
         "rewards": {
-            "growth_scale": cfg.reward_growth_scale,
-            "food_approach_scale": cfg.reward_food_approach_scale,
-            "food_delta_clip": cfg.reward_food_delta_clip,
-            "survival_bonus": cfg.reward_survival_bonus,
-            "wall_threshold": cfg.reward_wall_threshold,
-            "wall_penalty_scale": cfg.reward_wall_penalty_scale,
-            "hazard_threshold": cfg.reward_hazard_threshold,
-            "hazard_penalty_magnitude": cfg.reward_hazard_penalty_magnitude,
-            "death_penalty_magnitude": cfg.reward_death_penalty_magnitude,
+            key.removeprefix("reward_"): getattr(cfg, key)
+            for key in AUTHORITATIVE_REWARD_CONFIG
         },
         "devices": {
             "train_device": cfg.train_device,
@@ -247,6 +260,10 @@ def _apply_env_overrides(cfg: Config) -> Config:
     cfg.ws_url = _env_str("SLITHER_WS_URL", cfg.ws_url)
     cfg.bot_name = _env_str("SLITHER_BOT_NAME", cfg.bot_name)
     cfg.actors = _env_int("SLITHER_ACTORS", cfg.actors)
+    cfg.evaluation_max_seconds = _env_float(
+        "SLITHER_EVALUATION_MAX_SECONDS", cfg.evaluation_max_seconds
+    )
+    cfg.evaluation_seed = _env_int("SLITHER_EVALUATION_SEED", cfg.evaluation_seed)
 
     cfg.max_actions_per_tick = _env_int(
         "SLITHER_MAX_APT", cfg.max_actions_per_tick
@@ -279,6 +296,8 @@ def _apply_env_overrides(cfg: Config) -> Config:
     )
 
     cfg.turn_std = _env_float("SLITHER_TURN_STD", cfg.turn_std)
+    for key in AUTHORITATIVE_REWARD_CONFIG:
+        setattr(cfg, key, _env_float(f"SLITHER_{key.upper()}", getattr(cfg, key)))
 
     cfg.reward_growth_scale = _env_float(
         "SLITHER_REWARD_GROWTH_SCALE", cfg.reward_growth_scale
@@ -362,6 +381,12 @@ def _validated_float(
 def validate_config(cfg: Config) -> Config:
     """Normalize supported scalar types and reject unsafe trainer settings."""
     cfg.actors = _validated_int("actors", cfg.actors, 1)
+    cfg.evaluation_max_seconds = _validated_float(
+        "evaluation_max_seconds", cfg.evaluation_max_seconds, 0.0, minimum_inclusive=False
+    )
+    cfg.evaluation_seed = _validated_int("evaluation_seed", cfg.evaluation_seed, 0)
+    if cfg.evaluation_seed >= 2**63:
+        raise ValueError("evaluation_seed must be less than 2**63")
     cfg.max_actions_per_tick = _validated_int(
         "max_actions_per_tick", cfg.max_actions_per_tick, 1
     )
@@ -392,7 +417,7 @@ def validate_config(cfg: Config) -> Config:
     cfg.vf_coef = _validated_float("vf_coef", cfg.vf_coef, 0.0)
     cfg.lr = _validated_float("lr", cfg.lr, 0.0, minimum_inclusive=False)
     cfg.turn_std = _validated_float(
-        "turn_std", cfg.turn_std, 0.0, minimum_inclusive=False
+        "turn_std", cfg.turn_std, math.exp(-5.0), maximum=math.exp(1.0)
     )
 
     cfg.reward_growth_scale = _validated_float(
@@ -429,6 +454,8 @@ def validate_config(cfg: Config) -> Config:
         cfg.reward_death_penalty_magnitude,
         0.0,
     )
+    for key in AUTHORITATIVE_REWARD_CONFIG:
+        setattr(cfg, key, _validated_float(key, getattr(cfg, key), 0.0))
 
     cfg.log_every_seconds = _validated_float(
         "log_every_seconds",

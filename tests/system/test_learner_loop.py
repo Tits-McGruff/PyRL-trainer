@@ -30,7 +30,7 @@ async def test_learner_loop_updates_once():
     experience_q: asyncio.Queue = asyncio.Queue()
 
     obs = np.zeros(3, dtype=np.float32)
-    turn, boost, logp, value, latent = shared_state.act(obs, cfg.turn_std)
+    turn, boost, logp, value, latent = shared_state.act(obs)
     transition = Transition(
         obs=obs,
         action_turn=turn,

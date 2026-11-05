@@ -121,46 +121,42 @@ The default generated config contains:
 
 ```toml
 [rewards]
-growth_scale = 10.0
-food_approach_scale = 0.5
-food_delta_clip = 0.1
-survival_bonus = 0.0001
-wall_threshold = -0.5
-wall_penalty_scale = 0.05
-hazard_threshold = -0.5
-hazard_penalty_magnitude = 0.1
+survival_per_second = 0.001
+food_value_scale = 0.1
+retained_growth_scale = 0.05
+task_points_scale = 0.01
+kills_scale = 1.0
 death_penalty_magnitude = 0.5
 ```
 
 The corresponding environment overrides are:
 
-- `SLITHER_REWARD_GROWTH_SCALE`
-- `SLITHER_REWARD_FOOD_APPROACH_SCALE`
-- `SLITHER_REWARD_FOOD_DELTA_CLIP`
-- `SLITHER_REWARD_SURVIVAL_BONUS`
-- `SLITHER_REWARD_WALL_THRESHOLD`
-- `SLITHER_REWARD_WALL_PENALTY_SCALE`
-- `SLITHER_REWARD_HAZARD_THRESHOLD`
-- `SLITHER_REWARD_HAZARD_PENALTY`
+- `SLITHER_REWARD_SURVIVAL_PER_SECOND`
+- `SLITHER_REWARD_FOOD_VALUE_SCALE`
+- `SLITHER_REWARD_RETAINED_GROWTH_SCALE`
+- `SLITHER_REWARD_TASK_POINTS_SCALE`
+- `SLITHER_REWARD_KILLS_SCALE`
 - `SLITHER_REWARD_DEATH_PENALTY`
 
-For a transition with a previous observation, the default reward is the sum of five components. `growth` is `growth_scale * points_delta_norm`. `food_approach` is `food_approach_scale * clamp(current_closeness - previous_closeness, -food_delta_clip, +food_delta_clip)`. `survival` is the configured per-transition survival bonus. If `wall_dist_norm < wall_threshold`, the wall contribution is `-wall_penalty_scale * (-wall_dist_norm)^2`. If the existing front-hazard-bin average is below `hazard_threshold`, the hazard contribution is `-hazard_penalty_magnitude`. Missing optional sensor labels contribute zero to the relevant component. The first observation has no previous observation and therefore produces zero reward components.
+PPO requires authoritative reward contract version 1 and binary sensor-envelope revision 2. Rust owns consumption, finalized growth, economic credits/spending, kills, live-time accounting and death. The trainer applies these coefficients to those raw facts; v4 reward never comes from sensor labels. Missing or incompatible reward data stops training.
 
-Protocol 2 calls the food field `nearest_food_dist_norm`, but its numeric meaning is closeness on the trainer side: values increase as food gets closer, with roughly `-1` representing the far/no-food limit and `+1` representing zero distance. The wire field name remains unchanged for Protocol 2 compatibility.
+Survival uses `aliveSecondsDelta`. Food uses consumed food value, not proximity or pellet count. Growth uses the signed delta of `max(finalizedBodyLength - startingLength, 0)`, so losing and regaining the same growth does not pay twice. Points use `pointsDelta - survivalPointsDelta`, preserving boost costs while excluding a second survival payment. Kills use authoritative credited kills. Food, growth and economic progress intentionally overlap: one food-value unit worth 20 points and one retained segment contributes `0.35` task reward.
 
-A genuine terminal death subtracts `death_penalty_magnitude` exactly once from the pending transition. A `stateReplaced` event terminates the old transition with zero death contribution.
+A reliable `transition` message closes the old life before reassignment. Real death receives one death penalty and zero bootstrap. Generation truncation receives no death penalty and bootstraps from its final old-life observation. Reset/import or a socket gap without a valid final state discards the unresolved tail while keeping completed work. Reassignment itself never manufactures death.
 
-All reward values are validated as finite floats. Scale/bonus/penalty magnitudes must be non-negative, `food_delta_clip` must be positive, and the wall/hazard thresholds must be within `[-1, 1]`.
+All coefficients are finite and nonnegative. Historical sensor-derived helpers and configuration fields remain for explicit historical tests; current actors never select them. See [the reward contract](docs/ppo-reward-contract-v1.md) for identity, delivery and accounting semantics.
+
+Reward logs count components after completed rollouts enter the experience queue. Raw received-event totals remain separate, including intervals while actors wait at the collection barrier. A discarded pending decision cannot inflate admitted reward. Logs include admitted decision duration and component rates per admitted credited live second. A diagnostic warning reports absent task events after both 10,000 intervals and 60 credited live seconds; raw events reset the window even when their configured weights are zero.
 
 ## Policy Diagnostics
 
-Turn actions keep the existing fixed-standard-deviation Gaussian policy followed by `tanh`. `turn_std` controls continuous-turn exploration and remains fixed rather than learned. The learner reports `entropy_turn` and `entropy_boost` separately and also retains `entropy` as their sum. Because `turn_std` is fixed, turn entropy is constant with respect to the trainable turn mean; `ent_coef` therefore has a learnable entropy effect through the Bernoulli boost policy, while the PPO loss formula itself remains unchanged.
+Turn uses a state-dependent Gaussian mean and a trainable state-independent `turn_log_std`, followed by `tanh`. The `turn_std` config value and `SLITHER_TURN_STD` set initialization only, default `0.50`. Sampling and PPO reevaluation use the policy's learned scale. Effective log standard deviation is bounded to `[-5, 1]`; optimizer proposals are projected just inside those bounds to keep gradients available. Exact snapshots and checkpoints include the learned parameter under policy parameterization version 2.
 
-The learner also reports `turn_mean_abs_mean`, `turn_mean_abs_max`, and `turn_saturated_fraction`. Saturation is the fraction of evaluated samples for which `abs(tanh(turn_mean)) > 0.95`. These are diagnostics only; no hard clamp is applied to `turn_mean`.
+`entropy_turn_gaussian` is an explicit latent-Gaussian regularization surrogate. It learns scale but has no direct mean gradient and does not measure executed-action entropy. Logs distinguish deterministic-mean saturation from sampled executed-turn saturation, alongside learned standard deviation and mean absolute sampled turn. Saturation means absolute bounded turn greater than `0.95`. Larger variance may produce switching between saturated left and right actions rather than lower saturation. No steering or circle penalty is applied.
 
 ## Checkpoints
 
-Checkpoint persistence and recovery are owned exclusively by `pyrl_trainer/checkpointing.py`. Files are saved under `ckpt_dir`, default `./checkpoints`:
+Checkpoint persistence and recovery are owned exclusively by `pyrl_trainer/checkpointing.py`. Files are saved under `ckpt_dir`, default `./checkpoints/authoritative-reward-v1`:
 
 - `latest.pt`
 - `latest_h{hidden}_l{layers}.pt`
@@ -170,7 +166,11 @@ Each destination is published atomically through a temporary sibling file follow
 
 Startup deserializes recoverable candidates, validates them before mutating live state, ranks compatible candidates by stored `update_steps`, and restores the highest step. Equal-step ties prefer the architecture-specific latest file, then generic `latest.pt`, then a numbered checkpoint. Corrupt or incompatible candidates are skipped. If model/optimizer application fails, the pre-load model, optimizer, update count, and inference policy are restored before the loader tries the next candidate.
 
-New checkpoints use schema version 2 and store the complete effective reward configuration as reward-config version 1. Automatic resume requires compatible model architecture, sensor contract, and reward configuration. Schema-v2 checkpoints with different rewards are rejected. Legacy checkpoints without reward metadata are accepted only when the current reward configuration exactly matches the canonical pre-v2 defaults documented above; using changed rewards causes those legacy checkpoints to be skipped. Unknown future checkpoint schemas or reward-config versions are skipped safely. There is no force-load override in this remediation.
+New checkpoints use schema version 2 and trainer reward-config version 2, separate from server reward contract version 1. Resume requires compatible architecture, sensors and objective coefficients. Historical reward-config version 1 and checkpoints without reward metadata cannot resume this objective. The PPO entry point refuses to start fresh in a populated directory containing no compatible checkpoint, preserving historical files. Select a fresh namespace for the repaired run.
+
+Frozen evaluator promotion uses total undiscounted repaired return. Lifetime remains a metric. The leaderboard starts without an incumbent, so a valid negative first return can become the provisional best. Evaluator metadata from another objective is ignored.
+
+The separate evaluator uses its own sampling RNG and caps scoring at the first accepted observation at or after 240 simulated seconds. `[evaluation]` configures `evaluation_max_seconds` and `evaluation_seed`; environment overrides are `SLITHER_EVALUATION_MAX_SECONDS` and `SLITHER_EVALUATION_SEED`. Actual exposure and overshoot are reported. A duration cutoff adds no death penalty and starts a fresh connection identity without reclaiming the capped life. Ordinary server disconnect grace still applies. Complete result JSON includes raw deltas, weighted components, ending reason, policy hash and seed; interrupted episodes are excluded from promotion. The winning result accompanies the exact best-policy artifact. Different evaluation configurations have separate comparable leaderboards.
 
 ## Testing
 

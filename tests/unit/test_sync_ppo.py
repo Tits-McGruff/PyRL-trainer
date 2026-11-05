@@ -55,7 +55,7 @@ def _state(cfg: Config) -> SynchronousSharedState:
 
 def _transition(state: SynchronousSharedState, reward: float = 0.1) -> Transition:
     obs = np.zeros(2, dtype=np.float32)
-    turn, boost, logp, value, latent = state.act(obs, turn_std=state.cfg.turn_std)
+    turn, boost, logp, value, latent = state.act(obs)
     return Transition(
         obs=obs,
         action_turn=turn,

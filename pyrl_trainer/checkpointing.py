@@ -11,11 +11,12 @@ import torch
 
 from .config import (
     CHECKPOINT_SCHEMA_VERSION,
-    LEGACY_REWARD_CONFIG,
+    AUTHORITATIVE_REWARD_CONFIG,
     REWARD_CONFIG_VERSION,
     Config,
     reward_config_record,
 )
+from .network import POLICY_PARAMETERIZATION_VERSION, MIN_TURN_LOG_STD, MAX_TURN_LOG_STD
 from .sensor_contract import SensorContract, SensorContractError
 from .utils import ensure_dir
 
@@ -100,6 +101,8 @@ def _checkpoint_payload(
         "net_hidden": int(cfg.net_hidden),
         "net_layers": int(cfg.net_layers),
         "reward_config_version": REWARD_CONFIG_VERSION,
+        "reward_contract_version": 1,
+        "policy_parameterization_version": POLICY_PARAMETERIZATION_VERSION,
         "reward_config": reward_config_record(cfg),
         "model": model_state,
         "optimizer": optimizer_state,
@@ -116,6 +119,8 @@ def _checkpoint_payload(
     )
     if math.isfinite(best_return):
         payload["best_episode_return"] = best_return
+    if isinstance(getattr(shared_state, "best_evaluation_result", None), dict):
+        payload["best_evaluation_result"] = copy.deepcopy(shared_state.best_evaluation_result)
 
     contract = _expected_sensor_contract(shared_state)
     if contract is not None:
@@ -143,7 +148,7 @@ def save_checkpoint(cfg: Config, shared_state: Any) -> None:
 
 
 def save_best_checkpoint(cfg: Config, shared_state: Any) -> Path:
-    """Persist the exact frozen evaluator policy that set the lifetime record."""
+    """Persist the exact frozen evaluator policy that set the repaired-return record."""
     ensure_dir(cfg.ckpt_dir)
     snapshot = getattr(shared_state, "best_policy_snapshot", None)
     if snapshot is None:
@@ -214,37 +219,19 @@ def _schema_version(payload: Dict[str, Any]) -> Optional[int]:
 def _valid_reward_record(  # pylint: disable=too-many-return-statements,too-many-branches
     record: Any,
 ) -> Optional[Dict[str, float]]:
-    if not isinstance(record, dict) or set(record) != set(LEGACY_REWARD_CONFIG):
+    if not isinstance(record, dict) or set(record) != set(AUTHORITATIVE_REWARD_CONFIG):
         return None
 
     normalized: Dict[str, float] = {}
-    for key in LEGACY_REWARD_CONFIG:
+    for key in AUTHORITATIVE_REWARD_CONFIG:
         try:
             value = float(record[key])
         except (TypeError, ValueError):
             return None
-        if not math.isfinite(value):
+        if isinstance(record[key], bool) or not math.isfinite(value) or value < 0:
             return None
         normalized[key] = value
 
-    if normalized["reward_growth_scale"] < 0.0:
-        return None
-    if normalized["reward_food_approach_scale"] < 0.0:
-        return None
-    if normalized["reward_food_delta_clip"] <= 0.0:
-        return None
-    if normalized["reward_survival_bonus"] < 0.0:
-        return None
-    if not -1.0 <= normalized["reward_wall_threshold"] <= 1.0:
-        return None
-    if normalized["reward_wall_penalty_scale"] < 0.0:
-        return None
-    if not -1.0 <= normalized["reward_hazard_threshold"] <= 1.0:
-        return None
-    if normalized["reward_hazard_penalty_magnitude"] < 0.0:
-        return None
-    if normalized["reward_death_penalty_magnitude"] < 0.0:
-        return None
     return normalized
 
 
@@ -254,12 +241,9 @@ def _reward_compatible(
     """Return (compatible, legacy-default-assumption-used)."""
     current = reward_config_record(cfg)
     if schema_version == 1:
-        return current == LEGACY_REWARD_CONFIG, current == LEGACY_REWARD_CONFIG
-
-    try:
-        reward_version = int(payload.get("reward_config_version", -1))
-    except (TypeError, ValueError):
         return False, False
+
+    reward_version = _integer_field(payload, "reward_config_version", 1)
     if reward_version != REWARD_CONFIG_VERSION:
         return False, False
 
@@ -278,6 +262,10 @@ def _architecture_and_sensor_compatible(  # pylint: disable=too-many-return-stat
     net_hidden = _integer_field(payload, "net_hidden", 1)
     net_layers = _integer_field(payload, "net_layers", 1)
     update_steps = _integer_field(payload, "update_steps", 0)
+    policy_version = _integer_field(payload, "policy_parameterization_version", 1)
+    if (policy_version != POLICY_PARAMETERIZATION_VERSION
+            or _integer_field(payload, "reward_contract_version", 1) != 1):
+        return _REJECTION_ARCHITECTURE
     if (
         obs_dim != int(shared_state.obs_dim)
         or net_hidden != int(cfg.net_hidden)
@@ -310,6 +298,11 @@ def _architecture_and_sensor_compatible(  # pylint: disable=too-many-return-stat
                 return _REJECTION_ARCHITECTURE
         except (AttributeError, TypeError):
             return _REJECTION_ARCHITECTURE
+    log_std = model_state["turn_log_std"]
+    if (not isinstance(log_std, torch.Tensor) or not log_std.is_floating_point()
+            or not bool(torch.isfinite(log_std))
+            or not MIN_TURN_LOG_STD <= float(log_std) <= MAX_TURN_LOG_STD):
+        return _REJECTION_ARCHITECTURE
     return None
 
 

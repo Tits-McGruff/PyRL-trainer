@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+from importlib.resources import files
 
 import numpy as np
 import pytest
@@ -20,6 +21,27 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
     def act(self, _obs, **_kwargs):
         """Return fixed policy outputs."""
         return 0.1, 1.0, -0.5, 0.25, 0.1003
+
+    def infer_model(self, obs):
+        """Make the bootstrap depend on the final state, not the pending value."""
+        return None, None, obs[:, 0] * 0.9
+
+
+def _reward(tick, *, initial=False, kind="live", events=True):
+    """Authoritative native event fixture with explicit test interval boundaries."""
+    value = json.loads(files("slither_contracts").joinpath(
+        "external-reward-v1-fixture.json").read_text(encoding="utf-8"))[0]
+    value.update(snakeId=1, observationSequence=f"{1000 + tick:016x}",
+                 previousObservationSequence=None if initial else f"{999 + tick:016x}",
+                 fromStep=f"{tick if initial else tick - 1:016x}", toStep=f"{tick:016x}",
+                 transitionKind="initial" if initial else kind,
+                 reason=(None if initial or kind == "live"
+                         else ("death" if kind == "terminal" else "generation")))
+    if initial or not events:
+        value["deltas"] = {name: 0 for name in value["deltas"]}
+    if not initial:
+        value["deltas"]["elapsedSeconds"] = 1 / 60
+    return value
 
 
 class DummyWS:  # pylint: disable=too-few-public-methods
@@ -39,7 +61,7 @@ class DummyWS:  # pylint: disable=too-few-public-methods
 
 
 @pytest.mark.asyncio
-async def test_transitions_align_with_stride(monkeypatch):
+async def test_transitions_align_with_stride():
     """Pending transitions align with sent actions."""
     cfg = Config(max_actions_per_second=0, horizon=10)
     actor = ActorClient(0, cfg, DummySharedState(), asyncio.Queue())
@@ -47,17 +69,6 @@ async def test_transitions_align_with_stride(monkeypatch):
     actor.stride = 2
     actor.sensor_order = ["points_delta_norm"]
     actor.sensor_idx = {"points_delta_norm": 0}
-
-    monkeypatch.setattr(
-        "pyrl_trainer.agent.default_reward_components",
-        lambda prev, obs, idx, reward_cfg: {
-            "growth": 1.0,
-            "food_approach": 0.0,
-            "survival": 0.0,
-            "wall": 0.0,
-            "hazard": 0.0,
-        },
-    )
 
     ws = DummyWS()
 
@@ -67,18 +78,19 @@ async def test_transitions_align_with_stride(monkeypatch):
             "tick": tick,
             "snakeId": 1,
             "sensors": [float(tick)],
+            "reward": _reward(tick, initial=tick == 1),
         }
         await actor._handle_sensors(msg, ws)
 
     assert len(ws.sent) == 2
     assert len(actor.rollout) == 1
-    assert abs(actor.rollout[0].reward - 2.0) < 1e-6
+    assert actor.rollout[0].reward == pytest.approx(0.7)
     assert actor.pending_transition is not None
     assert abs(actor.pending_transition.reward) < 1e-6
 
 
 @pytest.mark.asyncio
-async def test_burst_observation_stream_processes_every_sensor_between_actions(monkeypatch):
+async def test_burst_observation_stream_processes_every_sensor_between_actions():
     """Queued sensor bursts remain ordered even when action pacing skips ticks."""
     cfg = Config(max_actions_per_second=0, horizon=20)
     actor = ActorClient(0, cfg, DummySharedState(), asyncio.Queue())
@@ -86,17 +98,6 @@ async def test_burst_observation_stream_processes_every_sensor_between_actions(m
     actor.stride = 3
     actor.sensor_order = ["points_delta_norm"]
     actor.sensor_idx = {"points_delta_norm": 0}
-
-    monkeypatch.setattr(
-        "pyrl_trainer.agent.default_reward_components",
-        lambda prev, obs, idx, reward_cfg: {
-            "growth": float(obs[0] - prev[0]),
-            "food_approach": 0.0,
-            "survival": 0.0,
-            "wall": 0.0,
-            "hazard": 0.0,
-        },
-    )
 
     ws = DummyWS()
     for tick in [10, 11, 12, 13, 14]:
@@ -106,6 +107,7 @@ async def test_burst_observation_stream_processes_every_sensor_between_actions(m
                 "tick": tick,
                 "snakeId": 1,
                 "sensors": [float(tick)],
+                "reward": _reward(tick, initial=tick == 10),
             },
             ws,
         )
@@ -116,9 +118,9 @@ async def test_burst_observation_stream_processes_every_sensor_between_actions(m
     assert actor.last_obs is not None
     assert actor.last_obs[0] == pytest.approx(14.0)
     assert len(actor.rollout) == 1
-    assert actor.rollout[0].reward == pytest.approx(3.0)
+    assert actor.rollout[0].reward == pytest.approx(1.05)
     assert actor.pending_transition is not None
-    assert actor.pending_transition.reward == pytest.approx(1.0)
+    assert actor.pending_transition.reward == pytest.approx(0.35)
 
 
 @pytest.mark.asyncio
@@ -141,6 +143,7 @@ async def test_import_replacement_rejoins_without_stale_token():
             "type": "stateReplaced",
             "welcome": {
                 "protocolVersion": 2,
+                "rewardVersion": 1, "binarySensorsVersion": 2,
                 "tickRate": 60,
                 "sensorSpec": {"order": ["food_proximity"]},
             },
@@ -174,6 +177,7 @@ async def test_import_replacement_during_initial_assignment_wait():
             {
                 "type": "welcome",
                 "protocolVersion": 2,
+                "rewardVersion": 1, "binarySensorsVersion": 2,
                 "tickRate": 60,
                 "sensorSpec": {"order": ["old"]},
             },
@@ -181,6 +185,7 @@ async def test_import_replacement_during_initial_assignment_wait():
                 "type": "stateReplaced",
                 "welcome": {
                     "protocolVersion": 2,
+                    "rewardVersion": 1, "binarySensorsVersion": 2,
                     "tickRate": 30,
                     "sensorSpec": {"order": ["food_proximity"]},
                 },
@@ -221,7 +226,9 @@ async def test_terminal_death_uses_configured_penalty_once():
         done=0.0,
     )
 
-    await actor._finalize_terminal_episode()
+    actor._reward_stream.accept(_reward(0, initial=True), snake_id=1)
+    await actor._handle_transition({"type": "transition",
+                                    "reward": _reward(1, kind="terminal", events=False)})
     _actor_id, rollout, bootstrap = await experience_q.get()
 
     assert bootstrap == 0.0
@@ -262,6 +269,13 @@ async def test_generation_replacement_truncates_without_death_penalty():
         done=0.0,
     )
 
+    actor.sensor_order = ["motion"]
+    actor._reward_stream.accept(_reward(159, initial=True), snake_id=1)
+    actor._reward_has_observation = True
+    await actor._handle_transition({"type": "transition",
+                                    "reward": _reward(160, kind="truncated", events=False),
+                                    "finalSensors": [1.0]})
+
     await actor._on_assign(
         2,
         "next-token",
@@ -270,17 +284,17 @@ async def test_generation_replacement_truncates_without_death_penalty():
     actor_id, rollout, bootstrap = await experience_q.get()
 
     assert actor_id == 0
-    assert len(rollout) == 1
+    assert len(rollout) == 2
     assert rollout[0].reward == pytest.approx(0.25)
     assert rollout[0].done == 0.0
-    assert bootstrap == pytest.approx(0.4)
+    assert bootstrap == pytest.approx(0.9)
     assert actor.snake_id == 2
     assert actor.resume_token == "next-token"
 
 
 @pytest.mark.asyncio
 async def test_state_replacement_applies_zero_death_penalty():
-    """State replacement terminates the transition without a death contribution."""
+    """State replacement keeps completed work and discards its unresolved tail."""
     cfg = Config(reward_death_penalty_magnitude=0.75)
     experience_q = asyncio.Queue()
     actor = ActorClient(0, cfg, DummySharedState(), experience_q)
@@ -297,12 +311,16 @@ async def test_state_replacement_applies_zero_death_penalty():
     )
     actor.sensor_order = ["x"]
     actor.sensor_idx = {"x": 0}
+    actor.rollout = [Transition(obs=np.zeros(1, dtype=np.float32), action_turn=0.0,
+                                turn_latent=0.0, action_boost=0.0, logp=0.0,
+                                value=0.0, reward=0.1, done=0.0)]
     ws = DummyWS()
 
     await actor._handle_state_replaced(
         {
             "welcome": {
                 "protocolVersion": 2,
+                "rewardVersion": 1, "binarySensorsVersion": 2,
                 "tickRate": 60,
                 "sensorSpec": {"order": ["x"]},
             }
@@ -312,5 +330,6 @@ async def test_state_replacement_applies_zero_death_penalty():
     )
     _actor_id, rollout, _bootstrap = await experience_q.get()
 
-    assert rollout[0].reward == pytest.approx(0.25)
-    assert rollout[0].done == 1.0
+    assert len(rollout) == 1
+    assert rollout[0].reward == pytest.approx(0.1)
+    assert rollout[0].done == 0.0

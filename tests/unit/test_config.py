@@ -50,9 +50,11 @@ def test_generated_config_contains_rewards_section(tmp_path):
     text = config_path.read_text(encoding="utf-8")
 
     assert "[rewards]" in text
-    assert "growth_scale = 10.0" in text
+    assert "retained_growth_scale = 0.05" in text
+    assert "survival_per_second = 0.001" in text
+    assert "food_approach_scale" not in text
     assert "death_penalty_magnitude = 0.5" in text
-    assert cfg.reward_growth_scale == pytest.approx(10.0)
+    assert cfg.reward_retained_growth_scale == pytest.approx(0.05)
 
 
 def test_reward_toml_and_environment_override(tmp_path, monkeypatch):
@@ -107,14 +109,36 @@ def test_reward_config_record_has_normalized_schema_keys():
     record = reward_config_record(Config())
 
     assert set(record) == {
-        "reward_growth_scale",
-        "reward_food_approach_scale",
-        "reward_food_delta_clip",
-        "reward_survival_bonus",
-        "reward_wall_threshold",
-        "reward_wall_penalty_scale",
-        "reward_hazard_threshold",
-        "reward_hazard_penalty_magnitude",
+        "reward_survival_per_second",
+        "reward_food_value_scale",
+        "reward_retained_growth_scale",
+        "reward_task_points_scale",
+        "reward_kills_scale",
         "reward_death_penalty_magnitude",
     }
     assert all(isinstance(value, float) for value in record.values())
+
+
+@pytest.mark.parametrize("field,value", [
+    ("evaluation_max_seconds", 0), ("evaluation_max_seconds", math.inf),
+    ("evaluation_seed", -1), ("evaluation_seed", 2**63), ("evaluation_seed", True),
+])
+def test_invalid_evaluation_exposure_or_seed_is_rejected(field, value):
+    """Evaluator duration is positive and its independent seed stays in range."""
+    cfg = Config(net_hidden=8, net_layers=1, train_device="cpu")
+    setattr(cfg, field, value)
+    with pytest.raises(ValueError, match=field):
+        validate_config(cfg)
+
+
+def test_evaluation_settings_are_generated_and_support_environment_override(tmp_path, monkeypatch):
+    """The live evaluation score definition is reviewable and independently configurable."""
+    path = tmp_path / "config.toml"
+    cfg = load_or_create_config(str(path))
+    assert cfg.evaluation_max_seconds == 240
+    assert "[evaluation]" in path.read_text(encoding="utf-8")
+    monkeypatch.setenv("SLITHER_EVALUATION_MAX_SECONDS", "120")
+    monkeypatch.setenv("SLITHER_EVALUATION_SEED", "73")
+    cfg = load_or_create_config(str(path))
+    assert cfg.evaluation_max_seconds == 120
+    assert cfg.evaluation_seed == 73

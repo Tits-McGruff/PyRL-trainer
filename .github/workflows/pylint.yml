@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 4750cb8ec5263c7dc706ba5313f665909d2557ea
+          ref: f4b4d340c0639bfeb6aa5887340b00d8c825140f
           path: .slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -75,11 +75,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Install CPU interoperability dependencies
         run: |
-          python -m pip install -c constraints.txt numpy pytest pytest-asyncio
+          python -m pip install -c constraints.txt numpy pytest pytest-asyncio websockets
           python -m pip install -r requirements-contracts.txt
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Build the production Slither protocol server
+        run: |
+          npm --prefix .slither ci
+          npm --prefix .slither/native run build
+      - name: Authoritative reward codec and native evaluator lifecycle
+        env:
+          PYRL_SLITHER_ROOT: ${{ github.workspace }}/.slither
+        run: python -m pytest -q tests/integration/test_reward_binary_interop.py tests/e2e/test_native_evaluation.py
       - name: Build small current format tools
         run: cargo build --manifest-path .slither/native/Cargo.toml --features engine-test-hooks --bin canonical-training-graph --bin teacher_chunk_reference --bin brain_artifact_validate
       - name: Current encoder, portable brain admission and forged-layout rejection

@@ -20,6 +20,7 @@ async def discover_sensor_contract(ws_url: str) -> SensorContract:
     import websockets
     from .config import MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION
     from .sensor_contract import SensorContract
+    from .reward_contract import require_reward_version, RewardContractError
 
     async with websockets.connect(ws_url, max_size=MAX_WS_MESSAGE_BYTES) as ws:
         hello = {
@@ -36,6 +37,11 @@ async def discover_sensor_contract(ws_url: str) -> SensorContract:
             if msg.get("type") == "welcome":
                 if msg.get("protocolVersion") != PROTOCOL_VERSION:
                     raise RuntimeError("server welcome did not confirm Protocol 2")
+                require_reward_version(msg)
+                if msg.get("binarySensorsVersion") != 2:
+                    raise RewardContractError(
+                        "server must support reward-bearing binarySensorsVersion 2"
+                    )
                 return SensorContract.from_spec(msg.get("sensorSpec") or {})
             if msg.get("type") == "error":
                 raise RuntimeError(
@@ -72,12 +78,32 @@ async def _supervise_tasks(tasks: Iterable[asyncio.Task]) -> None:
             await _cancel_and_wait(task_list)
 
 
+def _log_reward_configuration(cfg, shared_state) -> None:
+    """Report the effective loaded distribution and objective before actors start."""
+    from .config import REWARD_CONFIG_VERSION, reward_config_record
+    from .network import POLICY_PARAMETERIZATION_VERSION
+
+    print(
+        f"[main] reward_config_version={REWARD_CONFIG_VERSION}, "
+        f"reward_coefficients={json.dumps(reward_config_record(cfg), sort_keys=True)}, "
+        f"policy_parameterization={POLICY_PARAMETERIZATION_VERSION}, "
+        f"turn_log_std={shared_state.infer_model.turn_log_std.item():.6f}, "
+        f"turn_std={shared_state.infer_model.steering_std().item():.6f}, "
+        f"optimizer_lr={shared_state.optimizer.param_groups[0]['lr']:g}, "
+        f"horizon={cfg.horizon}, epochs={cfg.epochs}, minibatch={cfg.minibatch}, "
+        f"evaluation_max_seconds={cfg.evaluation_max_seconds:g}, "
+        f"evaluation_seed={cfg.evaluation_seed}"
+    )
+
+
 async def main() -> None:
     """Start synchronized PPO training actors plus one frozen-policy evaluator."""
     import torch
     import websockets
     from .checkpointing import load_checkpoint_if_present
     from .config import load_or_create_config
+    from .reward_contract import RewardContractError
+    from .sensor_contract import SensorContractError
     from .sync_ppo import (
         SynchronousActorClient,
         SynchronousSharedState,
@@ -101,6 +127,8 @@ async def main() -> None:
 
     try:
         sensor_contract = await discover_sensor_contract(cfg.ws_url)
+    except (RewardContractError, SensorContractError):
+        raise
     except (OSError, RuntimeError, websockets.WebSocketException) as exc:
         print(f"[main] Failed to connect to {cfg.ws_url}: {exc}")
         print("[main] Ensure the game server is running.")
@@ -110,6 +138,7 @@ async def main() -> None:
     print(
         f"[main] ws={cfg.ws_url}, obs_dim={obs_dim}, "
         f"sensor_layout={sensor_contract.layout_version}, actors={cfg.actors}, "
+        f"sensor_profile={sensor_contract.profile}, reward_version=1, binary_sensors=2, "
         f"evaluator=1, train_device={cfg.train_device}, "
         f"infer_device={cfg.infer_device}, lr={cfg.lr:g}, "
         f"network={cfg.net_hidden}x{cfg.net_layers}, collection=barrier"
@@ -123,6 +152,13 @@ async def main() -> None:
 
     try:
         loaded = load_checkpoint_if_present(cfg, shared_state)
+        if loaded is None:
+            from pathlib import Path
+            if any(Path(cfg.ckpt_dir).glob("*.pt")):
+                raise RuntimeError(
+                    "checkpoint directory contains no compatible repaired policy; "
+                    "select a fresh checkpoint namespace to preserve historical files"
+                )
         enforce_optimizer_learning_rate(shared_state)
         restore_exact_best_metadata(cfg, shared_state)
         if loaded is not None:
@@ -135,6 +171,9 @@ async def main() -> None:
             )
     except (OSError, RuntimeError) as exc:
         print(f"[main] checkpoint load failed: {type(exc).__name__}: {exc}")
+        raise
+
+    _log_reward_configuration(cfg, shared_state)
 
     experience_q: asyncio.Queue = asyncio.Queue(maxsize=cfg.actors * 2)
 

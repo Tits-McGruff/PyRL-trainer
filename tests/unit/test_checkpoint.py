@@ -116,7 +116,7 @@ def test_new_checkpoint_contains_reward_schema(tmp_path):
     payload = torch.load(tmp_path / "latest.pt", map_location="cpu")
 
     assert payload["checkpoint_schema_version"] == CHECKPOINT_SCHEMA_VERSION
-    assert payload["reward_config_version"] == 1
+    assert payload["reward_config_version"] == 2
     assert payload["reward_config"]["reward_death_penalty_magnitude"] == pytest.approx(
         0.5
     )
@@ -129,15 +129,15 @@ def test_reward_mismatch_rejects_schema_v2_checkpoint(tmp_path):
     state.update_steps = 4
     save_checkpoint(cfg, state)
 
-    changed = _config(tmp_path, reward_growth_scale=11.0)
+    changed = _config(tmp_path, reward_retained_growth_scale=0.10)
     restored = _state(changed)
 
     assert load_checkpoint_if_present(changed, restored) is None
     assert restored.update_steps == 0
 
 
-def test_legacy_checkpoint_loads_only_under_canonical_defaults(tmp_path):
-    """Legacy checkpoints are accepted only when current rewards are old defaults."""
+def test_legacy_checkpoint_cannot_resume_the_authoritative_objective(tmp_path):
+    """A historical objective cannot silently initialize a repaired training run."""
     cfg = _config(tmp_path)
     state = _state(cfg)
     state.update_steps = 5
@@ -154,8 +154,8 @@ def test_legacy_checkpoint_loads_only_under_canonical_defaults(tmp_path):
 
     restored = _state(cfg)
     loaded = load_checkpoint_if_present(cfg, restored)
-    assert loaded == tmp_path / "latest.pt"
-    assert restored.update_steps == 5
+    assert loaded is None
+    assert restored.update_steps == 0
 
     changed = _config(tmp_path, reward_survival_bonus=0.001)
     changed_state = _state(changed)

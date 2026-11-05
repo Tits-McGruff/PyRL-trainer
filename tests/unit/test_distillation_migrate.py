@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from slither_contracts import IDENTITY
 from test_distillation_job import assert_optimizer_equal, make_job
 
 from pyrl_trainer.distillation_checkpoint import load_job_checkpoint
@@ -17,6 +18,20 @@ from pyrl_trainer.distillation_migrate import APPROVAL, _normalized, _sha, _sour
 from pyrl_trainer.distillation_transport import DistillationContractError
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def _approved_current_contract(tmp_path, monkeypatch):
+    """Exercise migration mechanics without broadening the historical release approval.
+
+    The actual allowlist must reject unrelated contract revisions. Payload and
+    optimizer tests instead use an explicit test-only approval of this package.
+    """
+    approval = json.loads(APPROVAL.read_bytes())
+    approval["targetContractIdentities"] = [IDENTITY]
+    path = tmp_path / "test-only-migration-approval.json"
+    path.write_text(json.dumps(approval), encoding="utf-8")
+    monkeypatch.setattr("pyrl_trainer.distillation_migrate.APPROVAL", path)
 
 
 def old_sources(root):
@@ -91,7 +106,9 @@ def relabel_test_checkpoint(source, target, identity):
             new.writestr(name, data)
 
 
-def test_explicit_migration_retains_payloads_and_next_real_update(tmp_path):
+def test_explicit_migration_retains_payloads_and_next_real_update(
+    tmp_path, _approved_current_contract
+):
     """The normal loader rejects mismatch; a reviewed successor resumes full Adam/replay/RNG."""
     job = make_job()
     job.update()
@@ -152,7 +169,7 @@ def test_saved_weight_export_requires_no_source_relabel_or_training(tmp_path):
 
 
 def test_migration_rejects_rehashed_invalid_optimizer_and_live_source_changes(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, _approved_current_contract
 ):
     """Valid ZIP/member digests cannot bypass optimizer semantics or loaded-source identity."""
     job = make_job()
@@ -189,4 +206,13 @@ def test_migration_rejects_rehashed_invalid_optimizer_and_live_source_changes(
     )
     with pytest.raises(DistillationContractError, match="changed after process startup"):
         migrate(old, output, source)
+    assert not output.exists()
+
+
+def test_unapproved_contract_revision_cannot_publish_migration(tmp_path, monkeypatch):
+    """A test approval fixture never weakens production contract admission."""
+    monkeypatch.setattr("pyrl_trainer.distillation_migrate.IDENTITY", "ff" * 32)
+    output = tmp_path / "must-not-exist.distill-job"
+    with pytest.raises(DistillationContractError, match="target contracts are not approved"):
+        migrate(tmp_path / "not-read.distill-job", output, tmp_path / "not-read-source")
     assert not output.exists()
