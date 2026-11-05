@@ -9,7 +9,7 @@ from pathlib import Path
 from pyrl_trainer.__main__ import discover_sensor_contract
 from pyrl_trainer.agent import ActorClient
 from pyrl_trainer.checkpointing import load_frozen_evaluation_checkpoint
-from pyrl_trainer.config import load_or_create_config
+from pyrl_trainer.config import load_or_create_config, reward_config_record
 from pyrl_trainer.evaluation import EvaluationEpisode
 from pyrl_trainer.learner import SharedState
 from pyrl_trainer.reward_contract import RewardContractError
@@ -121,6 +121,7 @@ async def evaluate_one(cfg, *, scenario_seed, checkpoint=None, reference=None, t
         alive = result["alive_seconds"]
         return {
             **result, **actor.episode_evidence,
+            "reward_config": reward_config_record(cfg),
             "reference": reference,
             "fixed_controls": REFERENCES[reference] if reference is not None else None,
             "task_net_points": raw["pointsDelta"] - raw["survivalPointsDelta"],
@@ -139,6 +140,7 @@ def main():
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--ws-url", required=True)
     parser.add_argument("--scenario-seed", required=True, type=int)
+    parser.add_argument("--label", help="Policy label for the paired qualification report.")
     policy = parser.add_mutually_exclusive_group(required=True)
     policy.add_argument("--checkpoint", type=Path)
     policy.add_argument("--reference", choices=REFERENCES)
@@ -150,6 +152,7 @@ def main():
     result = asyncio.run(evaluate_one(
         cfg, scenario_seed=args.scenario_seed, checkpoint=args.checkpoint, reference=args.reference
     ))
+    result["policy_label"] = args.label or args.reference
     print(f"[qualification-episode] {json.dumps(result, sort_keys=True, allow_nan=False)}")
 
 

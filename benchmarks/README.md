@@ -15,7 +15,7 @@ start a fresh Slither server with its own scratch database, matching settings,
 and the declared `--seed`. Run one episode per server.
 
 ```powershell
-python -m scripts.evaluate_ppo_episode --config $trainerConfig --ws-url $wsUrl --scenario-seed 1001 --checkpoint $checkpoint
+python -m scripts.evaluate_ppo_episode --config $trainerConfig --ws-url $wsUrl --scenario-seed 1001 --checkpoint $checkpoint --label seed17-initial
 python -m scripts.evaluate_ppo_episode --config $trainerConfig --ws-url $wsUrl --scenario-seed 1001 --reference full-lock
 ```
 
@@ -27,3 +27,16 @@ policy identity, actual starting and cutoff steps, reward and steering
 measurements, and integrity status. World seeds and settings define the
 matched scenario. Asynchronous join timing can differ between processes.
 Retain and report incomplete episodes separately from paired results.
+
+Label checkpoint episodes `seed<N>-initial` and `seed<N>-final`. Reference
+episodes default to their reference names. Pass the training manifest and
+evaluation logs to the report command.
+
+```powershell
+python -m scripts.summarize_ppo_qualification $manifest $evaluationLogs
+```
+
+The report uses the same intact scenario set for every policy, lists missing
+or incomplete episodes, and rejects changes in a policy snapshot or scenario
+configuration. Review the paired returns and task metrics alongside the
+behavior observations required by the qualification plan.
