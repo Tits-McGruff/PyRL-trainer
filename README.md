@@ -202,6 +202,7 @@ CI runs lint, the full suite, and all four marker groups on Python 3.10, 3.11, a
 ## Notes
 
 - The actor enforces action pacing via `max_actions_per_second`, using stride plus a wall-clock gate. Sensor packets are an ordered asynchronous stream; receiving one does not imply the server is waiting for an action or transport acknowledgement, and multiple observations may be processed between sent actions.
+- Synchronous collection starts each new epoch at an observation that confirms a new-epoch command ran in physics. The opening interval and earlier waiting intervals stay outside PPO.
 - `max_actions_per_tick` is retained in config for server alignment but is not directly enforced by actor code.
 - The WebSocket message-size limit has one source, `pyrl_trainer.config.MAX_WS_MESSAGE_BYTES`, controlled by `SLITHER_WS_MAX_MESSAGE`.
 - If connection fails at startup, verify the server is running and reachable at `ws_url`.

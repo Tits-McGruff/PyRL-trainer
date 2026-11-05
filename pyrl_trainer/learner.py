@@ -48,7 +48,15 @@ def format_reward_exposure(stats: Dict[str, float]) -> str:
         f"elapsed_s={stats['admitted_elapsed_seconds']:.3f},"
         f"alive_s={stats['admitted_alive_seconds']:.3f},"
         f"decision_s={stats['decision_seconds_mean']:.5f}] "
-        f"reward_per_admitted_alive_second[{rates}] reward_total[{cumulative}]"
+        f"reward_per_admitted_alive_second[{rates}] reward_total[{cumulative}] "
+        f"commands[accepted={int(stats.get('commands_accepted', 0))},"
+        f"applied={int(stats.get('commands_applied', 0))},"
+        f"superseded={int(stats.get('commands_superseded', 0))},"
+        f"delay_samples={int(stats.get('command_delay_samples', 0))},"
+        f"delay_steps_mean={stats.get('command_delay_steps_mean', 0):.2f},"
+        f"delay_steps_max={int(stats.get('command_delay_steps_max', 0))},"
+        f"fence_intervals={int(stats.get('epoch_fence_intervals', 0))},"
+        f"fence_seconds={stats.get('epoch_fence_seconds', 0):.3f}]"
     )
 
 
@@ -92,6 +100,12 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         self._received_interval_count = 0
         self._no_task_intervals = 0
         self._no_task_alive_seconds = 0.0
+        self._command_counts = {"accepted": 0, "applied": 0, "superseded": 0}
+        self._command_delay_samples = 0
+        self._command_delay_sum = 0
+        self._command_delay_max = 0
+        self._epoch_fence_intervals = 0
+        self._epoch_fence_seconds = 0.0
         self._episode_count = 0
         self._episode_return_sum = 0.0
         self._episode_lifetime_sum = 0.0
@@ -203,6 +217,22 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             float(value.item()),
             float(turn_latent.item()),
         )
+
+    def record_command_counts(self, accepted: int, applied: int, superseded: int) -> None:
+        """Count native receipts and selections separately from PPO admission."""
+        for key, value in zip(self._command_counts, (accepted, applied, superseded)):
+            self._command_counts[key] += value
+
+    def record_epoch_fence_interval(self, seconds: float) -> None:
+        """Count reward intervals excluded before new-policy physical control."""
+        self._epoch_fence_intervals += 1
+        self._epoch_fence_seconds += seconds
+
+    def record_command_delay(self, steps: int) -> None:
+        """Record an observable first application relative to the issuing observation."""
+        self._command_delay_samples += 1
+        self._command_delay_sum += steps
+        self._command_delay_max = max(self._command_delay_max, steps)
 
     def record_reward_components(self, components: Dict[str, float]) -> None:
         """Accumulate admitted reward components for the next learner log."""
@@ -326,6 +356,20 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             stats[f"received_{key}"] = value
             stats[f"received_total_{key}"] = self._received_cumulative[key]
             self._received_totals[key] = 0.0
+        for key, value in self._command_counts.items():
+            stats[f"commands_{key}"] = float(value)
+            self._command_counts[key] = 0
+        stats["command_delay_samples"] = float(self._command_delay_samples)
+        stats["command_delay_steps_mean"] = (
+            self._command_delay_sum / self._command_delay_samples
+            if self._command_delay_samples else 0.0
+        )
+        stats["command_delay_steps_max"] = float(self._command_delay_max)
+        self._command_delay_samples = self._command_delay_sum = self._command_delay_max = 0
+        stats["epoch_fence_intervals"] = float(self._epoch_fence_intervals)
+        stats["epoch_fence_seconds"] = self._epoch_fence_seconds
+        self._epoch_fence_intervals = 0
+        self._epoch_fence_seconds = 0.0
 
         for key in self._reward_totals:
             self._reward_totals[key] = 0.0

@@ -216,6 +216,15 @@ async def test_real_binary_evaluator_caps_then_joins_a_distinct_native_life(tmp_
         await stop_server(process)
 
 
+def assert_epoch_fence_opened(actors):
+    """Confirm the real application marker that opened each actor's next epoch."""
+    for actor in actors:
+        envelope = actor.last_reward_envelope
+        marker = envelope["control"]["appliedCommand"]
+        assert int(marker["command"]["clientActionId"], 16) >= actor._fence_action_id
+        assert int(marker["firstAppliedStep"], 16) < int(envelope["toStep"], 16)
+
+
 @pytest.mark.asyncio
 async def test_native_events_reach_two_synchronized_ppo_updates_and_exact_checkpoints(tmp_path):
     """Known real events train four actors, with terminal and cutoff bootstraps kept distinct."""
@@ -262,8 +271,12 @@ async def test_native_events_reach_two_synchronized_ppo_updates_and_exact_checkp
             actor._cutoff_value = observe_cutoff
         state.advance_collection_epoch()
         await until(lambda: all(actor.pending_transition is not None for actor in actors))
+        assert_epoch_fence_opened(actors)
         await fixture_command(process, "generation")
         second = await update_round(state, queue, 1)
+        stats = state.drain_runtime_stats()
+        assert stats["epoch_fence_intervals"] >= 4
+        assert stats["commands_applied"] >= 4
         assert set(cutoffs) == set(range(4))
         for actor_id, (rollout, value) in second.items():
             assert rollout[-1].done == 0

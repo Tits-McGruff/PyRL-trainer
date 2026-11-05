@@ -17,7 +17,7 @@ from pyrl_trainer.agent import ActorClient
 from pyrl_trainer.config import Config
 from pyrl_trainer.evaluation import EvaluationEpisodeComplete, policy_snapshot_sha256
 from pyrl_trainer.checkpointing import save_best_checkpoint
-from pyrl_trainer.reward_contract import RewardContractError, RewardDiscontinuityError
+from pyrl_trainer.reward_contract import RewardContractError, RewardDiscontinuityError, RewardStream
 from pyrl_trainer.sensor_contract import SensorContract
 from pyrl_trainer.sync_ppo import (
     SynchronousActorClient, SynchronousSharedState, _coherent_policy_version,
@@ -474,3 +474,130 @@ async def test_valid_zero_step_death_can_be_first_negative_incumbent(motion_spec
     restore_exact_best_metadata(restored.cfg, restored)
     assert restored.best_episode_return == float("-inf")
     assert restored.best_evaluation_result is None
+
+
+def tracked_reward(tick, accepted, applied, applied_count, superseded=0):
+    """Complete ordered fixture; command 3 expires and is superseded before selection."""
+    payload = reward("live")
+    payload.update(observationSequence=f"{tick + 2:016x}",
+                   previousObservationSequence=f"{1 if tick == 1 else tick + 1:016x}",
+                   fromStep=f"{tick - 1:016x}", toStep=f"{tick:016x}")
+    payload["state"].update(bodyLength=12 + tick, retainedGrowth=tick)
+
+    def command(identity):
+        at_step = {1: 0, 2: 1}.get(identity, identity)
+        return {"sequence": f"{100 + identity:016x}", "clientActionId": f"{identity:016x}",
+                "clientTick": f"{identity - 1:016x}", "acceptedAtStep": f"{at_step:016x}"}
+
+    first = {1: 0, 2: 2}.get(applied, applied)
+    payload["control"] = {
+        "source": "neutral" if tick == 4 else "held", "selectedAtStep": f"{tick - 1:016x}",
+        "acceptedCommand": command(accepted),
+        "appliedCommand": {"command": command(applied), "firstAppliedStep": f"{first:016x}"},
+        "acceptedCount": accepted, "appliedCount": applied_count, "supersededCount": superseded,
+    }
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_rejects_untracked_ppo_command(motion_spec):
+    """A missing echo cannot leave the PPO epoch fence waiting indefinitely."""
+    cfg, state = state_for(motion_spec)
+    actor = SynchronousActorClient(0, cfg, state, asyncio.Queue())
+    socket = Socket()
+    await start(actor, motion_spec, socket)
+    payload = tracked_reward(1, 1, 1, 1)
+    payload["control"]["acceptedCommand"]["clientActionId"] = None
+    payload["control"]["appliedCommand"]["command"]["clientActionId"] = None
+    with pytest.raises(RewardContractError, match="without its client action identity"):
+        await actor._handle_sensors({"snakeId": 7, "tick": 1,
+                                     "sensors": np.zeros(motion_spec["sensorCount"]),
+                                     "reward": payload}, socket)
+
+
+def test_native_receipt_count_requires_a_new_sequence():
+    """Counter conservation alone cannot validate a replayed command marker."""
+    stream = RewardStream()
+    stream.rebase(tracked_reward(1, 1, 1, 1), snake_id=7)
+    replay = tracked_reward(2, 1, 1, 2)
+    replay["control"]["acceptedCount"] = 2
+    with pytest.raises(RewardDiscontinuityError, match="without a new sequence"):
+        stream.accept(replay, snake_id=7)
+    stream.accept(tracked_reward(2, 2, 1, 1), snake_id=7)
+
+
+@pytest.mark.asyncio
+async def test_epoch_fence_waits_for_physics_and_allows_superseding_new_command(motion_spec):
+    """Acceptance alone cannot open collection, and skipped first IDs cannot deadlock it."""
+    cfg, state = state_for(motion_spec)
+    cfg.horizon = 1
+    queue, socket = asyncio.Queue(), Socket()
+    actor = SynchronousActorClient(0, cfg, state, queue)
+    await start(actor, motion_spec, socket)
+
+    async def deliver(tick, accepted, applied, count, superseded=0):
+        await actor._handle_sensors({"snakeId": 7, "tick": tick,
+                                     "sensors": np.zeros(motion_spec["sensorCount"]),
+                                     "reward": tracked_reward(tick, accepted, applied, count,
+                                                              superseded)}, socket)
+
+    await deliver(1, 1, 1, 1)
+    assert queue.get_nowait()[1] == 0
+    state.drain_runtime_stats()
+    state.update_steps = 1
+    state.sync_infer_from_train()
+    state.advance_collection_epoch()
+    await deliver(2, 2, 1, 1)
+    assert actor._fence_action_id == 3
+    await deliver(3, 3, 2, 2)
+    assert actor._fence_required  # Command 3 was accepted, but only old command 2 ran.
+    await deliver(4, 4, 2, 2, 1)
+    assert actor.pending_transition is None
+    await deliver(5, 5, 4, 3, 1)
+    assert not actor._fence_required
+    assert actor.pending_transition.action_id == "0000000000000006"
+    assert actor.pending_transition.reward == 0
+    await deliver(6, 6, 5, 4, 1)
+    actor_id, epoch, rollout, _bootstrap = queue.get_nowait()
+    assert actor_id == 0 and epoch == 1
+    assert len(rollout) == 1 and rollout[0].policy_version == 1
+    assert rollout[0].action_id == "0000000000000006"
+    assert rollout[0].reward == pytest.approx(0.35)
+    stats = state.drain_runtime_stats()
+    assert stats["epoch_fence_intervals"] == 4
+    assert stats["received_foodValueDelta"] == 5
+    assert stats["reward_food"] == pytest.approx(0.1)
+    assert stats["commands_superseded"] == 1
+    assert stats["command_delay_samples"] == 3
+    assert stats["command_delay_steps_mean"] == 1
+    assert stats["command_delay_steps_max"] == 1
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_closure_before_epoch_observation_contributes_empty_only_once(motion_spec):
+    """An early closure cannot reset an already submitted empty contribution on assignment."""
+    cfg, state = state_for(motion_spec)
+    cfg.horizon = 1
+    queue = asyncio.Queue()
+    actor = SynchronousActorClient(0, cfg, state, queue)
+    await start(actor, motion_spec, Socket())
+    await actor._handle_sensors({"snakeId": 7, "tick": 1,
+                                 "sensors": np.zeros(motion_spec["sensorCount"]),
+                                 "reward": reward("live")}, Socket())
+    queue.get_nowait()
+    state.advance_collection_epoch()
+    closure = reward("terminal")
+    closure.update(observationSequence="0000000000000004",
+                   previousObservationSequence="0000000000000003",
+                   fromStep="0000000000000001", toStep="0000000000000002")
+    closure["state"].update(bodyLength=14, retainedGrowth=2)
+    await actor._handle_transition({"reward": closure})
+    assert queue.get_nowait()[1:3] == (1, [])
+    await actor._on_assign(8, "b" * 32)
+    await actor._handle_sensors({"snakeId": 8, "tick": 0,
+                                 "sensors": np.zeros(motion_spec["sensorCount"]),
+                                 "reward": reward(snake_id=8)}, Socket())
+    assert actor._submitted_collection_epoch == 1
+    assert actor.pending_transition is None
+    assert queue.empty()

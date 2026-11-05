@@ -43,6 +43,7 @@ class Transition:  # pylint: disable=too-few-public-methods
     reward_components: Dict[str, float] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     alive_seconds: float = 0.0
+    action_id: Optional[str] = None
 
 
 class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
@@ -104,6 +105,9 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.evaluation_episode: Optional[EvaluationEpisode] = None
         self.evaluation_generator: Optional[torch.Generator] = None
         self._evaluation_name = self._fresh_evaluation_name() if self.evaluation else ""
+        self._action_id_counter = 0
+        self._last_issued_action_id = 0
+        self.last_reward_envelope = None
 
     def _fresh_evaluation_name(self) -> str:
         """Avoid legacy name-based reclaim after an intentional capped cutoff."""
@@ -129,6 +133,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self._episode_integrity = True
         self.evaluation_episode = None
         self.evaluation_generator = None
+        self.last_reward_envelope = None
 
     def _reset_connection_state(self) -> None:
         """Reset socket-local fields while retaining reclaimable snake state."""
@@ -515,6 +520,71 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             if callable(callback):
                 callback(reward)
 
+    def _observe_command_metadata(self, reward) -> None:
+        """Observe native counts without treating command acceptance as physical execution."""
+        control = reward["control"]
+        previous = (None if self.last_reward_envelope is None
+                    else self.last_reward_envelope["control"])
+        applied = control["appliedCommand"]
+        accepted = control["acceptedCommand"]
+        old_accepted = None if previous is None else previous["acceptedCommand"]
+        if (previous is not None and self._last_issued_action_id and accepted is not None
+                and accepted != old_accepted and accepted["clientActionId"] is None):
+            raise RewardContractError(
+                "Rust accepted a PPO command without its client action identity"
+            )
+        self._validate_echoed_command(accepted, old_accepted)
+        if applied is not None:
+            old_applied = None if previous is None else previous["appliedCommand"]
+            self._validate_echoed_command(applied["command"],
+                                          None if old_applied is None else old_applied["command"])
+        if previous is not None and not self.evaluation:
+            delta = tuple(control[key] - previous[key]
+                          for key in ("acceptedCount", "appliedCount", "supersededCount"))
+            callback = getattr(self.shared_state, "record_command_counts", None)
+            if callable(callback):
+                callback(*delta)
+            if (applied is not None and delta[1] > 0
+                    and applied["command"]["clientActionId"] is not None):
+                delay = (int(applied["firstAppliedStep"], 16)
+                         - int(applied["command"]["clientTick"], 16))
+                callback = getattr(self.shared_state, "record_command_delay", None)
+                if delay >= 0 and callable(callback):
+                    callback(delay)
+        self.last_reward_envelope = reward
+
+    def _validate_echoed_command(self, command, previous) -> None:
+        if command is None or command == previous:
+            return
+        identity = command["clientActionId"]
+        if identity is None:
+            if previous is not None and previous["clientActionId"] is not None:
+                raise RewardContractError("tagged command stream lost its client action identity")
+            return
+        value = int(identity, 16)
+        if self._last_issued_action_id and value > self._action_id_counter:
+            raise RewardContractError("server echoed an unknown client action identity")
+        if previous is not None and previous["clientActionId"] is not None:
+            if identity <= previous["clientActionId"]:
+                raise RewardContractError("server replayed a client action identity")
+        self._action_id_counter = max(self._action_id_counter, value)
+
+    async def _send_action(self, ws, tick: int, turn: float, boost: float) -> str:
+        """Issue one uniquely tagged command; identity survives transport retries and lifetimes."""
+        if self._action_id_counter >= 2**64 - 1:
+            raise RewardContractError("client action identity exhausted")
+        self._action_id_counter += 1
+        identity = f"{self._action_id_counter:016x}"
+        await ws.send(json.dumps({"type": "action", "tick": tick, "snakeId": self.snake_id,
+                                  "turn": clamp(turn, -1.0, 1.0),
+                                  "boost": clamp(boost, 0.0, 1.0), "actionId": identity}))
+        self._last_issued_action_id = self._action_id_counter
+        if self.pending_transition is not None:
+            self.pending_transition.action_id = identity
+        self.last_sent_tick = tick
+        self.last_sent_time = time.monotonic()
+        return identity
+
     def _observation_and_reward(self, msg: Dict[str, Any]) -> np.ndarray:
         if msg.get("snakeId") != self.snake_id:
             raise RewardDiscontinuityError("observation belongs to another assigned snake")
@@ -531,6 +601,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                 or int(raw_reward["toStep"], 16) != tick):
             raise RewardContractError("reward cutoff does not match the observation tick")
         reward = self._accept_reward(raw_reward)
+        self._observe_command_metadata(raw_reward)
         self._account_reward(reward)
         self.last_sensor_tick = tick
         if self.last_assign_tick is None:
@@ -572,6 +643,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             reward = None
         else:
             reward = self._accept_reward(raw)
+        self._observe_command_metadata(raw)
         self._account_reward(reward)
         self.last_sensor_tick = int(raw["toStep"], 16)
         bootstrap = 0.0
@@ -638,16 +710,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.steps += 1
         self.episode_actions += 1
 
-        action_msg = {
-            "type": "action",
-            "tick": tick,
-            "snakeId": self.snake_id,
-            "turn": clamp(turn, -1.0, 1.0),
-            "boost": clamp(boost, 0.0, 1.0),
-        }
-        await ws.send(json.dumps(action_msg))
-        self.last_sent_tick = tick
-        self.last_sent_time = time.monotonic()
+        await self._send_action(ws, tick, turn, boost)
 
     async def _loop(self, ws, name: str) -> None:
         while True:

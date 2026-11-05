@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 910deaf6900d94e36c299c757a6f49a6153d35f1
+          ref: 7601b3544ca2bd598f4b41934ff08dc17f4179e0
           path: .slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

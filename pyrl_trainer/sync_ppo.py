@@ -184,6 +184,9 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._submitted_collection_epoch: Optional[int] = None
+        self._active_collection_epoch = int(self.shared_state.collection_epoch)
+        self._fence_required = False
+        self._fence_action_id: Optional[int] = None
 
     def _collection_open(self) -> bool:
         if self.evaluation:
@@ -192,7 +195,19 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         return self._submitted_collection_epoch != current
 
     def _training_collection_open(self) -> bool:
-        return self._collection_open()
+        return self._collection_open() and not self._fence_required
+
+    def _account_reward(self, reward) -> None:
+        if (reward is not None and reward["transitionKind"] != "initial"
+                and self._fence_required and self._collection_open()):
+            callback = getattr(self.shared_state, "record_epoch_fence_interval", None)
+            if callable(callback):
+                callback(reward["deltas"]["elapsedSeconds"])
+        super()._account_reward(reward)
+
+    async def _handle_transition(self, msg) -> None:
+        self._refresh_collection_epoch()
+        await super()._handle_transition(msg)
 
     async def _submit_environment_closure(self, bootstrap: float) -> None:
         if not self.evaluation:
@@ -211,6 +226,8 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
             return
         if not self.rollout and not allow_empty:
             return
+        if self._fence_required and self.rollout:
+            raise RuntimeError("cannot submit data before the collection control fence")
 
         epoch = int(self.shared_state.collection_epoch)
         await self.experience_q.put(
@@ -221,13 +238,32 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         self._submitted_collection_epoch = epoch
 
     def _refresh_collection_epoch(self) -> None:
-        if self.evaluation or self._submitted_collection_epoch is None:
+        if self.evaluation:
             return
-        if int(self.shared_state.collection_epoch) > self._submitted_collection_epoch:
+        current = int(self.shared_state.collection_epoch)
+        if current != self._active_collection_epoch:
+            if self.rollout or self.pending_transition is not None:
+                raise RuntimeError("unsubmitted experience crossed a collection epoch")
+            self._active_collection_epoch = current
             self._submitted_collection_epoch = None
+            self._fence_required = True
+            self._fence_action_id = None
+
+    def _observe_collection_fence(self) -> None:
+        if self.evaluation or not self._collection_open() or not self._fence_required:
+            return
+        reward = self.last_reward_envelope
+        if reward is None:
+            return
+        applied = reward["control"]["appliedCommand"]
+        identity = None if applied is None else applied["command"]["clientActionId"]
+        if (identity is not None and self._fence_action_id is not None
+                and int(identity, 16) >= self._fence_action_id):
+            self._fence_required = False
 
     async def _truncate_disconnected_rollout(self) -> None:
         """Contribute partial work once, then reconnect without inventing a terminal."""
+        self._refresh_collection_epoch()
         self._finish_evaluation("incomplete", "transportGap", integrity=False)
         bootstrap = (
             float(self.pending_transition.value)
@@ -251,6 +287,7 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         self._refresh_collection_epoch()
         obs = self._observation_and_reward(msg)
         self._check_evaluation_limit()
+        self._observe_collection_fence()
         tick = int(msg["tick"])
 
         self.last_obs = obs
@@ -258,13 +295,13 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
             return
 
         if not self.evaluation and self.pending_transition is not None:
-            if self._collection_open():
+            if self._training_collection_open():
                 self.rollout.append(self.pending_transition)
             self.pending_transition = None
 
         if (
             not self.evaluation
-            and self._collection_open()
+            and self._training_collection_open()
             and len(self.rollout) >= self.cfg.horizon
         ):
             bootstrap = self.shared_state.inference_value(obs)
@@ -272,7 +309,7 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
 
         sampled_action = self._sample_action(obs)
         turn, boost, logp, value, turn_latent, policy_version = sampled_action
-        if not self.evaluation and self._collection_open():
+        if not self.evaluation and self._training_collection_open():
             self.pending_transition = Transition(
                 obs=obs,
                 action_turn=turn,
@@ -287,16 +324,10 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
 
         self.steps += 1
         self.episode_actions += 1
-        action_msg = {
-            "type": "action",
-            "tick": tick,
-            "snakeId": self.snake_id,
-            "turn": max(-1.0, min(1.0, float(turn))),
-            "boost": max(0.0, min(1.0, float(boost))),
-        }
-        await ws.send(json.dumps(action_msg))
-        self.last_sent_tick = tick
-        self.last_sent_time = time.monotonic()
+        identity = await self._send_action(ws, tick, turn, boost)
+        if (self._fence_required and self._collection_open() and self._fence_action_id is None
+                and self._active_collection_epoch == self.shared_state.collection_epoch):
+            self._fence_action_id = int(identity, 16)
 
 
 def _save_pending_exact_best(cfg: Config, shared_state: SynchronousSharedState) -> None:

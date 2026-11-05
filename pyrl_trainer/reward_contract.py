@@ -5,6 +5,7 @@ weighting, never simulation events or sensor-label reconstruction.
 """
 
 from dataclasses import dataclass, fields
+from copy import deepcopy
 import math
 import re
 from typing import Any, Mapping, cast, get_args
@@ -15,6 +16,10 @@ from slither_contracts.models import (
     ExternalRewardEndReason,
     ExternalRewardEnvelopeV1,
     ExternalRewardStateV1,
+    ExternalRewardCommandV1,
+    ExternalRewardAppliedCommandV1,
+    ExternalRewardControlV1,
+    ExternalRewardControlSourceV1,
     ExternalRewardTransitionKind,
 )
 
@@ -105,6 +110,91 @@ def _validate_lifecycle(raw: Mapping[str, Any]) -> None:
         raise RewardContractError("reward transition kind and reason disagree")
 
 
+def _command(raw: Any, cutoff: int) -> dict[str, Any]:
+    value = dict(_shape(raw, ExternalRewardCommandV1, "command"))
+    _identity(value["sequence"])
+    if value["clientActionId"] is not None:
+        _identity(value["clientActionId"])
+    _identity(value["clientTick"], zero_allowed=True)
+    _identity(value["acceptedAtStep"], zero_allowed=True)
+    if int(value["acceptedAtStep"], 16) > cutoff:
+        raise RewardContractError("command receipt is after its observation boundary")
+    return value
+
+
+def _validate_control_selection(value: Mapping[str, Any], cutoff: int) -> None:
+    source, selected = value["source"], value["selectedAtStep"]
+    if source is not None and source not in get_args(ExternalRewardControlSourceV1):
+        raise RewardContractError("unsupported physical control source")
+    if (source is None) != (selected is None):
+        raise RewardContractError("control source omits its physical boundary")
+    if selected is not None:
+        _identity(selected, zero_allowed=True)
+        if int(selected, 16) >= cutoff:
+            raise RewardContractError("control selection has not completed physics")
+
+
+def _control(raw: Any, cutoff: int) -> dict[str, Any]:
+    value = dict(_shape(raw, ExternalRewardControlV1, "control"))
+    _validate_control_selection(value, cutoff)
+    source, selected = value["source"], value["selectedAtStep"]
+    for name in ("acceptedCount", "appliedCount", "supersededCount"):
+        _integer(value[name], name, 0, _MAX_EXACT)
+    accepted = value["acceptedCommand"]
+    if accepted is not None:
+        accepted = _command(accepted, cutoff)
+    applied = value["appliedCommand"]
+    if applied is not None:
+        applied = dict(_shape(applied, ExternalRewardAppliedCommandV1, "applied command"))
+        applied["command"] = _command(applied["command"], cutoff)
+        first = int(_identity(applied["firstAppliedStep"], zero_allowed=True), 16)
+        if (selected is None or first > int(selected, 16)
+                or first < int(applied["command"]["acceptedAtStep"], 16)):
+            raise RewardContractError("invalid physical command application boundary")
+    if ((accepted is None) != (value["acceptedCount"] == 0)
+            or (applied is None) != (value["appliedCount"] == 0)
+            or (source == "held" and applied is None)):
+        raise RewardContractError("control counts omit their command identity")
+    if applied is not None:
+        command = applied["command"]
+        if accepted is None or int(command["sequence"], 16) > int(accepted["sequence"], 16):
+            raise RewardContractError("applied command was never accepted")
+        if command["sequence"] == accepted["sequence"] and command != accepted:
+            raise RewardContractError("accepted and applied command identity disagree")
+    pending = int(accepted is not None and
+                  (applied is None or applied["command"]["sequence"] != accepted["sequence"]))
+    if value["acceptedCount"] != value["appliedCount"] + value["supersededCount"] + pending:
+        raise RewardContractError("command counts do not conserve accepted inputs")
+    return dict(value, acceptedCommand=accepted, appliedCommand=applied)
+
+
+def _control_progress(previous: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+    for counter, marker in (("acceptedCount", "acceptedCommand"),
+                            ("appliedCount", "appliedCommand")):
+        old, new = previous[marker], current[marker]
+        if current[counter] < previous[counter]:
+            raise RewardDiscontinuityError("command counters regressed")
+        if current[counter] == previous[counter]:
+            if new != old:
+                raise RewardDiscontinuityError("command identity changed without its counter")
+            continue
+        if old is not None:
+            if marker == "appliedCommand":
+                old, new = old["command"], new["command"]
+            if new["sequence"] <= old["sequence"]:
+                raise RewardDiscontinuityError("command counter advanced without a new sequence")
+    if current["supersededCount"] < previous["supersededCount"]:
+        raise RewardDiscontinuityError("command supersession counter regressed")
+    old, new = previous["selectedAtStep"], current["selectedAtStep"]
+    if old is not None and (new is None or int(new, 16) < int(old, 16)):
+        raise RewardDiscontinuityError("physical control selection regressed")
+    if new == old and current["source"] != previous["source"]:
+        raise RewardDiscontinuityError("control source changed without a new selection")
+    if (old is not None and current["appliedCount"] > previous["appliedCount"]
+            and current["appliedCommand"]["firstAppliedStep"] <= old):
+        raise RewardDiscontinuityError("new application is before the previous selection")
+
+
 def parse_reward(raw: Any) -> ExternalRewardEnvelopeV1:
     """Validate one complete interval without changing stream state."""
     raw = _shape(raw, ExternalRewardEnvelopeV1, "envelope")
@@ -144,7 +234,8 @@ def parse_reward(raw: Any) -> ExternalRewardEnvelopeV1:
     ):
         raise RewardContractError("reward point-accounting identity failed")
     # Own each shallow map: a transport decoder cannot mutate admitted data.
-    return cast(ExternalRewardEnvelopeV1, dict(raw, state=state, deltas=dict(deltas)))
+    control = _control(raw["control"], int(raw["toStep"], 16))
+    return cast(ExternalRewardEnvelopeV1, dict(raw, state=state, control=control, deltas=deltas))
 
 
 def _life(reward: ExternalRewardEnvelopeV1) -> tuple[str, str, str, str, int]:
@@ -161,6 +252,7 @@ class RewardStream:
         self._step: str | None = None
         self._closed = False
         self._state: ExternalRewardStateV1 | None = None
+        self._control: dict[str, Any] | None = None
 
     def accept(self, raw: Any, *, snake_id: int) -> ExternalRewardEnvelopeV1:
         """Admit once, only after all identity and predecessor checks pass."""
@@ -216,11 +308,14 @@ class RewardStream:
         if (self._state is not None and self._life == _life(reward)
                 and self._state["startingLength"] != reward["state"]["startingLength"]):
             raise RewardDiscontinuityError("starting length changed within the same reward life")
+        if self._control is not None and self._life == _life(reward):
+            _control_progress(self._control, reward["control"])
         self._life = _life(reward)
         self._sequence = reward["observationSequence"]
         self._step = reward["toStep"]
         self._closed = reward["transitionKind"] in ("terminal", "truncated")
         self._state = dict(reward["state"])
+        self._control = deepcopy(reward["control"])
 
 
 @dataclass(frozen=True)

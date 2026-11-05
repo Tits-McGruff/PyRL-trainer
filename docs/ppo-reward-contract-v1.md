@@ -87,6 +87,22 @@ Conversely, a prefix interval may credit live time before physics advances.
 Neither producer nor consumer requires `aliveSecondsDelta <= elapsedSeconds`
 within each individual packet.
 
+### Commands and collection epochs
+
+PPO tags issued actions with increasing `actionId` values. Reward v1 carries
+the latest Rust receipt and the latest distinct command selected by committed
+physics, including its first application step. The applied marker can lag the
+accepted marker. Native counters distinguish commands received, applied, and
+superseded before application. They exclude actions dropped before native
+admission.
+
+After an epoch advances, actors continue issuing actions while collection is
+fenced. Collection opens at the first valid observation proving that the first
+new-epoch command or a later new-epoch command has actually applied. The
+opening interval is excluded from PPO, and its observation starts the next
+decision. A lifecycle closure can contribute an empty rollout before the
+fence opens. Valid received events remain in episode accounting.
+
 ## Initial objective
 
 Default weights in `RewardCoefficients` are:
@@ -136,6 +152,12 @@ growth, economic and live-time exposure separately from admitted transitions.
 Component rates use admitted credited live seconds as their denominator, and
 decision duration uses admitted physical seconds. Evaluator events are excluded
 from training diagnostics.
+
+The command log includes fenced intervals and their physical duration. Delay
+samples measure the observed first application step minus the issuing
+observation's tick. The log gives sample count, mean, and maximum. When several
+applications fall between observations, only the visible marker contributes
+a delay sample.
 
 The diagnostic warning for absent task events requires both 10,000 intervals
 and 60 aggregate credited live seconds since the last event or warning reset.
@@ -230,7 +252,5 @@ PPO policy, final-state bootstrap and four-actor reward admission. Steering now
 uses a trainable, checkpointed `turn_log_std`; trainer reward-config version 2 and
 policy parameterization version 2 reject historical fixed-variance objectives.
 
-These checks establish implementation behavior. They do not establish useful
-learning or gameplay quality; the plan's separate learning qualification remains
-required. Publishing the paired dependency revision and qualifying command/epoch
-application boundaries remain part of the rollout work.
+These checks establish implementation behavior. The plan separately defines
+learning qualification for navigation and task progress.
