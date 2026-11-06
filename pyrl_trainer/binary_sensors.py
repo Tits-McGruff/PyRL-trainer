@@ -72,11 +72,12 @@ def _decode_reward(view: memoryview, offset: int, tick: int, snake_id: int) -> d
     if not 0 < length <= limit or len(view) != offset + _LENGTH.size + length:
         raise BinarySensorError("binary reward length is invalid or exceeds its bound")
     try:
-        reward = parse_reward(json.loads(
+        payload = json.loads(
             view[offset + _LENGTH.size:].tobytes(), object_pairs_hook=_unique_object
-        ))
-    except (ValueError, RewardContractError) as exc:
+        )
+    except ValueError as exc:
         raise BinarySensorError(f"invalid binary reward: {exc}") from exc
+    reward = parse_reward(payload)
     if reward["snakeId"] != snake_id or int(reward["toStep"], 16) != tick:
-        raise BinarySensorError("binary reward does not match the accompanying observation")
+        raise RewardContractError("binary reward does not match the accompanying observation")
     return reward

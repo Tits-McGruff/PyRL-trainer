@@ -12,6 +12,7 @@ from pyrl_trainer.binary_sensors import (
     BinarySensorError,
     decode_binary_sensors,
 )
+from pyrl_trainer.reward_contract import RewardContractError
 
 
 def packet(values, *, tick=42, snake_id=7, flags=1):
@@ -79,7 +80,7 @@ def test_reward_packet_preserves_native_fixture_and_zero_copy_sensors():
 @pytest.mark.parametrize("raw", [
     reward_packet()[:-1], reward_packet() + b"extra",
     reward_packet(encoded=b"x" * 4097), reward_packet(encoded=b""),
-    reward_packet(encoded=b"\xff"), reward_packet(encoded=b"{}"),
+    reward_packet(encoded=b"\xff"),
     reward_packet(encoded=b'{"rewardVersion":1,"rewardVersion":1}'),
 ])
 def test_reward_packets_reject_truncation_bounds_and_invalid_json(raw):
@@ -88,13 +89,17 @@ def test_reward_packets_reject_truncation_bounds_and_invalid_json(raw):
         decode_binary_sensors(raw)
 
 
-@pytest.mark.parametrize("change", [{"snakeId": 8}, {"toStep": "0000000000000002"},
-                                    {"rewardVersion": 2}])
-def test_reward_packet_cannot_mix_observation_or_contract_identity(change):
-    """A valid standalone reward must still belong to the same observation."""
+@pytest.mark.parametrize("field", ["snakeId", "toStep", "rewardVersion", "control", "pointsDelta"])
+def test_binary_reward_contract_errors_are_fatal(field):
+    """Semantic reward failures keep the exception that stops training."""
     reward = json.loads(files("slither_contracts").joinpath(
         "external-reward-v1-fixture.json"
     ).read_text(encoding="utf-8"))[0]
-    reward.update(change)
-    with pytest.raises(BinarySensorError):
+    if field == "control":
+        del reward["control"]
+    elif field == "pointsDelta":
+        reward["deltas"]["pointsDelta"] += 1
+    else:
+        reward[field] = {"snakeId": 8, "toStep": "0000000000000002", "rewardVersion": 2}[field]
+    with pytest.raises(RewardContractError):
         decode_binary_sensors(reward_packet(reward=reward))

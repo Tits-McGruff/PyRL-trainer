@@ -1,1 +1,1 @@
-slither-contracts @ git+https://github.com/Tits-McGruff/slither_neuroevo.git@7601b3544ca2bd598f4b41934ff08dc17f4179e0#subdirectory=contracts
+slither-contracts @ git+https://github.com/Tits-McGruff/slither_neuroevo.git@14264e4d84405e558451b868004ea005f0c2e7d7#subdirectory=contracts

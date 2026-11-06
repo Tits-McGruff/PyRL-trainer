@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Tits-McGruff/slither_neuroevo
-          ref: 7601b3544ca2bd598f4b41934ff08dc17f4179e0
+          ref: 14264e4d84405e558451b868004ea005f0c2e7d7
           path: .slither
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -80,7 +80,7 @@ jobs:
           node-version: '24'
       - name: Install CPU interoperability dependencies
         run: |
-          python -m pip install -c constraints.txt numpy pytest pytest-asyncio websockets
+          python -m pip install -c constraints.txt numpy pytest pytest-asyncio websockets tomli-w
           python -m pip install -r requirements-contracts.txt
           python -m pip install -c constraints.txt --index-url https://download.pytorch.org/whl/cpu torch
       - name: Build the production Slither protocol server
