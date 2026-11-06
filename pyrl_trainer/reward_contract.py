@@ -161,9 +161,13 @@ def _control(raw: Any, cutoff: int) -> dict[str, Any]:
             raise RewardContractError("applied command was never accepted")
         if command["sequence"] == accepted["sequence"] and command != accepted:
             raise RewardContractError("accepted and applied command identity disagree")
-    pending = int(accepted is not None and
-                  (applied is None or applied["command"]["sequence"] != accepted["sequence"]))
-    if value["acceptedCount"] != value["appliedCount"] + value["supersededCount"] + pending:
+    latest_not_applied = accepted is not None and (
+        applied is None or applied["command"]["sequence"] != accepted["sequence"]
+    )
+    pending = value["acceptedCount"] - value["appliedCount"] - value["supersededCount"]
+    # Reclaim can retire the latest command while keeping its receipt marker.
+    if (not 0 <= pending <= int(latest_not_applied)
+            or (latest_not_applied and pending == 0 and value["supersededCount"] == 0)):
         raise RewardContractError("command counts do not conserve accepted inputs")
     return dict(value, acceptedCommand=accepted, appliedCommand=applied)
 

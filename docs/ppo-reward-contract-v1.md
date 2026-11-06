@@ -93,8 +93,9 @@ PPO tags issued actions with increasing `actionId` values. Reward v1 carries
 the latest Rust receipt and the latest distinct command selected by committed
 physics, including its first application step. The applied marker can lag the
 accepted marker. Native counters distinguish commands received, applied, and
-superseded before application. They exclude actions dropped before native
-admission.
+superseded before application. A reclaim can supersede the latest command
+while retaining its acceptance marker. The counters exclude actions dropped
+before native admission.
 
 After an epoch advances, actors continue issuing actions while collection is
 fenced. Collection opens at the first valid observation proving that the first

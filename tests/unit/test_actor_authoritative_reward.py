@@ -526,6 +526,17 @@ def test_native_receipt_count_requires_a_new_sequence():
     stream.accept(tracked_reward(2, 2, 1, 1), snake_id=7)
 
 
+def test_reclaim_retires_pending_command_without_erasing_acceptance():
+    """A reclaim can account for the latest receipt without an application."""
+    stream = RewardStream()
+    before = tracked_reward(2, 2, 1, 1)
+    stream.rebase(before, snake_id=7)
+    reclaimed = stream.accept(tracked_reward(3, 2, 1, 1, 1), snake_id=7)
+    assert reclaimed["control"]["acceptedCommand"] == before["control"]["acceptedCommand"]
+    assert reclaimed["control"]["appliedCommand"] == before["control"]["appliedCommand"]
+    stream.accept(tracked_reward(4, 3, 1, 1, 1), snake_id=7)
+
+
 @pytest.mark.asyncio
 async def test_epoch_fence_waits_for_physics_and_allows_superseding_new_command(motion_spec):
     """Acceptance alone cannot open collection, and skipped first IDs cannot deadlock it."""
