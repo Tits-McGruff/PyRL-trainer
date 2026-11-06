@@ -12,6 +12,8 @@ import os
 import shutil
 from pathlib import Path
 import statistics
+from slither_contracts import CONSTANTS
+
 
 from .tactical_contract import (MAX_ABLATION_UPDATES, SCENARIOS, variants_for_profile,
                                 policies_for_profile)
@@ -372,7 +374,8 @@ def combine_studies(studies, spec):
             key = name, cell[0]
             initial.setdefault(key, weights)
             _require(initial[key] == weights, "same initialization changed across held-out folds")
-            shape = _integer(value["parameters"], 1, 1_000_000), _sha(value["layoutSha256"])
+            shape = (_integer(value["parameters"], 1, CONSTANTS["maxBrainParameters"]),
+                     _sha(value["layoutSha256"]))
             parameters.setdefault(name, shape)
             _require(parameters[name] == shape, "ablation packing changed across cells")
             _policy_metrics(value["before"], profile=profile)

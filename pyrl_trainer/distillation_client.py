@@ -9,6 +9,8 @@ import json
 import math
 from urllib import error, parse, request
 
+from slither_contracts import CONSTANTS
+
 from .distillation_shadows import shadow_metrics, shadow_receipt
 from .distillation_storage import ProducerStoragePolicy
 
@@ -386,8 +388,8 @@ class DistillationClient:
         for name in ("layoutSha256", "sensorSha256"):
             hex_identity(descriptor[name], 64)
         integer(descriptor["inputSize"], 1, 504)
-        integer(descriptor["parameterCount"], 0, 1000000)
-        integer(descriptor["stateSize"], 0, 16384)
+        integer(descriptor["parameterCount"], 0, CONSTANTS["maxBrainParameters"])
+        integer(descriptor["stateSize"], 0, CONSTANTS["maxBrainStateFloats"])
         if (
             not isinstance(descriptor["architectureKey"], str)
             or len(descriptor["architectureKey"].encode("utf-8")) > 512 * 1024

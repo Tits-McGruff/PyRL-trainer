@@ -26,6 +26,7 @@ import zipfile
 
 import numpy as np
 import torch
+from slither_contracts import CONSTANTS
 
 from .distillation_shadows import online_state
 from .brain_artifact import MAX_ARTIFACT_BYTES, read_raw_brain_artifact
@@ -62,10 +63,13 @@ BASE_FILES = {
 MEMBER_LIMITS = {
     "job.json": 1024**2,
     "graph.json": 1024**2,
-    "weights.f32": 4 * 1024**2,
+    "weights.f32": CONSTANTS["maxBrainWeightBytes"],
+    # Two full Float32 Adam moments (16,000,000 bytes) plus bounded Torch metadata.
     "optimizer.pt": 32 * 1024**2,
+    # Generator state does not scale with parameter count.
     "rng.pt": 256 * 1024,
-    "state.f32": 8 * 1024**2,
+    # SequenceTrainingConfig permits 256 windows; each owns its detached state.
+    "state.f32": 256 * CONSTANTS["maxBrainStateFloats"] * 4,
     "chunks.index": 65536 * INDEX_RECORD.size,
 }
 

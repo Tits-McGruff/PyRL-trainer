@@ -13,6 +13,8 @@ import shutil
 import sys
 import time
 
+from slither_contracts import CONSTANTS
+
 import torch
 
 from .canonical_graph import CanonicalGraphManifest
@@ -55,7 +57,8 @@ def _arguments():
     if args.output.resolve().is_relative_to(workspace):
         parser.error("report must be outside disposable workspace")
     for path, maximum in [(args.fixture / "reference.json", 1024**2),
-                          (args.manifest, 1024**2), (args.weights, 4_000_000)]:
+                          (args.manifest, 1024**2),
+                          (args.weights, CONSTANTS["maxBrainWeightBytes"])]:
         if not path.is_file() or path.stat().st_size > maximum:
             parser.error("immutable input exceeds admission")
     if shutil.disk_usage(workspace.parent).free < args.ram_mib * 1024**2 + DISK_RESERVE_BYTES:

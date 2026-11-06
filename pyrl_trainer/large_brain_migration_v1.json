@@ -1,0 +1,112 @@
+{
+  "revision": "large-brain-admission-v1",
+  "reviewedSourceCommit": "ec4a156",
+  "scope": "Only numeric admission ceilings and shared contract constants change. Computation, optimizer, sampler, RNG and serialization code are byte-identical. No arbitrary source approval is accepted.",
+  "sourceFiles": {
+    "canonical_graph.py": [
+      "3b0305b26d822161ff0ecf15f9247d138cc53d16dd83ba9c9fec62e190869130",
+      "3dc7dba0bb2d8920167078aacb91c9bac58407485fda05818fb4a89fd262ab29",
+      "450f9ba4f2d4bd0b85cdd785b4182f5fb75cadb59c9731a8ffa527b73bad9529",
+      "7d297a857b1dabbf73e2373c37c4b39927ffb9cbc56faa03556fa3ddbc87d8dd",
+      "838f036ff9a4d736d616e24a42d781645a81630cc673cafd10744b4a2c0d4b13",
+      "ba2f07c0729c860bbd631e27404f0db965d20349076ff91990bd98c3e47e4536",
+      "d5e432c5e7141e0a62a3c3e203791cb8097e4b51e6674186b837e6e1004c27f4",
+      "e9fc769bbdfe1ee04798fd6c641f3c1de56385be553236d6ded6be7663410aa2",
+      "f829484ed4c4e3505adfff0e9772b9f34ba510d773094f8b35812cdaddde678f"
+    ],
+    "sensor_contract.py": [
+      "770dff09d17e5be62e07eaa25900deba159f767da567ec0623bbeb29fd63f5a9"
+    ],
+    "sequence_distillation.py": [
+      "034f2120f7e07399db19a2930faa3924448ff2b6e267f95fca5cd46123484446"
+    ],
+    "distillation_transport.py": [
+      "a9f4e32f7bca71fb833aaaf76945db9bfe2c45e4c1e99c8a93a0ef333cb72904"
+    ],
+    "distillation_client.py": [
+      "40c24ea83648dd6de713ff42106e1f256cdad9e4874516ef93435624f7fe3a07",
+      "e9b5aeb334849b50810e41d4b408c9b262de7b960d363ff0b6762c408a27c51b"
+    ],
+    "distillation_storage.py": [
+      "3b91f99eac3eecf97a15a241438df60600c1a5734ea94312671f465a102a060e"
+    ],
+    "distillation_replay.py": [
+      "c39890ffa2d4511f9481960d543c6f388613e6a5b029c0736f2677d8a92e53be"
+    ],
+    "distillation_sampling.py": [
+      "1fbe8f297b78f58efbccfc5f7d1168d2ea8d01e907a74dc4ea67b90349020b7a"
+    ],
+    "distillation_job.py": [
+      "5f6b19c115c7727301962093c19586e217017d1636d9ff3bd1311f63f1775e6f"
+    ],
+    "distillation_process.py": [
+      "0a725ee4c3ef2dfde7a96b605e939bf2c7e3ef85dbcd16700bcbaf603ee94351"
+    ],
+    "distillation_checkpoint.py": [
+      "7507a85c4c9505b6d1bcd38f2565a6ce83bd1c15e7d49a16bc345f7a9ae0e40f",
+      "8e0ec27c1f1836f322f16026bd7a787175c6908daa0df08f29990ee9674c567d"
+    ],
+    "distillation_run.py": [
+      "c1bce2c9b330b4a3115c38acd0f501795e4dbb3ee001b5c79abfefb157a32e90"
+    ],
+    "brain_artifact.py": [
+      "17cd65fbf73bd2099b901ea61acf78ec2eb4ecd79690f383ae6d7f6f0f87330b",
+      "cd490dd3cf392c6fc30b35a32335f9f1d47c88b2551cd713c1af10b107d3a013"
+    ],
+    "distillation_shadows.py": [
+      "74865d9cb88022b3a1091c8c3b880009f50c2669cee28c479b574f554c76243d"
+    ]
+  },
+  "sourceContractIdentities": [
+    "05b2610d08eb8669342293b1e842d3819dc016c77465d1c8f0792880f88cdb32",
+    "09ed2cc1b5501b36a0190f3850d33f5ed27b95964ecd7c2d7818da47c5e68e92",
+    "128ff920564861383edfae42e8c0f7e4447692098597533eea3188eb364bb384",
+    "1e939b5bcb651bc9f362d7681f9790bf01a3979e5a9d3a87bec99935d7f46d9f",
+    "44ff815a677dfacb952b6e42b46aafe628d0d163d6aa8c5e5e2b28d2c16a89e8",
+    "47e4eb504cb8d5384002ca93ab2bdb7f9b77689f6958ce1340b875832416d83b",
+    "52d1ccfeb3fef78707093b61001a237e0acb1d119ddbdd38d66eb0684376880e",
+    "56bac116231d8708126e6b67558a45148b38f8242532c1766c3d76d9520f2dda",
+    "6b0c08c8b164875fc79efff82a83a8d32473a4a4f3a343b5b96a423f82367751",
+    "73c641216784da2e018d3b64efb33caa50b77c7386dc3ab7051b1b72a447e4d6",
+    "976282b2aed278a692a42499da89ec18fd423b7094d276a4e9d02fe258af7f09",
+    "c4eb223a189bd7f6a1658f7ed5b61d2c3df046b29e5da21ea8c733f76453df94",
+    "c7073339928e9ec8593d0aa7ac377bc4f59fe5739227eaf81eed5978eeae450a",
+    "da049435af3b894588e72075a653677fa9382bc2b23a626827381aba1295aa14",
+    "e0586c16e6b533636abde8be6faf485601e90559811b02cee089f086b152ee4a",
+    "f27a282c5b704b972ce512d1d729c732d7500bd4542a5887fb496ced1e886a34"
+  ],
+  "targetFiles": {
+    "canonical_graph.py": "eee88473e66ee2cd1ac6de86c8da1370cfe4fc63bc1c5960a9de44ff15305f84",
+    "sensor_contract.py": "770dff09d17e5be62e07eaa25900deba159f767da567ec0623bbeb29fd63f5a9",
+    "sequence_distillation.py": "034f2120f7e07399db19a2930faa3924448ff2b6e267f95fca5cd46123484446",
+    "distillation_transport.py": "a9f4e32f7bca71fb833aaaf76945db9bfe2c45e4c1e99c8a93a0ef333cb72904",
+    "distillation_client.py": "9174b58d75597f16435c0f4a779ffaa2cafeb3ca66ceb7067176a852fa49ee04",
+    "distillation_storage.py": "3b91f99eac3eecf97a15a241438df60600c1a5734ea94312671f465a102a060e",
+    "distillation_replay.py": "c39890ffa2d4511f9481960d543c6f388613e6a5b029c0736f2677d8a92e53be",
+    "distillation_sampling.py": "1fbe8f297b78f58efbccfc5f7d1168d2ea8d01e907a74dc4ea67b90349020b7a",
+    "distillation_job.py": "5f6b19c115c7727301962093c19586e217017d1636d9ff3bd1311f63f1775e6f",
+    "distillation_process.py": "0a725ee4c3ef2dfde7a96b605e939bf2c7e3ef85dbcd16700bcbaf603ee94351",
+    "distillation_checkpoint.py": "f82e932181a8243f6921312f0161193d3118fea061784ab20d00ba2202136fc7",
+    "distillation_run.py": "c1bce2c9b330b4a3115c38acd0f501795e4dbb3ee001b5c79abfefb157a32e90",
+    "brain_artifact.py": "9ec632ce52e5ca42e8229694a813cf72163c997a9290b16f6cb45ff229ec1c54",
+    "distillation_shadows.py": "74865d9cb88022b3a1091c8c3b880009f50c2669cee28c479b574f554c76243d"
+  },
+  "targetContractIdentities": [
+    "00b65016fc090f733804730cc5fd7a3380a4466c8efe06d88e4395767eb6315e",
+    "0819c373cb97aedf7f687ed9de3c0253c116da0e799ae90c667b41ad16cdbe1e",
+    "14c478dfd1767f614dcc31d10ddc26d2d61466515f07fd01d7131f6fc0fcb421",
+    "1632133be8c150f90655ede82310fdef714ee4ffca133c06c3ae7c4a6c605bf9",
+    "447c11f92c769a562037a53ad7890858962bf55bbff9891a7d9e1cd54f0bc019",
+    "5b49854e08845342428b9d6e3cba9d33f787fb593d257241e6fe91322abdda36",
+    "773ebba871cf940fbe10518a7f104dc758d9e14c905f52129d338f1f0a9775d7",
+    "7bf2638146f70d60510d87b745e7cd05414751db9039c71546c69ff69ff18525",
+    "80c63c194bfe261401e9e0ad8d191ca75830d496ec4e8a0995a46bc18dafd4b3",
+    "aa613d684a0a2849938d585bdf1411c945e77265f4916215e7a2ff8c2cec1b7f",
+    "d13a168bb49f1874e11aeaeb0e95a61585ff8dbd59daaa21a4a7e8a33a0be5c2",
+    "da01b5976df5e8c27a35b74f43a9624daf526d32191137b7be7140da8e15215a",
+    "da89bdecc6ca13a930517015fcfb07271ed8f5766aa6c5e9c82aac47753487bd",
+    "f1c9b13db0f9bf5094be9eb25104daad04c830b0a7efbbce594b0d6187c8178f",
+    "f6132b824a8935508a7d37143a978b3488c0aa4fd09cd815ef07603514e66555",
+    "faa736a8390418f0360e71bf88f94da447c2db9fd045fe7e56b4b52e6eed7098"
+  ]
+}
