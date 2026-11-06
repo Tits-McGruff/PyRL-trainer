@@ -1,22 +1,63 @@
 """Learner loop and PPO update utilities."""
 
 import asyncio
+import copy
+import logging
+import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 from torch import optim
+from slither_contracts.models import ExternalRewardDeltasV1, ExternalRewardEnvelopeV1
 
 from .agent import Transition  # Circular import if not careful, but Transition is data
 from .checkpointing import save_best_checkpoint, save_checkpoint
 from .config import Config
-from .network import PolicyValueNet
+from .network import PolicyValueNet, MIN_TURN_LOG_STD, MAX_TURN_LOG_STD
 from .sensor_contract import SensorContract
-from .utils import REWARD_COMPONENT_KEYS
+from .reward_contract import REWARD_COMPONENT_KEYS
+from .evaluation import policy_snapshot_sha256
 
 
 _TARGET_KL = 0.025
+_LOGGER = logging.getLogger(__name__)
+
+
+def format_reward_exposure(stats: Dict[str, float]) -> str:
+    """Describe received events separately from the rollout-admission denominator."""
+    rates = ",".join(f"{key}={stats[f'reward_{key}_per_alive_second']:.4f}"
+                     for key in REWARD_COMPONENT_KEYS)
+    cumulative = ",".join(f"{key}={stats[f'reward_total_{key}']:.3f}"
+                          for key in REWARD_COMPONENT_KEYS)
+    return (
+        f"received[intervals={int(stats['received_intervals'])},"
+        f"total_intervals={int(stats['received_interval_count'])},"
+        f"elapsed_s={stats['received_elapsedSeconds']:.3f},"
+        f"alive_s={stats['received_aliveSecondsDelta']:.3f},"
+        f"food_value={stats['received_foodValueDelta']:.3f},"
+        f"food_count={int(stats['received_foodCountDelta'])},"
+        f"growth={stats['received_retainedGrowthDelta']:.3f},"
+        f"task_points={stats['received_pointsDelta'] - stats['received_survivalPointsDelta']:.3f},"
+        f"kills={int(stats['received_killsDelta'])},"
+        f"boost_spent={stats['received_boostPointsSpentDelta']:.3f},"
+        f"total_food={stats['received_total_foodValueDelta']:.3f},"
+        f"total_alive_s={stats['received_total_aliveSecondsDelta']:.3f}] "
+        f"admitted[transitions={int(stats['admitted_transitions'])},"
+        f"elapsed_s={stats['admitted_elapsed_seconds']:.3f},"
+        f"alive_s={stats['admitted_alive_seconds']:.3f},"
+        f"decision_s={stats['decision_seconds_mean']:.5f}] "
+        f"reward_per_admitted_alive_second[{rates}] reward_total[{cumulative}] "
+        f"commands[accepted={int(stats.get('commands_accepted', 0))},"
+        f"applied={int(stats.get('commands_applied', 0))},"
+        f"superseded={int(stats.get('commands_superseded', 0))},"
+        f"delay_samples={int(stats.get('command_delay_samples', 0))},"
+        f"delay_steps_mean={stats.get('command_delay_steps_mean', 0):.2f},"
+        f"delay_steps_max={int(stats.get('command_delay_steps_max', 0))},"
+        f"fence_intervals={int(stats.get('epoch_fence_intervals', 0))},"
+        f"fence_seconds={stats.get('epoch_fence_seconds', 0):.3f}]"
+    )
 
 
 class SharedState:  # pylint: disable=too-many-instance-attributes
@@ -36,10 +77,10 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         self.sensor_contract = sensor_contract
 
         self.train_model = PolicyValueNet(
-            obs_dim, hidden=cfg.net_hidden, layers=cfg.net_layers
+            obs_dim, hidden=cfg.net_hidden, layers=cfg.net_layers, initial_turn_std=cfg.turn_std
         ).to(cfg.train_device)
         self.infer_model = PolicyValueNet(
-            obs_dim, hidden=cfg.net_hidden, layers=cfg.net_layers
+            obs_dim, hidden=cfg.net_hidden, layers=cfg.net_layers, initial_turn_std=cfg.turn_std
         ).to(cfg.infer_device)
 
         self.optimizer = optim.Adam(self.train_model.parameters(), lr=cfg.lr)
@@ -49,6 +90,22 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             **{key: 0.0 for key in REWARD_COMPONENT_KEYS},
             "death": 0.0,
         }
+        self._reward_cumulative = dict(self._reward_totals)
+        self._admitted_seconds = 0.0
+        self._admitted_alive_seconds = 0.0
+        self._admitted_transitions = 0
+        self._received_totals = {key: 0.0 for key in ExternalRewardDeltasV1.__annotations__}
+        self._received_cumulative = dict(self._received_totals)
+        self._received_intervals = 0
+        self._received_interval_count = 0
+        self._no_task_intervals = 0
+        self._no_task_alive_seconds = 0.0
+        self._command_counts = {"accepted": 0, "applied": 0, "superseded": 0}
+        self._command_delay_samples = 0
+        self._command_delay_sum = 0
+        self._command_delay_max = 0
+        self._epoch_fence_intervals = 0
+        self._epoch_fence_seconds = 0.0
         self._episode_count = 0
         self._episode_return_sum = 0.0
         self._episode_lifetime_sum = 0.0
@@ -57,6 +114,8 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         self.best_episode_return = float("-inf")
         self.best_checkpoint_pending = False
         self.best_policy_snapshot: Optional[Dict[str, Any]] = None
+        self.best_evaluation_result: Optional[Dict[str, Any]] = None
+        self.last_evaluation_result: Optional[Dict[str, Any]] = None
         self._published_policy_snapshot: Dict[str, Any] = {}
         self.sync_infer_from_train()
 
@@ -92,23 +151,16 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
     def begin_evaluation_policy(self) -> Tuple[Dict[str, Any], PolicyValueNet]:
         """Create a frozen local model for one complete evaluator episode."""
         snapshot = self._published_policy_snapshot
-        model = PolicyValueNet(
-            self.obs_dim,
-            hidden=self.cfg.net_hidden,
-            layers=self.cfg.net_layers,
-        ).to(self.cfg.infer_device)
+        # Clone without random initialization. Saving/restoring a global RNG here
+        # would race the PPO update thread's minibatch sampling.
+        model = copy.deepcopy(self.infer_model)
         model.load_state_dict(snapshot["model"])
         model.eval()
         return snapshot, model
 
     def fresh_optimizer_state_dict(self) -> Dict[str, Any]:
         """Return a valid empty Adam state for resuming an archived policy snapshot."""
-        model = PolicyValueNet(
-            self.obs_dim,
-            hidden=self.cfg.net_hidden,
-            layers=self.cfg.net_layers,
-        )
-        optimizer = optim.Adam(model.parameters(), lr=self.cfg.lr)
+        optimizer = optim.Adam(self.train_model.parameters(), lr=self.cfg.lr)
         return optimizer.state_dict()
 
     @staticmethod
@@ -117,7 +169,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         boost_logit: torch.Tensor,
         turn_latent: torch.Tensor,
         action_boost: torch.Tensor,
-        turn_std: float,
+        turn_std: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Evaluate a stored pre-tanh turn and boost under one policy."""
         std = torch.as_tensor(
@@ -139,8 +191,8 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
     def act(
         self,
         obs: np.ndarray,
-        turn_std: float,
         policy_model: Optional[PolicyValueNet] = None,
+        generator: Optional[torch.Generator] = None,
     ) -> Tuple[float, float, float, float, float]:
         """Sample turn/boost and return action, log-prob, value, and turn latent."""
         model = self.infer_model if policy_model is None else policy_model
@@ -149,15 +201,13 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         ).unsqueeze(0)
         turn_mean, boost_logit, value = model(o)
 
-        std = torch.as_tensor(
-            turn_std, dtype=turn_mean.dtype, device=turn_mean.device
-        )
-        turn_latent = torch.distributions.Normal(turn_mean, std).sample()
+        std = model.steering_std()
+        turn_latent = torch.normal(turn_mean, std.expand_as(turn_mean), generator=generator)
         boost_dist = torch.distributions.Bernoulli(logits=boost_logit)
-        action_boost = boost_dist.sample()
+        action_boost = torch.bernoulli(boost_dist.probs, generator=generator)
 
         action_turn, logp, _entropy_turn, _entropy_boost = self._joint_logp_entropy(
-            turn_mean, boost_logit, turn_latent, action_boost, turn_std
+            turn_mean, boost_logit, turn_latent, action_boost, std
         )
 
         return (
@@ -168,11 +218,81 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             float(turn_latent.item()),
         )
 
+    def record_command_counts(self, accepted: int, applied: int, superseded: int) -> None:
+        """Count native receipts and selections separately from PPO admission."""
+        for key, value in zip(self._command_counts, (accepted, applied, superseded)):
+            self._command_counts[key] += value
+
+    def record_epoch_fence_interval(self, seconds: float) -> None:
+        """Count reward intervals excluded before new-policy physical control."""
+        self._epoch_fence_intervals += 1
+        self._epoch_fence_seconds += seconds
+
+    def record_command_delay(self, steps: int) -> None:
+        """Record an observable first application relative to the issuing observation."""
+        self._command_delay_samples += 1
+        self._command_delay_sum += steps
+        self._command_delay_max = max(self._command_delay_max, steps)
+
     def record_reward_components(self, components: Dict[str, float]) -> None:
-        """Accumulate bounded reward-component totals for the next learner log."""
+        """Accumulate admitted reward components for the next learner log."""
         for key, value in components.items():
             if key in self._reward_totals:
                 self._reward_totals[key] += float(value)
+                self._reward_cumulative[key] += float(value)
+
+    def record_admitted_rollout(self, rollout: List[Transition]) -> None:
+        """Count a queued rollout, excluding pending or discarded decisions."""
+        for transition in rollout:
+            self.record_reward_components(transition.reward_components)
+            self._admitted_seconds += transition.elapsed_seconds
+            self._admitted_alive_seconds += transition.alive_seconds
+        self._admitted_transitions += len(rollout)
+
+    def record_received_reward(self, reward: ExternalRewardEnvelopeV1) -> None:
+        """Track raw accepted intervals even when an actor is waiting at the barrier."""
+        if reward["transitionKind"] == "initial":
+            return
+        delta = reward["deltas"]
+        self._received_intervals += 1
+        self._received_interval_count += 1
+        for key, value in delta.items():
+            self._received_totals[key] += value
+            self._received_cumulative[key] += value
+        # Category counters avoid treating subtraction roundoff between two
+        # large survival balances as evidence of a real task event.
+        has_task_event = any((delta["foodValueDelta"], delta["foodCountDelta"],
+                              delta["retainedGrowthDelta"], delta["killsDelta"],
+                              delta["foodPointsDelta"], delta["killPointsDelta"],
+                              delta["otherPointsDelta"], delta["boostPointsSpentDelta"]))
+        if has_task_event:
+            self._no_task_intervals = 0
+            self._no_task_alive_seconds = 0.0
+            return
+        self._no_task_intervals += 1
+        self._no_task_alive_seconds += delta["aliveSecondsDelta"]
+        if self._no_task_intervals >= 10_000 and self._no_task_alive_seconds >= 60.0:
+            _LOGGER.warning(
+                "No authoritative task events across %d received intervals and %.3f "
+                "credited live seconds; check environment opportunities and reward delivery",
+                self._no_task_intervals, self._no_task_alive_seconds,
+            )
+            self._no_task_intervals = 0
+            self._no_task_alive_seconds = 0.0
+
+    def record_evaluation_result(self, result: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+        """Retain a bounded complete result and promote only an intact frozen episode."""
+        self.last_evaluation_result = result
+        if not result["integrity"] or result["transition_kind"] == "incomplete":
+            return
+        if (result["policy_version"] != int(snapshot["update_steps"])
+                or result["policy_sha256"] != policy_snapshot_sha256(snapshot)):
+            raise RuntimeError("evaluator result does not identify its exact frozen policy")
+        previous_best = self.best_episode_return
+        self.record_episode(result["episode_return"], result["lifetime_ticks"],
+                            policy_snapshot=snapshot, include_runtime_stats=False)
+        if self.best_episode_return > previous_best:
+            self.best_evaluation_result = result
 
     def record_episode(
         self,
@@ -190,15 +310,12 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             self._episode_return_sum += normalized_return
             self._episode_lifetime_sum += float(normalized_lifetime)
 
-        if normalized_lifetime <= 0 or policy_snapshot is None:
+        if policy_snapshot is None:
             return
         if not isinstance(policy_snapshot.get("model"), dict):
             return
 
-        better_lifetime = normalized_lifetime > self.best_lifetime_ticks
-        tied_lifetime = normalized_lifetime == self.best_lifetime_ticks
-        better_tiebreak = normalized_return > self.best_episode_return
-        if better_lifetime or (tied_lifetime and better_tiebreak):
+        if math.isfinite(normalized_return) and normalized_return > self.best_episode_return:
             self.best_lifetime_ticks = normalized_lifetime
             self.best_episode_return = normalized_return
             self.best_policy_snapshot = policy_snapshot
@@ -222,9 +339,44 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         }
         for key, value in self._reward_totals.items():
             stats[f"reward_{key}"] = float(value)
+            stats[f"reward_total_{key}"] = self._reward_cumulative[key]
+            stats[f"reward_{key}_per_alive_second"] = (
+                value / self._admitted_alive_seconds if self._admitted_alive_seconds else 0.0
+            )
+        stats.update(
+            admitted_transitions=float(self._admitted_transitions),
+            admitted_elapsed_seconds=self._admitted_seconds,
+            admitted_alive_seconds=self._admitted_alive_seconds,
+            decision_seconds_mean=(self._admitted_seconds / self._admitted_transitions
+                                   if self._admitted_transitions else 0.0),
+            received_intervals=float(self._received_intervals),
+            received_interval_count=float(self._received_interval_count),
+        )
+        for key, value in self._received_totals.items():
+            stats[f"received_{key}"] = value
+            stats[f"received_total_{key}"] = self._received_cumulative[key]
+            self._received_totals[key] = 0.0
+        for key, value in self._command_counts.items():
+            stats[f"commands_{key}"] = float(value)
+            self._command_counts[key] = 0
+        stats["command_delay_samples"] = float(self._command_delay_samples)
+        stats["command_delay_steps_mean"] = (
+            self._command_delay_sum / self._command_delay_samples
+            if self._command_delay_samples else 0.0
+        )
+        stats["command_delay_steps_max"] = float(self._command_delay_max)
+        self._command_delay_samples = self._command_delay_sum = self._command_delay_max = 0
+        stats["epoch_fence_intervals"] = float(self._epoch_fence_intervals)
+        stats["epoch_fence_seconds"] = self._epoch_fence_seconds
+        self._epoch_fence_intervals = 0
+        self._epoch_fence_seconds = 0.0
 
         for key in self._reward_totals:
             self._reward_totals[key] = 0.0
+        self._admitted_seconds = 0.0
+        self._admitted_alive_seconds = 0.0
+        self._admitted_transitions = 0
+        self._received_intervals = 0
         self._episode_count = 0
         self._episode_return_sum = 0.0
         self._episode_lifetime_sum = 0.0
@@ -253,7 +405,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
                 boost_logit,
                 act_turn_latent,
                 act_boost,
-                self.cfg.turn_std,
+                self.train_model.steering_std(),
             )
 
             log_ratio = logp - old_logp
@@ -311,7 +463,7 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
             boost_logit,
             act_turn_latent,
             act_boost,
-            self.cfg.turn_std,
+            self.train_model.steering_std(),
         )
 
         log_ratio = logp - old_logp
@@ -342,8 +494,10 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
         if should_step:
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.train_model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(self.train_model.parameters(), 1.0,
+                                           error_if_nonfinite=True)
             self.optimizer.step()
+            self.train_model.constrain_turn_std()
             self.update_steps += 1
 
         return {
@@ -376,10 +530,27 @@ class SharedState:  # pylint: disable=too-many-instance-attributes
 
             turn_mean_abs = torch.abs(turn_mean)
             mean_action = torch.tanh(turn_mean)
+            sampled_action = torch.tanh(batch["act_turn_latent"])
+            learned_std = self.train_model.steering_std()
             return {
                 "explained_variance": explained,
                 "turn_mean_abs_mean": float(turn_mean_abs.mean().item()),
                 "turn_mean_abs_max": float(turn_mean_abs.max().item()),
+                "turn_std": float(learned_std.item()),
+                "turn_sample_abs_mean": float(sampled_action.abs().mean().item()),
+                "turn_sample_saturated_fraction": float(
+                    (sampled_action.abs() > 0.95).float().mean().item()
+                ),
+                "turn_sample_sign_disagreement": float(
+                    (sampled_action.sign() != mean_action.sign()).float().mean().item()
+                ),
+                "turn_log_std_bound_hit": float(
+                    self.train_model.turn_log_std <= MIN_TURN_LOG_STD + 1e-6
+                    or self.train_model.turn_log_std >= MAX_TURN_LOG_STD - 1e-6
+                ),
+                "entropy_turn_gaussian": float(
+                    torch.distributions.Normal(turn_mean, learned_std).entropy().mean().item()
+                ),
                 "turn_saturated_fraction": float(
                     (torch.abs(mean_action) > 0.95)
                     .to(torch.float32)
@@ -699,10 +870,10 @@ async def learner_loop(  # pylint: disable=too-many-locals,too-many-branches
             runtime = shared_state.drain_runtime_stats()
             rewards = (
                 f"growth={runtime['reward_growth']:.3f},"
-                f"food={runtime['reward_food_approach']:.3f},"
+                f"food={runtime['reward_food']:.3f},"
                 f"survival={runtime['reward_survival']:.3f},"
-                f"wall={runtime['reward_wall']:.3f},"
-                f"hazard={runtime['reward_hazard']:.3f},"
+                f"points={runtime['reward_points']:.3f},"
+                f"kills={runtime['reward_kills']:.3f},"
                 f"death={runtime['reward_death']:.3f}"
             )
             print(
@@ -715,7 +886,7 @@ async def learner_loop(  # pylint: disable=too-many-locals,too-many-branches
                 f"policy={metrics['policy_loss']:.4f}, "
                 f"value={metrics['value_loss']:.4f}, "
                 f"entropy={metrics['entropy']:.4f}, "
-                f"entropy_turn={metrics['entropy_turn']:.4f}, "
+                f"entropy_turn_gaussian={metrics['entropy_turn_gaussian']:.4f}, "
                 f"entropy_boost={metrics['entropy_boost']:.4f}, "
                 f"initial_kl={metrics['initial_kl']:.5f}, "
                 f"kl={metrics['approx_kl']:.5f}, "
@@ -726,11 +897,14 @@ async def learner_loop(  # pylint: disable=too-many-locals,too-many-branches
                 f"ev={metrics['explained_variance']:.3f}, "
                 f"turn_abs_mean={metrics['turn_mean_abs_mean']:.3f}, "
                 f"turn_abs_max={metrics['turn_mean_abs_max']:.3f}, "
-                f"turn_sat={metrics['turn_saturated_fraction']:.3f}, "
+                f"turn_mean_sat={metrics['turn_saturated_fraction']:.3f}, "
+                f"turn_std={metrics['turn_std']:.3f}, "
+                f"turn_sample_abs={metrics['turn_sample_abs_mean']:.3f}, "
+                f"turn_sample_sat={metrics['turn_sample_saturated_fraction']:.3f}, "
                 f"episodes={int(runtime['episodes'])}, "
                 f"ep_return={runtime['episode_return_mean']:.3f}, "
                 f"lifetime_ticks={runtime['episode_lifetime_mean']:.1f}, "
-                f"reward[{rewards}]"
+                f"reward[{rewards}] {format_reward_exposure(runtime)}"
             )
             dropped_stale_steps = 0
             last_log = now

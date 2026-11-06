@@ -29,6 +29,18 @@ def test_ppo_remains_the_default_owner(monkeypatch, arguments):
     assert called == ["ppo"]
 
 
+def test_ppo_qualification_receives_seed_and_decision_budget(monkeypatch):
+    """A bounded run uses the production PPO owner with its declared seed and budget."""
+    called = []
+
+    async def ppo_main(**options):
+        called.append(options)
+
+    monkeypatch.setattr(entry, "main", ppo_main)
+    assert entry.run(["--training-seed", "17", "--decision-budget", "1000000"]) is None
+    assert called == [{"training_seed": 17, "decision_budget": 1000000}]
+
+
 def test_distillation_delegates_exact_remaining_arguments_without_ppo(monkeypatch):
     """A canonical job never constructs actors or touches the PPO config owner."""
     called = []
@@ -65,6 +77,9 @@ def test_mode_help_has_no_startup_side_effects(monkeypatch, capsys, mode):
 @pytest.mark.parametrize("arguments", [
     ["--mode", "unknown"], ["--mode", "ppo", "--updates", "1"],
     ["--mo", "distillation"],
+    ["--training-seed", "17"], ["--decision-budget", "1"],
+    ["--training-seed", "-1", "--decision-budget", "1"],
+    ["--training-seed", "17", "--decision-budget", "0"],
 ])
 def test_invalid_mode_or_owner_arguments_reject_before_startup(monkeypatch, arguments):
     """Unknown options cannot accidentally start PPO or create its config."""

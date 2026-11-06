@@ -6,6 +6,7 @@ import asyncio
 
 import numpy as np
 import pytest
+import torch
 
 from pyrl_trainer.agent import Transition
 from pyrl_trainer.config import Config
@@ -55,7 +56,7 @@ def _state(cfg: Config) -> SynchronousSharedState:
 
 def _transition(state: SynchronousSharedState, reward: float = 0.1) -> Transition:
     obs = np.zeros(2, dtype=np.float32)
-    turn, boost, logp, value, latent = state.act(obs, turn_std=state.cfg.turn_std)
+    turn, boost, logp, value, latent = state.act(obs)
     return Transition(
         obs=obs,
         action_turn=turn,
@@ -183,6 +184,7 @@ async def test_actor_contributes_only_once_per_collection_epoch():
 
     state.advance_collection_epoch()
     actor._refresh_collection_epoch()
+    actor._fence_required = False  # This handcrafted rollout represents a fenced epoch.
     actor.rollout = [_transition(state)]
     await actor._submit_collection_rollout(0.75)
     assert queue.get_nowait()[1] == 1
@@ -217,3 +219,27 @@ async def test_learner_waits_for_every_actor_before_publishing_next_policy():
     learner.cancel()
     with pytest.raises(asyncio.CancelledError):
         await learner
+
+
+@pytest.mark.asyncio
+async def test_bounded_learner_saves_only_after_complete_final_barrier(tmp_path, capsys):
+    """Budget overshoot comes from the intact final batch and is reported with exposure."""
+    cfg = _config(tmp_path, actors=2)
+    state = _state(cfg)
+    queue = asyncio.Queue()
+    first, second = _transition(state), _transition(state)
+    first.alive_seconds = 0.25
+    second.alive_seconds = 0.5
+    learner = asyncio.create_task(synchronous_learner_loop(cfg, state, queue, decision_budget=1))
+    await queue.put((0, 0, [first], 0.0))
+    await asyncio.sleep(0)
+    assert not learner.done()
+    assert not (tmp_path / "latest.pt").exists()
+
+    await queue.put((1, 0, [second], 0.0))
+    await asyncio.wait_for(learner, timeout=5)
+    saved = torch.load(tmp_path / "latest.pt", map_location="cpu", weights_only=True)
+    assert saved["update_steps"] == state.published_policy_version > 0
+    assert state.collection_epoch == 0
+    log = capsys.readouterr().out
+    assert "admitted_decisions=2, decision_budget=1, alive_seconds=0.750000" in log

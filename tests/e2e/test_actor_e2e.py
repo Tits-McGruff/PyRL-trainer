@@ -4,6 +4,8 @@
 
 import asyncio
 import json
+from importlib.resources import files
+import struct
 
 import pytest
 import websockets
@@ -12,6 +14,23 @@ from pyrl_trainer.agent import ActorClient
 from pyrl_trainer.config import Config
 
 pytestmark = pytest.mark.e2e
+
+
+def _sensors(tick, snake_id):
+    """Emit the negotiated binary-v2 stream using native-verified reward facts."""
+    reward = json.loads(files("slither_contracts").joinpath(
+        "external-reward-v1-fixture.json").read_text(encoding="utf-8"))[0]
+    reward.update(snakeId=snake_id, observationSequence=f"{1000 + tick:016x}",
+                  previousObservationSequence=None if tick == 1 else f"{999 + tick:016x}",
+                  fromStep=f"{tick if tick == 1 else tick - 1:016x}", toStep=f"{tick:016x}",
+                  transitionKind="initial" if tick == 1 else "live", reason=None)
+    if tick == 1:
+        reward["deltas"] = {name: 0 for name in reward["deltas"]}
+    reward["state"]["bodyLength"] = reward["state"]["startingLength"] + tick - 1
+    reward["state"]["retainedGrowth"] = tick - 1
+    payload = json.dumps(reward).encode("utf-8")
+    return (struct.pack("<4sBBHQIddd", b"SNS2", 2, 0, 1, tick, snake_id, 0, 0, 0)
+            + struct.pack("<fI", 0.0, len(payload)) + payload)
 
 
 class DummySharedState:  # pylint: disable=too-few-public-methods
@@ -33,10 +52,13 @@ async def test_actor_end_to_end_handshake_and_actions():
         assert hello["type"] == "hello"
         assert hello["clientType"] == "bot"
         assert hello["version"] == 2
+        assert hello["rewardVersion"] == 1
+        assert hello["binarySensorsVersion"] == 2
 
         await ws.send(json.dumps({
             "type": "welcome",
             "protocolVersion": 2,
+            "rewardVersion": 1, "binarySensorsVersion": 2,
             "tickRate": 20,
             "sensorSpec": {"order": ["points_delta_norm"]},
         }))
@@ -64,12 +86,7 @@ async def test_actor_end_to_end_handshake_and_actions():
         server_ready.set()
 
         for tick in [1, 2, 3]:
-            await ws.send(json.dumps({
-                "type": "sensors",
-                "tick": tick,
-                "snakeId": 1,
-                "sensors": [0.0],
-            }))
+            await ws.send(_sensors(tick, 1))
             msg = json.loads(await ws.recv())
             if msg["type"] == "action":
                 actions.append(msg)
@@ -125,6 +142,7 @@ async def test_successful_reconnect_reclaims_same_episode():
         await ws.send(json.dumps({
             "type": "welcome",
             "protocolVersion": 2,
+            "rewardVersion": 1, "binarySensorsVersion": 2,
             "tickRate": 20,
             "sensorSpec": {"order": ["points_delta_norm"]},
         }))
@@ -140,12 +158,7 @@ async def test_successful_reconnect_reclaims_same_episode():
                 "reclaimed": False,
             }))
             for tick in [1, 2]:
-                await ws.send(json.dumps({
-                    "type": "sensors",
-                    "tick": tick,
-                    "snakeId": 7,
-                    "sensors": [0.0],
-                }))
+                await ws.send(_sensors(tick, 7))
                 action = json.loads(await ws.recv())
                 assert action["type"] == "action"
             await ws.close()
@@ -165,12 +178,7 @@ async def test_successful_reconnect_reclaims_same_episode():
             "resumeToken": "token-b",
             "reclaimed": True,
         }))
-        await ws.send(json.dumps({
-            "type": "sensors",
-            "tick": 3,
-            "snakeId": 7,
-            "sensors": [0.0],
-        }))
+        await ws.send(_sensors(3, 7))
         action = json.loads(await ws.recv())
         assert action["type"] == "action"
         reclaimed.set()
@@ -208,3 +216,7 @@ async def test_successful_reconnect_reclaims_same_episode():
     assert actor.snake_id == 7
     assert actor.resume_token == "token-b"
     assert actor.episodes == 1
+    assert transitions[0].reward == pytest.approx(0.35)
+    assert transitions[0].done == 0
+    assert actor.discarded_reward_intervals == 1
+    assert actor.episode_return == pytest.approx(0.35)

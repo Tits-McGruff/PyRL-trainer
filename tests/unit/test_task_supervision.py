@@ -62,3 +62,22 @@ async def test_supervisor_cancellation_settles_children():
     assert child_cancelled.is_set()
     assert task.done()
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_completed_budget_settles_live_actor():
+    """The learner can stop a bounded run while its actor is still connected."""
+    actor_started = asyncio.Event()
+
+    async def learner():
+        await actor_started.wait()
+
+    async def actor():
+        actor_started.set()
+        await asyncio.Event().wait()
+
+    completion = asyncio.create_task(learner())
+    ongoing = asyncio.create_task(actor())
+    await _supervise_tasks([completion, ongoing], completion_task=completion)
+    assert completion.done()
+    assert ongoing.cancelled()

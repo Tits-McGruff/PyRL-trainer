@@ -16,9 +16,9 @@ import torch
 
 from .agent import ActorClient, Transition
 from .checkpointing import save_best_checkpoint, save_checkpoint
-from .config import Config
-from .learner import SharedState, collate_rollouts
-from .utils import default_reward_components
+from .config import Config, REWARD_CONFIG_VERSION, reward_config_record
+from .learner import SharedState, collate_rollouts, format_reward_exposure
+from .evaluation import EVALUATION_CONFIG_VERSION, evaluation_config_record
 
 
 _STABLE_PPO_LR = 1e-4
@@ -80,6 +80,7 @@ def restore_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedSta
     shared_state.best_lifetime_ticks = 0
     shared_state.best_episode_return = float("-inf")
     shared_state.best_policy_snapshot = None
+    shared_state.best_evaluation_result = None
     shared_state.best_checkpoint_pending = False
     shared_state.legacy_best_lifetime_ticks = checkpoint_lifetime
     shared_state.legacy_best_episode_return = checkpoint_return
@@ -92,6 +93,12 @@ def restore_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedSta
 
     if payload.get("source") != "frozen_evaluator":
         return
+    if (payload.get("reward_config_version") != REWARD_CONFIG_VERSION
+            or payload.get("reward_config") != reward_config_record(cfg)):
+        return
+    if (payload.get("evaluation_config_version") != EVALUATION_CONFIG_VERSION
+            or payload.get("evaluation_config") != evaluation_config_record(cfg)):
+        return
     try:
         lifetime = int(payload["lifetime_ticks"])
         episode_return = float(payload["episode_return"])
@@ -99,11 +106,13 @@ def restore_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedSta
         legacy_return = float(payload.get("legacy_episode_return", float("-inf")))
     except (KeyError, TypeError, ValueError):
         return
-    if lifetime <= 0 or not math.isfinite(episode_return):
+    if lifetime < 0 or not math.isfinite(episode_return):
         return
 
     shared_state.best_lifetime_ticks = lifetime
     shared_state.best_episode_return = episode_return
+    if isinstance(payload.get("evaluation_result"), dict):
+        shared_state.best_evaluation_result = payload["evaluation_result"]
     if legacy_lifetime > 0:
         shared_state.legacy_best_lifetime_ticks = legacy_lifetime
         shared_state.legacy_best_episode_return = legacy_return
@@ -118,6 +127,11 @@ def _write_exact_best_metadata(cfg: Config, shared_state: "SynchronousSharedStat
     snapshot = shared_state.best_policy_snapshot or {}
     payload = {
         "source": "frozen_evaluator",
+        "reward_config_version": REWARD_CONFIG_VERSION,
+        "reward_config": reward_config_record(cfg),
+        "evaluation_config_version": EVALUATION_CONFIG_VERSION,
+        "evaluation_config": evaluation_config_record(cfg),
+        "evaluation_result": shared_state.best_evaluation_result,
         "lifetime_ticks": int(shared_state.best_lifetime_ticks),
         "episode_return": float(shared_state.best_episode_return),
         "policy_version": int(snapshot.get("update_steps", -1)),
@@ -170,12 +184,35 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._submitted_collection_epoch: Optional[int] = None
+        self._active_collection_epoch = int(self.shared_state.collection_epoch)
+        self._fence_required = False
+        self._fence_action_id: Optional[int] = None
 
     def _collection_open(self) -> bool:
         if self.evaluation:
             return False
         current = int(self.shared_state.collection_epoch)
         return self._submitted_collection_epoch != current
+
+    def _training_collection_open(self) -> bool:
+        return self._collection_open() and not self._fence_required
+
+    def _account_reward(self, reward) -> None:
+        if (reward is not None and reward["transitionKind"] != "initial"
+                and self._fence_required and self._collection_open()):
+            callback = getattr(self.shared_state, "record_epoch_fence_interval", None)
+            if callable(callback):
+                callback(reward["deltas"]["elapsedSeconds"])
+        super()._account_reward(reward)
+
+    async def _handle_transition(self, msg) -> None:
+        self._refresh_collection_epoch()
+        await super()._handle_transition(msg)
+
+    async def _submit_environment_closure(self, bootstrap: float) -> None:
+        if not self.evaluation:
+            await self._submit_collection_rollout(bootstrap, allow_empty=True)
+        self.rollout.clear()
 
     async def _submit_collection_rollout(
         self,
@@ -189,22 +226,45 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
             return
         if not self.rollout and not allow_empty:
             return
+        if self._fence_required and self.rollout:
+            raise RuntimeError("cannot submit data before the collection control fence")
 
         epoch = int(self.shared_state.collection_epoch)
         await self.experience_q.put(
             (self.actor_id, epoch, list(self.rollout), float(bootstrap))
         )
+        self._record_admitted_rollout()
         self.rollout.clear()
         self._submitted_collection_epoch = epoch
 
     def _refresh_collection_epoch(self) -> None:
-        if self.evaluation or self._submitted_collection_epoch is None:
+        if self.evaluation:
             return
-        if int(self.shared_state.collection_epoch) > self._submitted_collection_epoch:
+        current = int(self.shared_state.collection_epoch)
+        if current != self._active_collection_epoch:
+            if self.rollout or self.pending_transition is not None:
+                raise RuntimeError("unsubmitted experience crossed a collection epoch")
+            self._active_collection_epoch = current
             self._submitted_collection_epoch = None
+            self._fence_required = True
+            self._fence_action_id = None
+
+    def _observe_collection_fence(self) -> None:
+        if self.evaluation or not self._collection_open() or not self._fence_required:
+            return
+        reward = self.last_reward_envelope
+        if reward is None:
+            return
+        applied = reward["control"]["appliedCommand"]
+        identity = None if applied is None else applied["command"]["clientActionId"]
+        if (identity is not None and self._fence_action_id is not None
+                and int(identity, 16) >= self._fence_action_id):
+            self._fence_required = False
 
     async def _truncate_disconnected_rollout(self) -> None:
         """Contribute partial work once, then reconnect without inventing a terminal."""
+        self._refresh_collection_epoch()
+        self._finish_evaluation("incomplete", "transportGap", integrity=False)
         bootstrap = (
             float(self.pending_transition.value)
             if self.pending_transition is not None
@@ -216,117 +276,32 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         self.rollout.clear()
         self.last_obs = None
         self.last_sent_tick = None
+        self._reward_rebase = True
+        self._episode_integrity = False
 
-    async def _finalize_truncated_episode(self) -> None:
-        """Treat a server generation cutoff as a bootstrap truncation and barrier contribution."""
-        had_episode = (
-            self.snake_id is not None
-            or self.episode_actions > 0
-            or self.pending_transition is not None
-            or bool(self.rollout)
-        )
-        bootstrap = (
-            float(self.pending_transition.value)
-            if self.pending_transition is not None
-            else 0.0
-        )
-        self.pending_transition = None
 
-        if not self.evaluation:
-            await self._submit_collection_rollout(bootstrap, allow_empty=True)
-        self.rollout.clear()
-
-        lifetime_ticks = 0
-        if self.last_assign_tick is not None and self.last_sensor_tick is not None:
-            lifetime_ticks = max(0, int(self.last_sensor_tick - self.last_assign_tick))
-        if had_episode:
-            self._record_episode(lifetime_ticks)
-
-    async def _finalize_terminal_episode(
-        self, death_penalty: Optional[float] = None
-    ) -> None:
-        """Finish a real death, preserving the death reward only for real terminals."""
-        had_episode = (
-            self.snake_id is not None
-            or self.episode_actions > 0
-            or self.pending_transition is not None
-            or bool(self.rollout)
-        )
-        penalty = (
-            -float(self.cfg.reward_death_penalty_magnitude)
-            if death_penalty is None
-            else float(death_penalty)
-        )
-
-        if self.evaluation:
-            if had_episode:
-                self.episode_return += penalty
-        elif self.pending_transition is not None and self._collection_open():
-            self.pending_transition.reward += penalty
-            self.pending_transition.done = 1.0
-            self.rollout.append(self.pending_transition)
-            self.pending_transition = None
-            self.episode_return += penalty
-            if penalty:
-                self._record_reward_components({"death": penalty})
-        else:
-            self.pending_transition = None
-
-        if not self.evaluation:
-            await self._submit_collection_rollout(0.0, allow_empty=True)
-        self.rollout.clear()
-
-        lifetime_ticks = 0
-        if self.last_assign_tick is not None and self.last_sensor_tick is not None:
-            lifetime_ticks = max(0, int(self.last_sensor_tick - self.last_assign_tick))
-        if had_episode:
-            self._record_episode(lifetime_ticks)
 
     async def _handle_sensors(self, msg: Dict[str, object], ws) -> None:
         if self.snake_id is None:
             return
-        if int(msg.get("snakeId", -1)) != self.snake_id:
-            return
-
-        tick = int(msg.get("tick", 0))
-        self.last_sensor_tick = tick
-        if self.last_assign_tick is None:
-            self.last_assign_tick = tick
-
-        sensors = msg.get("sensors")
-        if sensors is None:
-            sensors = []
-        obs = np.asarray(sensors, dtype=np.float32)
-        if obs.shape[0] != len(self.sensor_order):
-            return
-
         self._refresh_collection_epoch()
-
-        reward_ready = self.pending_transition is not None or (
-            self.evaluation and self.episode_actions > 0
-        )
-        if self.last_obs is not None and reward_ready:
-            components = default_reward_components(
-                self.last_obs, obs, self.sensor_idx, self.cfg
-            )
-            reward = float(sum(components.values()))
-            if self.pending_transition is not None:
-                self.pending_transition.reward += reward
-            self.episode_return += reward
-            self._record_reward_components(components)
+        obs = self._observation_and_reward(msg)
+        self._check_evaluation_limit()
+        self._observe_collection_fence()
+        tick = int(msg["tick"])
 
         self.last_obs = obs
         if not self._should_send_action(tick):
             return
 
         if not self.evaluation and self.pending_transition is not None:
-            if self._collection_open():
+            if self._training_collection_open():
                 self.rollout.append(self.pending_transition)
             self.pending_transition = None
 
         if (
             not self.evaluation
-            and self._collection_open()
+            and self._training_collection_open()
             and len(self.rollout) >= self.cfg.horizon
         ):
             bootstrap = self.shared_state.inference_value(obs)
@@ -334,7 +309,7 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
 
         sampled_action = self._sample_action(obs)
         turn, boost, logp, value, turn_latent, policy_version = sampled_action
-        if not self.evaluation and self._collection_open():
+        if not self.evaluation and self._training_collection_open():
             self.pending_transition = Transition(
                 obs=obs,
                 action_turn=turn,
@@ -349,16 +324,10 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
 
         self.steps += 1
         self.episode_actions += 1
-        action_msg = {
-            "type": "action",
-            "tick": tick,
-            "snakeId": self.snake_id,
-            "turn": max(-1.0, min(1.0, float(turn))),
-            "boost": max(0.0, min(1.0, float(boost))),
-        }
-        await ws.send(json.dumps(action_msg))
-        self.last_sent_tick = tick
-        self.last_sent_time = time.monotonic()
+        identity = await self._send_action(ws, tick, turn, boost)
+        if (self._fence_required and self._collection_open() and self._fence_action_id is None
+                and self._active_collection_epoch == self.shared_state.collection_epoch):
+            self._fence_action_id = int(identity, 16)
 
 
 def _save_pending_exact_best(cfg: Config, shared_state: SynchronousSharedState) -> None:
@@ -403,11 +372,14 @@ async def synchronous_learner_loop(
     cfg: Config,
     shared_state: SynchronousSharedState,
     experience_q: asyncio.Queue,
+    *,
+    decision_budget: Optional[int] = None,
 ) -> None:
     """Wait for one contribution from every actor, update once, then publish the next policy."""
     last_log = time.time()
     update_rounds = 0
     total_steps = 0
+    total_alive_seconds = 0.0
     pending: Dict[int, Dict[int, Tuple[List[Transition], float]]] = {}
 
     while True:
@@ -439,6 +411,22 @@ async def synchronous_learner_loop(
             metrics = await shared_state.ppo_update_async(batch)
             update_rounds += 1
 
+        if decision_budget is not None:
+            total_alive_seconds += sum(
+                item.alive_seconds for rollout, _value in nonempty for item in rollout
+            )
+            if metrics is not None and metrics["stale_batch"]:
+                raise RuntimeError("bounded PPO run received a stale batch")
+            if total_steps >= decision_budget:
+                _save_pending_exact_best(cfg, shared_state)
+                save_checkpoint(cfg, shared_state)
+                print(
+                    f"[qualification] admitted_decisions={total_steps}, "
+                    f"decision_budget={decision_budget}, alive_seconds={total_alive_seconds:.6f}, "
+                    f"updates={update_rounds}, policy_v={shared_state.published_policy_version}"
+                )
+                return
+
         shared_state.advance_collection_epoch()
         _save_pending_exact_best(cfg, shared_state)
 
@@ -462,10 +450,10 @@ async def synchronous_learner_loop(
         runtime = shared_state.drain_runtime_stats()
         rewards = (
             f"growth={runtime['reward_growth']:.3f},"
-            f"food={runtime['reward_food_approach']:.3f},"
+            f"food={runtime['reward_food']:.3f},"
             f"survival={runtime['reward_survival']:.3f},"
-            f"wall={runtime['reward_wall']:.3f},"
-            f"hazard={runtime['reward_hazard']:.3f},"
+            f"points={runtime['reward_points']:.3f},"
+            f"kills={runtime['reward_kills']:.3f},"
             f"death={runtime['reward_death']:.3f}"
         )
         print(
@@ -479,7 +467,7 @@ async def synchronous_learner_loop(
             f"policy={metrics['policy_loss']:.4f}, "
             f"value={metrics['value_loss']:.4f}, "
             f"entropy={metrics['entropy']:.4f}, "
-            f"entropy_turn={metrics['entropy_turn']:.4f}, "
+            f"entropy_turn_gaussian={metrics['entropy_turn_gaussian']:.4f}, "
             f"entropy_boost={metrics['entropy_boost']:.4f}, "
             f"initial_kl={metrics['initial_kl']:.5f}, "
             f"kl={metrics['approx_kl']:.5f}, "
@@ -489,10 +477,13 @@ async def synchronous_learner_loop(
             f"ev={metrics['explained_variance']:.3f}, "
             f"turn_abs_mean={metrics['turn_mean_abs_mean']:.3f}, "
             f"turn_abs_max={metrics['turn_mean_abs_max']:.3f}, "
-            f"turn_sat={metrics['turn_saturated_fraction']:.3f}, "
+            f"turn_mean_sat={metrics['turn_saturated_fraction']:.3f}, "
+            f"turn_std={metrics['turn_std']:.3f}, "
+            f"turn_sample_abs={metrics['turn_sample_abs_mean']:.3f}, "
+            f"turn_sample_sat={metrics['turn_sample_saturated_fraction']:.3f}, "
             f"episodes={int(runtime['episodes'])}, "
             f"ep_return={runtime['episode_return_mean']:.3f}, "
             f"lifetime_ticks={runtime['episode_lifetime_mean']:.1f}, "
-            f"reward[{rewards}]"
+            f"reward[{rewards}] {format_reward_exposure(runtime)}"
         )
         last_log = now

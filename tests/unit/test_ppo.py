@@ -35,7 +35,7 @@ def test_actor_logp_matches_stored_latent_evaluation():
     state = SharedState(obs_dim=3, cfg=cfg)
     obs = np.array([0.2, -0.1, 0.4], dtype=np.float32)
 
-    turn, boost, logp, _value, latent = state.act(obs, cfg.turn_std)
+    turn, boost, logp, _value, latent = state.act(obs)
 
     obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
     with torch.no_grad():
@@ -54,8 +54,8 @@ def test_actor_logp_matches_stored_latent_evaluation():
     assert float(replay_logp.item()) == pytest.approx(logp, abs=1e-5)
 
 
-def test_fixed_turn_entropy_is_independent_of_mean():
-    """Fixed Gaussian turn entropy does not change when only its mean changes."""
+def test_gaussian_entropy_is_independent_of_mean_at_equal_variance():
+    """The declared Gaussian surrogate has no direct mean gradient."""
     latent = torch.tensor([0.0, 0.0])
     boost = torch.tensor([0.0, 1.0])
     logits = torch.tensor([0.0, 0.0])
@@ -95,7 +95,7 @@ def test_ppo_update_uses_all_shuffled_minibatches_and_reports_diagnostics():
     transitions = []
     for index in range(8):
         obs = np.array([index / 10.0, -index / 20.0], dtype=np.float32)
-        turn, boost, logp, value, latent = state.act(obs, cfg.turn_std)
+        turn, boost, logp, value, latent = state.act(obs)
         transitions.append(
             Transition(
                 obs=obs,
@@ -132,7 +132,7 @@ def test_runtime_diagnostics_are_bounded_and_drained():
     state = SharedState(obs_dim=1, cfg=_config())
 
     state.record_reward_components(
-        {"growth": 1.5, "food_approach": 0.25, "death": -0.5}
+        {"growth": 1.5, "food": 0.25, "points": 2.0, "kills": 1.0, "death": -0.5}
     )
     state.record_episode(2.0, 120)
 
@@ -143,7 +143,11 @@ def test_runtime_diagnostics_are_bounded_and_drained():
     assert first["episode_return_mean"] == pytest.approx(2.0)
     assert first["episode_lifetime_mean"] == pytest.approx(120.0)
     assert first["reward_growth"] == pytest.approx(1.5)
-    assert first["reward_food_approach"] == pytest.approx(0.25)
+    assert first["reward_food"] == pytest.approx(0.25)
+    assert first["reward_points"] == pytest.approx(2.0)
+    assert first["reward_kills"] == pytest.approx(1.0)
     assert first["reward_death"] == pytest.approx(-0.5)
     assert second["episodes"] == 0.0
     assert second["reward_growth"] == 0.0
+    assert second["reward_total_growth"] == pytest.approx(1.5)
+    assert second["reward_total_death"] == pytest.approx(-0.5)
