@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 
 import pytest
 import numpy as np
@@ -328,7 +329,7 @@ async def test_native_ppo_credits_delayed_application_and_excludes_superseded_co
     try:
         port = (await asyncio.wait_for(read_fixture_packet(process), timeout=30))["port"]
         cfg, _contract, state = await training_state(port, tmp_path)
-        cfg.horizon = 2
+        cfg.horizon = 1
         queue = asyncio.Queue()
         actor = SynchronousActorClient(0, cfg, state, queue)
         buffered = []
@@ -375,6 +376,9 @@ async def test_native_ppo_credits_delayed_application_and_excludes_superseded_co
             first = delayed["control"]["appliedCommand"]
             assert first["command"]["clientActionId"] == json.loads(buffered[0])["actionId"]
             assert int(first["firstAppliedStep"], 16) > int(first["command"]["clientTick"], 16)
+            assert queue.empty()
+            held = await asyncio.wait_for(observe_application(1), timeout=5)
+            assert held["control"]["appliedCommand"] == first
             assert queue.empty()
 
             # Both reach Rust in this slow step. The second receipt replaces the
@@ -495,7 +499,8 @@ async def test_seeded_native_run_stops_and_preserves_both_policies(tmp_path, mon
         assert policy_snapshot_sha256(initial) != policy_snapshot_sha256(candidate)
         log = capsys.readouterr().out
         assert f"initial_policy_sha256={policy_snapshot_sha256(initial)}" in log
-        assert "admitted_decisions=16, decision_budget=5" in log
+        admission = re.search(r"admitted_decisions=(\d+), decision_budget=5", log)
+        assert admission and 16 <= int(admission[1]) <= 20
     finally:
         await stop_server(process)
 

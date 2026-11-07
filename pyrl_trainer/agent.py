@@ -481,6 +481,10 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         """Whether a valid pending decision may enter this actor's rollout."""
         return not self.evaluation
 
+    def _can_track_action(self) -> bool:
+        """Whether a sent sample may be needed for a later application receipt."""
+        return self._training_collection_open()
+
     def _clear_unfinished_actions(self) -> None:
         self.pending_transition = None
         self._credit_end = None
@@ -532,6 +536,8 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         pending = self.pending_transition
         if pending is None:
             return
+        if int(applied["command"]["clientTick"], 16) != pending.action_tick:
+            raise RewardContractError("applied command tick does not match its policy sample")
         parts = {key: pending.reward_components.get(key, 0.0) + value
                  for key, value in components.items()}
         pending_reward = pending.reward + total
@@ -659,6 +665,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             raise RewardContractError("reward cutoff does not match the observation tick")
         reward = self._accept_reward(raw_reward)
         self._observe_command_metadata(raw_reward)
+        self._observe_collection_fence()
         self._account_reward(reward, obs)
         self.last_sensor_tick = tick
         if self.last_assign_tick is None:
@@ -674,10 +681,12 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         return float(value.item())
 
     async def _submit_training_rollout(
-        self, bootstrap: float, *, allow_empty: bool = False  # pylint: disable=unused-argument
+        self, bootstrap: Optional[float] = None, *, allow_empty: bool = False  # pylint: disable=unused-argument
     ) -> None:
         """Publish completed samples. The synchronized actor may also signal an empty life."""
         if self.rollout and not self.evaluation:
+            if bootstrap is None:
+                bootstrap = self._rollout_bootstrap()
             await self.experience_q.put((self.actor_id, list(self.rollout), bootstrap))
             self._record_admitted_rollout()
         self.rollout.clear()
@@ -706,9 +715,15 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         else:
             reward = self._accept_reward(raw)
         self._observe_command_metadata(raw)
+        self._observe_collection_fence()
         self._account_reward(reward, final_obs)
         self.last_sensor_tick = int(raw["toStep"], 16)
         self._finish_credited_action()
+        if self._rollout_end is not None and self._rollout_end[0] == self.last_sensor_tick:
+            # A same-step closure gives an exact endpoint even without a
+            # credited interval. Only a credited interval can add its reward.
+            self.rollout[-1].done = float(terminal)
+            self._rollout_end = (self.last_sensor_tick, final_obs)
         self._clear_unfinished_actions()
         await self._submit_training_rollout(self._rollout_bootstrap(), allow_empty=True)
         self._episode_closed = True
@@ -727,26 +742,21 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             return
         obs = self._observation_and_reward(msg)
         self._check_evaluation_limit()
-        self._observe_collection_fence()
         tick = int(msg["tick"])
 
         self.last_obs = obs
 
-        should_send = self._should_send_action(tick)
-        if self._training_collection_open():
-            if should_send and len(self.rollout) == self.cfg.horizon - 1:
-                self._finish_credited_action()
-            if len(self.rollout) >= self.cfg.horizon:
-                await self._submit_training_rollout(self._rollout_bootstrap())
-        if not should_send:
+        if self._training_collection_open() and len(self.rollout) >= self.cfg.horizon:
+            await self._submit_training_rollout()
+        if not self._should_send_action(tick):
             return
 
         turn, boost, logp, value, turn_latent, policy_version = self._sample_action(obs)
-        collect = self._training_collection_open()
+        track = self._can_track_action()
         self.steps += 1
         self.episode_actions += 1
         identity = await self._send_action(ws, tick, turn, boost)
-        if collect:
+        if track:
             issued = self._issued_transitions
             if len(issued) >= MAX_UNCONFIRMED_ACTIONS:
                 del issued[next(iter(issued))]

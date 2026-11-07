@@ -259,6 +259,7 @@ async def test_terminal_death_uses_configured_penalty_once():
         reward=0.25,
         done=0.0,
         action_id="0000000000000001",
+        action_tick=0,
     )
 
     actor._reward_stream.accept(_reward(0, initial=True), snake_id=1)
@@ -304,6 +305,7 @@ async def test_generation_replacement_truncates_without_death_penalty():
         reward=0.0,
         done=0.0,
         action_id="0000000000000001",
+        action_tick=159,
     )
 
     actor.sensor_order = ["motion"]

@@ -185,6 +185,11 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
     def _training_collection_open(self) -> bool:
         return self._collection_open() and not self._fence_required
 
+    def _can_track_action(self) -> bool:
+        # These samples already use the new policy. The fence still decides
+        # when a native application can enter the rollout.
+        return self._collection_open()
+
     def _account_reward(self, reward, observation) -> None:
         if (reward is not None and reward["transitionKind"] != "initial"
                 and self._fence_required and self._collection_open()):
@@ -199,7 +204,7 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
 
     async def _submit_training_rollout(
         self,
-        bootstrap: float,
+        bootstrap: Optional[float] = None,
         *,
         allow_empty: bool = False,
     ) -> None:
@@ -213,6 +218,12 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         if self._fence_required and self.rollout:
             raise RuntimeError("cannot submit data before the collection control fence")
 
+        if bootstrap is None:
+            # The observation that finishes the last decision can also prove
+            # a first step of its successor. This actor has one contribution
+            # per epoch, so include that credited sample at the cutoff.
+            self._finish_credited_action()
+            bootstrap = self._rollout_bootstrap()
         epoch = int(self.shared_state.collection_epoch)
         await self.experience_q.put(
             (self.actor_id, epoch, list(self.rollout), float(bootstrap))
