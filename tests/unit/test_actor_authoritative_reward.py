@@ -279,9 +279,9 @@ async def test_barrier_wait_counts_received_events_without_mutating_submitted_re
                                  "sensors": np.zeros(motion_spec["sensorCount"]),
                                  "reward": first}, Socket())
     assert queue.empty()
-    await observe(actor, Socket(), tracked_reward(2, 1, 1, 1, source="neutral"))
+    await observe(actor, Socket(), tracked_reward(2, 1, 1, 1), source="neutral")
     contribution = queue.get_nowait()
-    await observe(actor, Socket(), tracked_reward(3, 1, 1, 1, source="neutral"))
+    await observe(actor, Socket(), tracked_reward(3, 1, 1, 1), source="neutral")
     stats = state.drain_runtime_stats()
     assert stats["received_foodValueDelta"] == 3
     assert stats["reward_food"] == pytest.approx(0.1)
@@ -504,7 +504,7 @@ async def test_valid_zero_step_death_can_be_first_negative_incumbent(motion_spec
     assert restored.best_evaluation_result is None
 
 
-def tracked_reward(tick, accepted, applied, applied_count, superseded=0, *, source=None):
+def tracked_reward(tick, accepted, applied, applied_count, superseded=0):
     """Complete ordered fixture; command 3 expires and is superseded before selection."""
     payload = reward("live")
     payload.update(observationSequence=f"{tick + 2:016x}",
@@ -519,7 +519,7 @@ def tracked_reward(tick, accepted, applied, applied_count, superseded=0, *, sour
 
     first = {1: 0, 2: 2}.get(applied, applied)
     payload["control"] = {
-        "source": source or ("neutral" if tick == 4 else "held"),
+        "source": "neutral" if tick == 4 else "held",
         "selectedAtStep": f"{tick - 1:016x}",
         "acceptedCommand": command(accepted),
         "appliedCommand": {"command": command(applied), "firstAppliedStep": f"{first:016x}"},
@@ -528,8 +528,10 @@ def tracked_reward(tick, accepted, applied, applied_count, superseded=0, *, sour
     return payload
 
 
-async def observe(actor, socket, payload, *, value_input=0):
+async def observe(actor, socket, payload, *, value_input=0, source=None):
     """Deliver an observation whose value comes from the real test inference model."""
+    if source is not None:
+        payload["control"]["source"] = source
     await actor._handle_sensors({"snakeId": actor.snake_id,
                                  "tick": int(payload["toStep"], 16),
                                  "sensors": np.full(len(actor.sensor_order), value_input,
@@ -545,7 +547,7 @@ async def test_gap_bootstraps_at_last_credited_observation(motion_spec):
     actor = ActorClient(0, cfg, state, queue)
     await start(actor, motion_spec, socket)
     await observe(actor, socket, tracked_reward(1, 1, 1, 1), value_input=1)
-    await observe(actor, socket, tracked_reward(2, 2, 1, 1, source="neutral"))
+    await observe(actor, socket, tracked_reward(2, 2, 1, 1), source="neutral")
     await observe(actor, socket, tracked_reward(3, 2, 2, 2))
     await actor._truncate_disconnected_rollout()
     _, rollout, bootstrap = queue.get_nowait()
@@ -565,7 +567,7 @@ async def test_applied_echo_requires_original_sample_tick(motion_spec):
     socket = Socket()
     await start(actor, motion_spec, socket)
     await observe(actor, socket, tracked_reward(1, 1, 1, 1))
-    await observe(actor, socket, tracked_reward(2, 1, 1, 1, source="neutral"))
+    await observe(actor, socket, tracked_reward(2, 1, 1, 1), source="neutral")
     payload = tracked_reward(3, 2, 2, 2)
     payload["control"]["acceptedCommand"]["clientTick"] = "0000000000000000"
     payload["control"]["appliedCommand"]["command"]["clientTick"] = "0000000000000000"
@@ -575,8 +577,8 @@ async def test_applied_echo_requires_original_sample_tick(motion_spec):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal", [True, False])
-async def test_zero_step_closure_sets_exact_endpoint_without_crediting_reward(motion_spec, terminal):
-    """Same-boundary death masks the value; truncation uses the final old-life observation."""
+async def test_zero_step_closure_sets_endpoint_without_reward(motion_spec, terminal):
+    """Death masks the value; truncation uses the final old-life observation."""
     cfg, state = state_for(motion_spec)
     queue, socket = asyncio.Queue(), Socket()
     actor = SynchronousActorClient(0, cfg, state, queue)
@@ -648,7 +650,7 @@ async def test_epoch_fence_waits_for_physics_and_allows_superseding_new_command(
     await start(actor, motion_spec, socket)
 
     await observe(actor, socket, tracked_reward(1, 1, 1, 1))
-    await observe(actor, socket, tracked_reward(2, 2, 1, 1, source="neutral"))
+    await observe(actor, socket, tracked_reward(2, 2, 1, 1), source="neutral")
     assert queue.get_nowait()[1] == 0
     state.drain_runtime_stats()
     state.update_steps = 1
@@ -659,7 +661,7 @@ async def test_epoch_fence_waits_for_physics_and_allows_superseding_new_command(
     await observe(actor, socket, tracked_reward(4, 4, 2, 2, 1))
     assert actor._fence_required  # Command 4 was accepted, but has yet to run.
     assert actor.pending_transition is None
-    await observe(actor, socket, tracked_reward(5, 5, 2, 2, 2, source="neutral"))
+    await observe(actor, socket, tracked_reward(5, 5, 2, 2, 2), source="neutral")
     assert actor._fence_required
     await observe(actor, socket, tracked_reward(6, 6, 5, 3, 2))
     assert not actor._fence_required
@@ -693,10 +695,11 @@ async def test_closure_before_epoch_observation_contributes_empty_only_once(moti
     socket = Socket()
     await start(actor, motion_spec, socket)
     await observe(actor, socket, tracked_reward(1, 1, 1, 1))
-    await observe(actor, socket, tracked_reward(2, 1, 1, 1, source="neutral"))
+    await observe(actor, socket, tracked_reward(2, 1, 1, 1), source="neutral")
     queue.get_nowait()
     state.advance_collection_epoch()
-    closure = tracked_reward(3, 1, 1, 1, source="neutral")
+    closure = tracked_reward(3, 1, 1, 1)
+    closure["control"]["source"] = "neutral"
     closure.update(transitionKind="terminal", reason="death")
     await actor._handle_transition({"reward": closure})
     assert queue.get_nowait()[1:3] == (1, [])

@@ -316,6 +316,14 @@ def assert_rollout_matches_physics(rollout, received, actor):
     ))
 
 
+def delayed_application(envelope, raw_action):
+    """Return the native receipt after verifying the original command and its delay."""
+    applied = envelope["control"]["appliedCommand"]
+    assert applied["command"]["clientActionId"] == json.loads(raw_action)["actionId"]
+    assert int(applied["firstAppliedStep"], 16) > int(applied["command"]["clientTick"], 16)
+    return applied
+
+
 @pytest.mark.asyncio
 async def test_native_ppo_credits_delayed_application_and_excludes_superseded_command(tmp_path):
     """Buffer only outgoing actions; command admission, physics and rewards stay native."""
@@ -373,13 +381,10 @@ async def test_native_ppo_credits_delayed_application_and_excludes_superseded_co
 
             await ws.send(buffered[0])
             delayed = await asyncio.wait_for(observe_application(1), timeout=5)
-            first = delayed["control"]["appliedCommand"]
-            assert first["command"]["clientActionId"] == json.loads(buffered[0])["actionId"]
-            assert int(first["firstAppliedStep"], 16) > int(first["command"]["clientTick"], 16)
+            first = delayed_application(delayed, buffered[0])
             assert queue.empty()
             held = await asyncio.wait_for(observe_application(1), timeout=5)
-            assert held["control"]["appliedCommand"] == first
-            assert queue.empty()
+            assert held["control"]["appliedCommand"] == first and queue.empty()
 
             # Both reach Rust in this slow step. The second receipt replaces the
             # first before physics selects a command.
