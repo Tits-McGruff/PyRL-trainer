@@ -8,7 +8,7 @@ import torch
 
 from pyrl_trainer.agent import Transition
 from pyrl_trainer.config import Config
-from pyrl_trainer.learner import SharedState, collate_rollouts
+from pyrl_trainer.learner import SharedState, collate_rollouts, gae
 
 pytestmark = pytest.mark.unit
 
@@ -26,6 +26,16 @@ def _config(**kwargs) -> Config:
     }
     values.update(kwargs)
     return Config(**values)
+
+
+def test_gae_bootstraps_at_attribution_gap_without_carrying_the_next_advantage():
+    """Rewards after an uncredited gap cannot enter the earlier action's trace."""
+    obs = np.zeros(1, dtype=np.float32)
+    before = Transition(obs, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 0.0, bootstrap_override=3.0)
+    after = Transition(obs, 0.0, 0.0, 0.0, 0.0, 4.0, 10.0, 0.0)
+    advantages, returns = gae([before, after], gamma=0.5, lam=1.0)
+    assert advantages == pytest.approx([2.5, 6.0])
+    assert returns == pytest.approx([3.5, 10.0])
 
 
 def test_actor_logp_matches_stored_latent_evaluation():

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -26,6 +27,9 @@ from .utils import (
     compute_stride,
 )
 
+# Bound outstanding policy samples even when commands never reach the server.
+MAX_UNCONFIRMED_ACTIONS = 256
+
 
 @dataclass
 class Transition:  # pylint: disable=too-few-public-methods
@@ -44,6 +48,9 @@ class Transition:  # pylint: disable=too-few-public-methods
     elapsed_seconds: float = 0.0
     alive_seconds: float = 0.0
     action_id: Optional[str] = None
+    action_tick: Optional[int] = None
+    # A value override also stops GAE from crossing an attribution gap.
+    bootstrap_override: Optional[float] = None
 
 
 class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
@@ -86,7 +93,11 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.last_gen: Optional[int] = None
         self.assign_count: int = 0
 
+        # Issued samples become pending only when a step proves their application.
         self.pending_transition: Optional[Transition] = None
+        self._issued_transitions: Dict[str, Transition] = {}
+        self._credit_end: Optional[Tuple[int, Optional[np.ndarray]]] = None
+        self._rollout_end: Optional[Tuple[int, Optional[np.ndarray]]] = None
         self.episode_return: float = 0.0
         self.episode_actions: int = 0
         self.episode_policy_snapshot: Optional[Dict[str, Any]] = None
@@ -119,8 +130,9 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
 
     def _reset_per_snake_state(self) -> None:
         self.last_obs = None
-        self.pending_transition = None
+        self._clear_unfinished_actions()
         self.rollout.clear()
+        self._rollout_end = None
         self.last_sent_tick = None
         self.episode_return = 0.0
         self.episode_actions = 0
@@ -183,19 +195,9 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
     async def _truncate_disconnected_rollout(self) -> None:
         """Flush completed PPO work without inventing a terminal transition."""
         self._finish_evaluation("incomplete", "transportGap", integrity=False)
-        bootstrap = (
-            float(self.pending_transition.value)
-            if self.pending_transition is not None
-            else 0.0
-        )
-        self.pending_transition = None
-
-        if self.rollout and not self.evaluation:
-            await self.experience_q.put(
-                (self.actor_id, list(self.rollout), bootstrap)
-            )
-            self._record_admitted_rollout()
-            self.rollout.clear()
+        self._finish_credited_action()
+        self._clear_unfinished_actions()
+        await self._submit_training_rollout(self._rollout_bootstrap(), allow_empty=True)
 
         self.last_obs = None
         self.last_sent_tick = None
@@ -343,10 +345,13 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
     async def _handle_state_replaced(
         self, msg: Dict[str, Any], ws, name: str
     ) -> None:
-        """End the old episode and join imported authority without a stale token."""
+        """End the old episode and join the replacement authority on this socket."""
         welcome = msg.get("welcome")
         if not isinstance(welcome, dict):
             raise RuntimeError("stateReplaced omitted the replacement welcome")
+        rejoin_token = msg.get("rejoinToken")
+        if not isinstance(rejoin_token, str) or not re.fullmatch(r"[0-9a-f]{32}", rejoin_token):
+            raise RuntimeError("stateReplaced omitted a valid rejoinToken")
         self._finish_evaluation("incomplete", "stateReplaced", integrity=False)
         await self._truncate_disconnected_rollout()
         self.snake_id = None
@@ -358,7 +363,8 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self._reset_per_snake_state()
         self._apply_welcome(welcome)
         await ws.send(
-            json.dumps({"type": "join", "mode": "player", "name": name[:24]})
+            json.dumps({"type": "join", "mode": "player", "name": name[:24],
+                        "rejoinToken": rejoin_token})
         )
 
     async def _on_assign(
@@ -475,6 +481,72 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         """Whether a valid pending decision may enter this actor's rollout."""
         return not self.evaluation
 
+    def _clear_unfinished_actions(self) -> None:
+        self.pending_transition = None
+        self._credit_end = None
+        self._issued_transitions.clear()
+
+    def _rollout_bootstrap(self) -> float:
+        obs = None if self._rollout_end is None else self._rollout_end[1]
+        return 0.0 if obs is None else self._cutoff_value(obs)
+
+    def _finish_credited_action(self) -> None:
+        pending, end = self.pending_transition, self._credit_end
+        if pending is None or end is None:
+            return
+        self.rollout.append(pending)
+        self._rollout_end = end
+        self.pending_transition = None
+        self._credit_end = None
+
+    def _credit_action(self, reward, observation, components, total) -> None:
+        """Attribute one complete held step to its original policy sample."""
+        if not self._training_collection_open() or reward["transitionKind"] == "initial":
+            return
+        control = reward["control"]
+        end = int(reward["toStep"], 16)
+        start = int(reward["fromStep"], 16)
+        applied = control["appliedCommand"]
+        action_id = None if applied is None else applied["command"]["clientActionId"]
+        # V1 reports the final selection, so only a single completed step
+        # proves which command controlled the entire interval.
+        proven = (action_id is not None and control["source"] == "held"
+                  and end == start + 1 and int(control["selectedAtStep"], 16) == start)
+        pending = self.pending_transition
+        if pending is not None and (not proven or pending.action_id != action_id):
+            self._finish_credited_action()
+        if not proven:
+            return
+        if self.pending_transition is None:
+            issued = self._issued_transitions
+            while issued and next(iter(issued)) < action_id:
+                del issued[next(iter(issued))]
+            self.pending_transition = issued.pop(action_id, None)
+            if (self.pending_transition is not None and self.rollout
+                    and self._rollout_end is not None
+                    and (self._rollout_end[0] != start
+                         or self.pending_transition.action_tick != start)):
+                # The next action's sample and credited interval must both start
+                # at the previous sample's end to continue its advantage trace.
+                self.rollout[-1].bootstrap_override = self._rollout_bootstrap()
+        pending = self.pending_transition
+        if pending is None:
+            return
+        parts = {key: pending.reward_components.get(key, 0.0) + value
+                 for key, value in components.items()}
+        pending_reward = pending.reward + total
+        elapsed = pending.elapsed_seconds + reward["deltas"]["elapsedSeconds"]
+        alive = pending.alive_seconds + reward["deltas"]["aliveSecondsDelta"]
+        if not all(math.isfinite(value)
+                   for value in (*parts.values(), pending_reward, elapsed, alive)):
+            raise RewardContractError("accumulated decision reward overflow")
+        pending.reward = pending_reward
+        pending.reward_components = parts
+        pending.elapsed_seconds = elapsed
+        pending.alive_seconds = alive
+        pending.done = float(reward["transitionKind"] == "terminal")
+        self._credit_end = (end, observation)
+
     def _accept_reward(self, raw: Any):
         if self.snake_id is None:
             raise RewardContractError("reward has no assigned snake")
@@ -490,7 +562,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         self._reward_has_observation = True
         return reward
 
-    def _account_reward(self, reward) -> None:
+    def _account_reward(self, reward, observation: Optional[np.ndarray]) -> None:
         if reward is None:
             return
         components = reward_components(reward, self.reward_coefficients)
@@ -498,20 +570,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         episode_return = self.episode_return + total
         if not math.isfinite(episode_return):
             raise RewardContractError("accumulated episode reward overflow")
-        if self.pending_transition is not None and self._training_collection_open():
-            pending = self.pending_transition
-            parts = {key: pending.reward_components.get(key, 0.0) + value
-                     for key, value in components.items()}
-            pending_reward = pending.reward + total
-            elapsed = pending.elapsed_seconds + reward["deltas"]["elapsedSeconds"]
-            alive = pending.alive_seconds + reward["deltas"]["aliveSecondsDelta"]
-            if not all(math.isfinite(value) for value in
-                       (*parts.values(), pending_reward, elapsed, alive)):
-                raise RewardContractError("accumulated decision reward overflow")
-            pending.reward = pending_reward
-            pending.reward_components = parts
-            pending.elapsed_seconds = elapsed
-            pending.alive_seconds = alive
+        self._credit_action(reward, observation, components, total)
         self.episode_return = episode_return
         if self.evaluation and self.evaluation_episode is not None:
             self.evaluation_episode.receive(reward, components)
@@ -579,8 +638,6 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
                                   "turn": clamp(turn, -1.0, 1.0),
                                   "boost": clamp(boost, 0.0, 1.0), "actionId": identity}))
         self._last_issued_action_id = self._action_id_counter
-        if self.pending_transition is not None:
-            self.pending_transition.action_id = identity
         self.last_sent_tick = tick
         self.last_sent_time = time.monotonic()
         return identity
@@ -602,7 +659,7 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
             raise RewardContractError("reward cutoff does not match the observation tick")
         reward = self._accept_reward(raw_reward)
         self._observe_command_metadata(raw_reward)
-        self._account_reward(reward)
+        self._account_reward(reward, obs)
         self.last_sensor_tick = tick
         if self.last_assign_tick is None:
             self.last_assign_tick = tick
@@ -611,15 +668,20 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
     def _cutoff_value(self, obs: np.ndarray) -> float:
         model = self.episode_policy_model if self.evaluation else self.shared_state.infer_model
         with torch.no_grad():
-            tensor = torch.as_tensor(obs, device=self.cfg.infer_device).unsqueeze(0)
+            tensor = torch.tensor(obs, dtype=torch.float32, device=self.cfg.infer_device)
+            tensor = tensor.unsqueeze(0)
             _mean, _boost, value = model(tensor)
         return float(value.item())
 
-    async def _submit_environment_closure(self, bootstrap: float) -> None:
+    async def _submit_training_rollout(
+        self, bootstrap: float, *, allow_empty: bool = False  # pylint: disable=unused-argument
+    ) -> None:
+        """Publish completed samples. The synchronized actor may also signal an empty life."""
         if self.rollout and not self.evaluation:
             await self.experience_q.put((self.actor_id, list(self.rollout), bootstrap))
             self._record_admitted_rollout()
         self.rollout.clear()
+        self._rollout_end = None
 
     async def _handle_transition(self, msg: Dict[str, Any]) -> None:
         """Close the pending old-life action before accepting its successor."""
@@ -644,73 +706,56 @@ class ActorClient:  # pylint: disable=too-many-instance-attributes,too-few-publi
         else:
             reward = self._accept_reward(raw)
         self._observe_command_metadata(raw)
-        self._account_reward(reward)
+        self._account_reward(reward, final_obs)
         self.last_sensor_tick = int(raw["toStep"], 16)
-        bootstrap = 0.0
-        if not terminal and (self.rollout or self.pending_transition is not None):
-            bootstrap = self._cutoff_value(final_obs)
-        if self.pending_transition is not None:
-            if self._training_collection_open():
-                self.pending_transition.done = float(terminal)
-                self.rollout.append(self.pending_transition)
-            self.pending_transition = None
-        await self._submit_environment_closure(bootstrap)
+        self._finish_credited_action()
+        self._clear_unfinished_actions()
+        await self._submit_training_rollout(self._rollout_bootstrap(), allow_empty=True)
         self._episode_closed = True
         lifetime = (0 if self.last_assign_tick is None
                     else max(0, self.last_sensor_tick - self.last_assign_tick))
         self._record_episode(lifetime, kind=raw["transitionKind"], reason=raw["reason"])
 
-    async def _store_training_action(
-        self,
-        obs: np.ndarray,
-        sampled_action: Tuple[float, float, float, float, float, int],
-    ) -> None:
-        """Finish the prior transition and stage the newly sampled training action."""
-        turn, boost, logp, value, turn_latent, policy_version = sampled_action
-        if self.pending_transition is not None:
-            self.rollout.append(self.pending_transition)
-            self.pending_transition = None
+    def _observe_collection_fence(self) -> None:
+        """Allow the synchronized actor to open collection at a proven boundary."""
 
-        if len(self.rollout) >= self.cfg.horizon:
-            await self.experience_q.put(
-                (self.actor_id, list(self.rollout), float(value))
-            )
-            self._record_admitted_rollout()
-            self.rollout.clear()
-
-        self.pending_transition = Transition(
-            obs=obs,
-            action_turn=turn,
-            turn_latent=turn_latent,
-            action_boost=boost,
-            logp=logp,
-            value=value,
-            reward=0.0,
-            done=0.0,
-            policy_version=policy_version,
-        )
+    def _record_collection_command(self, identity: str) -> None:
+        """Allow the synchronized actor to mark its first new-epoch command."""
 
     async def _handle_sensors(self, msg: Dict[str, Any], ws) -> None:
         if self.snake_id is None:
             return
         obs = self._observation_and_reward(msg)
         self._check_evaluation_limit()
+        self._observe_collection_fence()
         tick = int(msg["tick"])
 
         self.last_obs = obs
 
-        if not self._should_send_action(tick):
+        should_send = self._should_send_action(tick)
+        if self._training_collection_open():
+            if should_send and len(self.rollout) == self.cfg.horizon - 1:
+                self._finish_credited_action()
+            if len(self.rollout) >= self.cfg.horizon:
+                await self._submit_training_rollout(self._rollout_bootstrap())
+        if not should_send:
             return
 
-        sampled_action = self._sample_action(obs)
-        turn, boost, _logp, _value, _turn_latent, _policy_version = sampled_action
-        if not self.evaluation:
-            await self._store_training_action(obs, sampled_action)
-
+        turn, boost, logp, value, turn_latent, policy_version = self._sample_action(obs)
+        collect = self._training_collection_open()
         self.steps += 1
         self.episode_actions += 1
-
-        await self._send_action(ws, tick, turn, boost)
+        identity = await self._send_action(ws, tick, turn, boost)
+        if collect:
+            issued = self._issued_transitions
+            if len(issued) >= MAX_UNCONFIRMED_ACTIONS:
+                del issued[next(iter(issued))]
+            issued[identity] = Transition(
+                obs=obs, action_turn=turn, turn_latent=turn_latent, action_boost=boost,
+                logp=logp, value=value, reward=0.0, done=0.0, policy_version=policy_version,
+                action_id=identity, action_tick=tick,
+            )
+        self._record_collection_command(identity)
 
     async def _loop(self, ws, name: str) -> None:
         while True:

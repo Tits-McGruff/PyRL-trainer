@@ -26,6 +26,16 @@ def _sensors(tick, snake_id):
                   transitionKind="initial" if tick == 1 else "live", reason=None)
     if tick == 1:
         reward["deltas"] = {name: 0 for name in reward["deltas"]}
+    else:
+        action_id = tick - 1
+        step = f"{action_id:016x}"
+        command = {"sequence": step, "clientActionId": step,
+                   "clientTick": step, "acceptedAtStep": step}
+        reward["control"] = {
+            "source": "held", "selectedAtStep": step, "acceptedCommand": command,
+            "appliedCommand": {"command": command, "firstAppliedStep": step},
+            "acceptedCount": action_id, "appliedCount": action_id, "supersededCount": 0,
+        }
     reward["state"]["bodyLength"] = reward["state"]["startingLength"] + tick - 1
     reward["state"]["retainedGrowth"] = tick - 1
     payload = json.dumps(reward).encode("utf-8")
@@ -39,6 +49,10 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
     def act(self, _obs, **_kwargs):
         """Return fixed policy outputs."""
         return 0.0, 0.0, 0.0, 0.25, 0.0
+
+    def infer_model(self, obs):
+        """Supply the value at the last credited observation."""
+        return None, None, obs[:, 0] + 0.25
 
 
 @pytest.mark.asyncio

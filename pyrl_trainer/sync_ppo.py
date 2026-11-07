@@ -11,9 +11,6 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-import torch
-
 from .agent import ActorClient, Transition
 from .checkpointing import save_best_checkpoint, save_checkpoint
 from .config import Config, REWARD_CONFIG_VERSION, reward_config_record
@@ -168,15 +165,6 @@ class SynchronousSharedState(SharedState):
         """Release actors to collect one new rollout under the newly published policy."""
         self.collection_epoch += 1
 
-    def inference_value(self, obs: np.ndarray) -> float:
-        """Evaluate the currently published inference policy value without sampling."""
-        with torch.no_grad():
-            tensor = torch.tensor(
-                obs, dtype=torch.float32, device=self.cfg.infer_device
-            ).unsqueeze(0)
-            _turn_mean, _boost_logit, value = self.infer_model(tensor)
-        return float(value.item())
-
 
 class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-methods
     """Actor that contributes at most one rollout to each collection epoch."""
@@ -197,24 +185,19 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
     def _training_collection_open(self) -> bool:
         return self._collection_open() and not self._fence_required
 
-    def _account_reward(self, reward) -> None:
+    def _account_reward(self, reward, observation) -> None:
         if (reward is not None and reward["transitionKind"] != "initial"
                 and self._fence_required and self._collection_open()):
             callback = getattr(self.shared_state, "record_epoch_fence_interval", None)
             if callable(callback):
                 callback(reward["deltas"]["elapsedSeconds"])
-        super()._account_reward(reward)
+        super()._account_reward(reward, observation)
 
     async def _handle_transition(self, msg) -> None:
         self._refresh_collection_epoch()
         await super()._handle_transition(msg)
 
-    async def _submit_environment_closure(self, bootstrap: float) -> None:
-        if not self.evaluation:
-            await self._submit_collection_rollout(bootstrap, allow_empty=True)
-        self.rollout.clear()
-
-    async def _submit_collection_rollout(
+    async def _submit_training_rollout(
         self,
         bootstrap: float,
         *,
@@ -223,6 +206,7 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         """Submit this actor's sole contribution for the current collection epoch."""
         if self.evaluation or not self._collection_open():
             self.rollout.clear()
+            self._rollout_end = None
             return
         if not self.rollout and not allow_empty:
             return
@@ -235,6 +219,8 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
         )
         self._record_admitted_rollout()
         self.rollout.clear()
+        self._rollout_end = None
+        self._clear_unfinished_actions()
         self._submitted_collection_epoch = epoch
 
     def _refresh_collection_epoch(self) -> None:
@@ -242,7 +228,7 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
             return
         current = int(self.shared_state.collection_epoch)
         if current != self._active_collection_epoch:
-            if self.rollout or self.pending_transition is not None:
+            if self.rollout or self.pending_transition is not None or self._issued_transitions:
                 raise RuntimeError("unsubmitted experience crossed a collection epoch")
             self._active_collection_epoch = current
             self._submitted_collection_epoch = None
@@ -264,67 +250,13 @@ class SynchronousActorClient(ActorClient):  # pylint: disable=too-few-public-met
     async def _truncate_disconnected_rollout(self) -> None:
         """Contribute partial work once, then reconnect without inventing a terminal."""
         self._refresh_collection_epoch()
-        self._finish_evaluation("incomplete", "transportGap", integrity=False)
-        bootstrap = (
-            float(self.pending_transition.value)
-            if self.pending_transition is not None
-            else 0.0
-        )
-        self.pending_transition = None
-        if not self.evaluation:
-            await self._submit_collection_rollout(bootstrap, allow_empty=True)
-        self.rollout.clear()
-        self.last_obs = None
-        self.last_sent_tick = None
-        self._reward_rebase = True
-        self._episode_integrity = False
-
-
+        await super()._truncate_disconnected_rollout()
 
     async def _handle_sensors(self, msg: Dict[str, object], ws) -> None:
-        if self.snake_id is None:
-            return
         self._refresh_collection_epoch()
-        obs = self._observation_and_reward(msg)
-        self._check_evaluation_limit()
-        self._observe_collection_fence()
-        tick = int(msg["tick"])
+        await super()._handle_sensors(msg, ws)
 
-        self.last_obs = obs
-        if not self._should_send_action(tick):
-            return
-
-        if not self.evaluation and self.pending_transition is not None:
-            if self._training_collection_open():
-                self.rollout.append(self.pending_transition)
-            self.pending_transition = None
-
-        if (
-            not self.evaluation
-            and self._training_collection_open()
-            and len(self.rollout) >= self.cfg.horizon
-        ):
-            bootstrap = self.shared_state.inference_value(obs)
-            await self._submit_collection_rollout(bootstrap)
-
-        sampled_action = self._sample_action(obs)
-        turn, boost, logp, value, turn_latent, policy_version = sampled_action
-        if not self.evaluation and self._training_collection_open():
-            self.pending_transition = Transition(
-                obs=obs,
-                action_turn=turn,
-                turn_latent=turn_latent,
-                action_boost=boost,
-                logp=logp,
-                value=value,
-                reward=0.0,
-                done=0.0,
-                policy_version=policy_version,
-            )
-
-        self.steps += 1
-        self.episode_actions += 1
-        identity = await self._send_action(ws, tick, turn, boost)
+    def _record_collection_command(self, identity: str) -> None:
         if (self._fence_required and self._collection_open() and self._fence_action_id is None
                 and self._active_collection_epoch == self.shared_state.collection_epoch):
             self._fence_action_id = int(identity, 16)

@@ -27,7 +27,7 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
         return None, None, obs[:, 0] * 0.9
 
 
-def _reward(tick, *, initial=False, kind="live", events=True):
+def _reward(tick, *, initial=False, kind="live", events=True, applied=None):
     """Authoritative native event fixture with explicit test interval boundaries."""
     value = json.loads(files("slither_contracts").joinpath(
         "external-reward-v1-fixture.json").read_text(encoding="utf-8"))[0]
@@ -44,6 +44,17 @@ def _reward(tick, *, initial=False, kind="live", events=True):
     growth = tick if initial or events else tick - 1
     value["state"]["bodyLength"] = value["state"]["startingLength"] + growth
     value["state"]["retainedGrowth"] = growth
+    if applied is not None:
+        action_id, applied_at = applied
+        issued = f"{applied_at:016x}"
+        command = {"sequence": f"{action_id:016x}", "clientActionId": f"{action_id:016x}",
+                   "clientTick": issued, "acceptedAtStep": issued}
+        value["control"] = {
+            "source": "held", "selectedAtStep": f"{tick - 1:016x}",
+            "acceptedCommand": command,
+            "appliedCommand": {"command": command, "firstAppliedStep": issued},
+            "acceptedCount": action_id, "appliedCount": action_id, "supersededCount": 0,
+        }
     return value
 
 
@@ -81,15 +92,14 @@ async def test_transitions_align_with_stride():
             "tick": tick,
             "snakeId": 1,
             "sensors": [float(tick)],
-            "reward": _reward(tick, initial=tick == 1),
+            "reward": _reward(tick, initial=tick == 1, applied=(1, 1) if tick > 1 else None),
         }
         await actor._handle_sensors(msg, ws)
 
     assert len(ws.sent) == 2
-    assert len(actor.rollout) == 1
-    assert actor.rollout[0].reward == pytest.approx(0.7)
+    assert not actor.rollout
     assert actor.pending_transition is not None
-    assert abs(actor.pending_transition.reward) < 1e-6
+    assert actor.pending_transition.reward == pytest.approx(0.7)
 
 
 @pytest.mark.asyncio
@@ -103,14 +113,15 @@ async def test_burst_observation_stream_processes_every_sensor_between_actions()
     actor.sensor_idx = {"points_delta_norm": 0}
 
     ws = DummyWS()
-    for tick in [10, 11, 12, 13, 14]:
+    for tick, applied in [(10, None), (11, (1, 10)), (12, (1, 10)),
+                          (13, (1, 10)), (14, (2, 13))]:
         await actor._handle_sensors(
             {
                 "type": "sensors",
                 "tick": tick,
                 "snakeId": 1,
                 "sensors": [float(tick)],
-                "reward": _reward(tick, initial=tick == 10),
+                "reward": _reward(tick, initial=tick == 10, applied=applied),
             },
             ws,
         )
@@ -127,8 +138,8 @@ async def test_burst_observation_stream_processes_every_sensor_between_actions()
 
 
 @pytest.mark.asyncio
-async def test_import_replacement_rejoins_without_stale_token():
-    """A live import ends the old episode and sends one fresh Protocol 2 join."""
+async def test_import_replacement_uses_rejoin_token_instead_of_resume_token():
+    """A live import ends the old episode and echoes the replacement token."""
     actor = ActorClient(
         7,
         Config(max_actions_per_second=20),
@@ -144,6 +155,7 @@ async def test_import_replacement_rejoins_without_stale_token():
     await actor._handle_state_replaced(
         {
             "type": "stateReplaced",
+            "rejoinToken": "a" * 32,
             "welcome": {
                 "protocolVersion": 2,
                 "rewardVersion": 1, "binarySensorsVersion": 2,
@@ -162,6 +174,7 @@ async def test_import_replacement_rejoins_without_stale_token():
         "type": "join",
         "mode": "player",
         "name": "trainer-007",
+        "rejoinToken": "a" * 32,
     }
 
 
@@ -186,6 +199,7 @@ async def test_import_replacement_during_initial_assignment_wait():
             },
             {
                 "type": "stateReplaced",
+                "rejoinToken": "b" * 32,
                 "welcome": {
                     "protocolVersion": 2,
                     "rewardVersion": 1, "binarySensorsVersion": 2,
@@ -205,10 +219,27 @@ async def test_import_replacement_during_initial_assignment_wait():
         "type": "join",
         "mode": "player",
         "name": "trainer-008",
+        "rejoinToken": "b" * 32,
     }
     assert actor.snake_id == 12
     assert actor.resume_token == "fresh-token"
     assert actor.sensor_order == ["food_proximity"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", [None, "x" * 32])
+async def test_replacement_requires_a_valid_rejoin_token(token):
+    """Reject an invalid replacement before sending a join or clearing the assignment."""
+    actor = ActorClient(0, Config(), DummySharedState(), asyncio.Queue())
+    actor.snake_id = 91
+    ws = DummyWS()
+    notice = {"type": "stateReplaced", "welcome": {}}
+    if token is not None:
+        notice["rejoinToken"] = token
+    with pytest.raises(RuntimeError, match="valid rejoinToken"):
+        await actor._handle_state_replaced(notice, ws, "trainer")
+    assert actor.snake_id == 91
+    assert not ws.sent
 
 
 @pytest.mark.asyncio
@@ -227,11 +258,13 @@ async def test_terminal_death_uses_configured_penalty_once():
         value=0.0,
         reward=0.25,
         done=0.0,
+        action_id="0000000000000001",
     )
 
     actor._reward_stream.accept(_reward(0, initial=True), snake_id=1)
     await actor._handle_transition({"type": "transition",
-                                    "reward": _reward(1, kind="terminal", events=False)})
+                                    "reward": _reward(1, kind="terminal", events=False,
+                                                      applied=(1, 0))})
     _actor_id, rollout, bootstrap = await experience_q.get()
 
     assert bootstrap == 0.0
@@ -270,13 +303,15 @@ async def test_generation_replacement_truncates_without_death_penalty():
         value=0.4,
         reward=0.0,
         done=0.0,
+        action_id="0000000000000001",
     )
 
     actor.sensor_order = ["motion"]
     actor._reward_stream.accept(_reward(159, initial=True), snake_id=1)
     actor._reward_has_observation = True
     await actor._handle_transition({"type": "transition",
-                                    "reward": _reward(160, kind="truncated", events=False),
+                                    "reward": _reward(160, kind="truncated", events=False,
+                                                      applied=(1, 159)),
                                     "finalSensors": [1.0]})
 
     await actor._on_assign(
@@ -321,6 +356,7 @@ async def test_state_replacement_applies_zero_death_penalty():
 
     await actor._handle_state_replaced(
         {
+            "rejoinToken": "c" * 32,
             "welcome": {
                 "protocolVersion": 2,
                 "rewardVersion": 1, "binarySensorsVersion": 2,

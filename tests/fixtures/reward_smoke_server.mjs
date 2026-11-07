@@ -11,12 +11,13 @@ const [{ startRustServer }, { DEFAULT_CONFIG }] = await Promise.all([
   import(moduleUrl('server/config.ts')),
 ]);
 const server = await startRustServer({ ...DEFAULT_CONFIG, port: 0, resume: 'fresh', seed: 42,
-  dbPath: resolve(dbPath), rustCalculationWorkers: 1 });
+  dbPath: resolve(dbPath), rustCalculationWorkers: 1,
+  ...(mode === 'ppo-attribution' ? { maxActionsPerTick: 4 } : {}) });
 if (server.startupFault) {
   await server.close();
   throw new Error(`native startup failed: ${JSON.stringify(server.startupFault)}`);
 }
-const controls = mode === 'ppo'
+const controls = mode === 'ppo' || mode === 'ppo-attribution'
   ? await (await import('./ppo_reward_controls.mjs')).createControls(server.port, slitherRoot)
   : undefined;
 process.stdout.write(`PYRL_TEST_SERVER ${JSON.stringify({ port: server.port })}\n`);
