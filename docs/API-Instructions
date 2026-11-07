@@ -86,7 +86,8 @@ current Rust-authoritative server interface and `server/config.toml`.
 15. When a snake dies, the server sends a new `assign` and the next tick's
     `sensors` correspond to the new `snakeId`. `assign` precedes the first
     `sensors` for the replacement snake. `stateReplaced` ends the old episode;
-    apply its nested `welcome` and join again without the old token.
+    apply its nested `welcome` and join again on the same socket with the
+    notice's `rejoinToken`. The new assignment supplies its own `resumeToken`.
 
 ### Rate limits and configuration
 

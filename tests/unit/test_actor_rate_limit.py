@@ -23,6 +23,10 @@ class DummySharedState:  # pylint: disable=too-few-public-methods
         """Return fixed policy outputs."""
         return 0.0, 0.0, 0.0, 0.0, 0.0
 
+    def infer_model(self, obs):
+        """Return the value of the credited boundary observation."""
+        return None, None, obs[:, 0]
+
 
 def _make_actor(cfg: Config) -> ActorClient:
     """Build a test actor with dummy shared state."""
@@ -100,7 +104,8 @@ async def test_disconnect_truncates_rollout_and_reclaim_preserves_episode():
             done=0.0,
         )
     )
-    actor.pending_transition = Transition(
+    actor._rollout_end = (5, obs)
+    actor._issued_transitions["0000000000000002"] = Transition(
         obs=obs,
         action_turn=0.2,
         turn_latent=0.2027,
@@ -116,9 +121,10 @@ async def test_disconnect_truncates_rollout_and_reclaim_preserves_episode():
     actor_id, transitions, bootstrap = actor.experience_q.get_nowait()
     assert actor_id == 0
     assert len(transitions) == 1
-    assert bootstrap == pytest.approx(0.75)
+    assert bootstrap == pytest.approx(0.25)
     assert not actor.rollout
     assert actor.pending_transition is None
+    assert not actor._issued_transitions
     assert actor.last_obs is None
     assert actor.snake_id == 7
     assert actor.resume_token == "a" * 32

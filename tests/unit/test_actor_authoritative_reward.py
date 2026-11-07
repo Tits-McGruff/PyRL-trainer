@@ -17,6 +17,7 @@ from pyrl_trainer.agent import ActorClient
 from pyrl_trainer.config import Config
 from pyrl_trainer.evaluation import EvaluationEpisodeComplete, policy_snapshot_sha256
 from pyrl_trainer.checkpointing import save_best_checkpoint
+from pyrl_trainer.learner import gae
 from pyrl_trainer.reward_contract import RewardContractError, RewardDiscontinuityError, RewardStream
 from pyrl_trainer.sensor_contract import SensorContract
 from pyrl_trainer.sync_ppo import (
@@ -58,7 +59,7 @@ def native_motion_spec():
     }
 
 
-def reward(kind="initial", *, snake_id=7):
+def reward(kind="initial", *, snake_id=7, applied=False):
     """Use quantities already verified by the real Rust food/death physics test."""
     payload = json.loads(files("slither_contracts").joinpath(
         "external-reward-v1-fixture.json").read_text(encoding="utf-8"))[0]
@@ -75,6 +76,8 @@ def reward(kind="initial", *, snake_id=7):
         payload["reason"] = {
             "live": None, "terminal": "death", "truncated": "manualGeneration"
         }[kind]
+    if applied:
+        payload["control"] = tracked_reward(1, 1, 1, 1)["control"]
     return payload
 
 
@@ -163,8 +166,8 @@ async def test_native_final_tail_reaches_pending_action_and_correct_bootstrap(
     actor = actor_type(0, cfg, state, queue)
     await start(actor, motion_spec, Socket())
     assert "points_delta_norm" not in actor.sensor_idx
-    assert actor.pending_transition.value == 0
-    message = {"type": "transition", "reward": reward(kind)}
+    assert actor.pending_transition is None
+    message = {"type": "transition", "reward": reward(kind, applied=True)}
     if kind == "truncated":
         message["finalSensors"] = np.ones(motion_spec["sensorCount"], dtype=np.float32)
     await actor._handle_transition(message)
@@ -192,11 +195,12 @@ async def test_multiple_observations_accumulate_without_new_decisions(motion_spe
     socket = Socket()
     await start(actor, motion_spec, socket)
     actor.stride = 10
-    first = reward("live")
+    first = reward("live", applied=True)
     await actor._handle_sensors({"type": "sensors", "snakeId": 7, "tick": 1,
                                  "sensors": np.zeros(motion_spec["sensorCount"]),
                                  "reward": first}, socket)
     second = deepcopy(first)
+    second["control"]["selectedAtStep"] = "0000000000000001"
     second["state"]["bodyLength"] += 1
     second["state"]["retainedGrowth"] += 1
     second.update(observationSequence="0000000000000004",
@@ -222,7 +226,7 @@ async def test_dropped_pending_reward_is_received_but_never_admitted(actor_type,
     await actor._handle_sensors({"type": "sensors", "snakeId": 7, "tick": 1,
                                  "sensors": np.zeros(motion_spec["sensorCount"]),
                                  "reward": reward("live")}, Socket())
-    assert actor.pending_transition.reward == pytest.approx(0.35)
+    assert actor.pending_transition is None
     await actor._truncate_disconnected_rollout()
     stats = state.drain_runtime_stats()
     assert stats["received_foodValueDelta"] == 1
@@ -234,6 +238,35 @@ async def test_dropped_pending_reward_is_received_but_never_admitted(actor_type,
 
 
 @pytest.mark.asyncio
+async def test_multi_step_interval_with_a_final_applied_marker_is_not_credited(motion_spec):
+    """The last selection cannot identify the earlier physics in a multi-step interval."""
+    cfg, state = state_for(motion_spec)
+    cfg.horizon = 1
+    queue, socket = asyncio.Queue(), Socket()
+    actor = SynchronousActorClient(0, cfg, state, queue)
+    await start(actor, motion_spec, socket)
+    payload = reward("live", applied=True)
+    payload["toStep"] = "0000000000000002"
+    payload["control"]["selectedAtStep"] = "0000000000000001"
+    payload["deltas"]["elapsedSeconds"] = 2 / 60
+    await actor._handle_sensors({"snakeId": 7, "tick": 2, "reward": payload,
+                                 "sensors": np.zeros(motion_spec["sensorCount"])}, socket)
+    assert actor.pending_transition is None and queue.empty()
+    assert actor.episode_return == pytest.approx(0.35)
+
+    proven = tracked_reward(3, 1, 1, 1)
+    proven["state"]["bodyLength"] = payload["state"]["bodyLength"] + 1
+    proven["state"]["retainedGrowth"] = payload["state"]["retainedGrowth"] + 1
+    proven["previousObservationSequence"] = payload["observationSequence"]
+    await observe(actor, socket, proven)
+    await actor._truncate_disconnected_rollout()
+    _, _, rollout, _ = queue.get_nowait()
+    assert len(rollout) == 1 and rollout[0].action_tick == 0
+    assert rollout[0].reward == pytest.approx(0.35)
+    assert actor.episode_return == pytest.approx(0.70)
+
+
+@pytest.mark.asyncio
 async def test_barrier_wait_counts_received_events_without_mutating_submitted_reward(motion_spec):
     """Waiting actors keep event diagnostics, while a queued contribution stays fixed."""
     cfg, state = state_for(motion_spec)
@@ -241,22 +274,16 @@ async def test_barrier_wait_counts_received_events_without_mutating_submitted_re
     queue = asyncio.Queue()
     actor = SynchronousActorClient(0, cfg, state, queue)
     await start(actor, motion_spec, Socket())
-    first = reward("live")
+    first = reward("live", applied=True)
     await actor._handle_sensors({"snakeId": 7, "tick": 1,
                                  "sensors": np.zeros(motion_spec["sensorCount"]),
                                  "reward": first}, Socket())
+    assert queue.empty()
+    await observe(actor, Socket(), tracked_reward(2, 1, 1, 1), source="neutral")
     contribution = queue.get_nowait()
-    second = deepcopy(first)
-    second["state"]["bodyLength"] += 1
-    second["state"]["retainedGrowth"] += 1
-    second.update(observationSequence="0000000000000004",
-                  previousObservationSequence=first["observationSequence"],
-                  fromStep=first["toStep"], toStep="0000000000000002")
-    await actor._handle_sensors({"snakeId": 7, "tick": 2,
-                                 "sensors": np.zeros(motion_spec["sensorCount"]),
-                                 "reward": second}, Socket())
+    await observe(actor, Socket(), tracked_reward(3, 1, 1, 1), source="neutral")
     stats = state.drain_runtime_stats()
-    assert stats["received_foodValueDelta"] == 2
+    assert stats["received_foodValueDelta"] == 3
     assert stats["reward_food"] == pytest.approx(0.1)
     assert stats["reward_total_food"] == pytest.approx(0.1)
     assert stats["admitted_transitions"] == 1
@@ -267,7 +294,7 @@ async def test_barrier_wait_counts_received_events_without_mutating_submitted_re
     drained = state.drain_runtime_stats()
     assert drained["reward_food"] == 0
     assert drained["received_foodValueDelta"] == 0
-    assert drained["received_total_foodValueDelta"] == 2
+    assert drained["received_total_foodValueDelta"] == 3
 
 
 @pytest.mark.asyncio
@@ -281,7 +308,7 @@ async def test_missing_reward_and_missing_closure_fail_without_survival_fallback
                                      "sensors": np.zeros(motion_spec["sensorCount"])}, Socket())
     with pytest.raises(RewardContractError, match="omitted the old-life closure"):
         await actor._on_assign(8, "b" * 32, replacement_reason="generation")
-    assert actor.pending_transition.reward == 0
+    assert actor.pending_transition is None
 
 
 @pytest.mark.asyncio
@@ -312,7 +339,8 @@ async def test_four_actor_barrier_preserves_native_reward_totals(motion_spec):
         actor = SynchronousActorClient(actor_id, cfg, state, queue)
         await start(actor, motion_spec, Socket(), snake_id)
         await actor._handle_transition({"type": "transition",
-                                        "reward": reward("terminal", snake_id=snake_id)})
+                                        "reward": reward("terminal", snake_id=snake_id,
+                                                         applied=True)})
     contributions = {}
     while not queue.empty():
         actor_id, epoch, rollout, bootstrap = queue.get_nowait()
@@ -491,12 +519,87 @@ def tracked_reward(tick, accepted, applied, applied_count, superseded=0):
 
     first = {1: 0, 2: 2}.get(applied, applied)
     payload["control"] = {
-        "source": "neutral" if tick == 4 else "held", "selectedAtStep": f"{tick - 1:016x}",
+        "source": "neutral" if tick == 4 else "held",
+        "selectedAtStep": f"{tick - 1:016x}",
         "acceptedCommand": command(accepted),
         "appliedCommand": {"command": command(applied), "firstAppliedStep": f"{first:016x}"},
         "acceptedCount": accepted, "appliedCount": applied_count, "supersededCount": superseded,
     }
     return payload
+
+
+async def observe(actor, socket, payload, *, value_input=0, source=None):
+    """Deliver an observation whose value comes from the real test inference model."""
+    if source is not None:
+        payload["control"]["source"] = source
+    await actor._handle_sensors({"snakeId": actor.snake_id,
+                                 "tick": int(payload["toStep"], 16),
+                                 "sensors": np.full(len(actor.sensor_order), value_input,
+                                                    dtype=np.float32),
+                                 "reward": payload}, socket)
+
+
+@pytest.mark.asyncio
+async def test_gap_bootstraps_at_last_credited_observation(motion_spec):
+    """A delayed successor retains its sample and cannot extend the earlier advantage."""
+    cfg, state = state_for(motion_spec)
+    queue, socket = asyncio.Queue(), Socket()
+    actor = ActorClient(0, cfg, state, queue)
+    await start(actor, motion_spec, socket)
+    await observe(actor, socket, tracked_reward(1, 1, 1, 1), value_input=1)
+    await observe(actor, socket, tracked_reward(2, 2, 1, 1), source="neutral")
+    await observe(actor, socket, tracked_reward(3, 2, 2, 2))
+    await actor._truncate_disconnected_rollout()
+    _, rollout, bootstrap = queue.get_nowait()
+    assert [(item.action_tick, item.value) for item in rollout] == [(0, 0.0), (1, 3.0)]
+    assert [item.reward for item in rollout] == pytest.approx([0.35, 0.35])
+    assert rollout[0].bootstrap_override == pytest.approx(3.0)
+    assert bootstrap == 0
+    advantages, _ = gae(rollout, gamma=0.5, lam=1.0, bootstrap_value=bootstrap)
+    assert advantages == pytest.approx([1.85, -2.65])
+
+
+@pytest.mark.asyncio
+async def test_applied_echo_requires_original_sample_tick(motion_spec):
+    """A known ID with a different observation tick cannot train a sample."""
+    cfg, state = state_for(motion_spec)
+    actor = ActorClient(0, cfg, state, asyncio.Queue())
+    socket = Socket()
+    await start(actor, motion_spec, socket)
+    await observe(actor, socket, tracked_reward(1, 1, 1, 1))
+    await observe(actor, socket, tracked_reward(2, 1, 1, 1), source="neutral")
+    payload = tracked_reward(3, 2, 2, 2)
+    payload["control"]["acceptedCommand"]["clientTick"] = "0000000000000000"
+    payload["control"]["appliedCommand"]["command"]["clientTick"] = "0000000000000000"
+    with pytest.raises(RewardContractError, match="tick does not match its policy sample"):
+        await observe(actor, socket, payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [True, False])
+async def test_zero_step_closure_sets_endpoint_without_reward(motion_spec, terminal):
+    """Death masks the value; truncation uses the final old-life observation."""
+    cfg, state = state_for(motion_spec)
+    queue, socket = asyncio.Queue(), Socket()
+    actor = SynchronousActorClient(0, cfg, state, queue)
+    await start(actor, motion_spec, socket)
+    live = tracked_reward(1, 1, 1, 1)
+    await observe(actor, socket, live, value_input=1)
+    closure = deepcopy(live)
+    closure.update(transitionKind="terminal" if terminal else "truncated",
+                   reason="death" if terminal else "manualGeneration",
+                   previousObservationSequence=live["observationSequence"],
+                   observationSequence="0000000000000004", fromStep=live["toStep"])
+    closure["deltas"] = dict.fromkeys(closure["deltas"], 0)
+    message = {"reward": closure}
+    if not terminal:
+        message["finalSensors"] = np.zeros(motion_spec["sensorCount"], dtype=np.float32)
+    await actor._handle_transition(message)
+    _, _, rollout, bootstrap = queue.get_nowait()
+    assert len(rollout) == 1 and rollout[0].done == int(terminal)
+    assert rollout[0].reward == pytest.approx(0.35)
+    assert bootstrap == 0
+    assert actor.episode_return == pytest.approx(-0.15 if terminal else 0.35)
 
 
 @pytest.mark.asyncio
@@ -546,39 +649,36 @@ async def test_epoch_fence_waits_for_physics_and_allows_superseding_new_command(
     actor = SynchronousActorClient(0, cfg, state, queue)
     await start(actor, motion_spec, socket)
 
-    async def deliver(tick, accepted, applied, count, superseded=0):
-        await actor._handle_sensors({"snakeId": 7, "tick": tick,
-                                     "sensors": np.zeros(motion_spec["sensorCount"]),
-                                     "reward": tracked_reward(tick, accepted, applied, count,
-                                                              superseded)}, socket)
-
-    await deliver(1, 1, 1, 1)
+    await observe(actor, socket, tracked_reward(1, 1, 1, 1))
+    await observe(actor, socket, tracked_reward(2, 2, 1, 1), source="neutral")
     assert queue.get_nowait()[1] == 0
     state.drain_runtime_stats()
     state.update_steps = 1
     state.sync_infer_from_train()
     state.advance_collection_epoch()
-    await deliver(2, 2, 1, 1)
-    assert actor._fence_action_id == 3
-    await deliver(3, 3, 2, 2)
-    assert actor._fence_required  # Command 3 was accepted, but only old command 2 ran.
-    await deliver(4, 4, 2, 2, 1)
+    await observe(actor, socket, tracked_reward(3, 3, 2, 2))
+    assert actor._fence_action_id == 4
+    await observe(actor, socket, tracked_reward(4, 4, 2, 2, 1))
+    assert actor._fence_required  # Command 4 was accepted, but has yet to run.
     assert actor.pending_transition is None
-    await deliver(5, 5, 4, 3, 1)
+    await observe(actor, socket, tracked_reward(5, 5, 2, 2, 2), source="neutral")
+    assert actor._fence_required
+    await observe(actor, socket, tracked_reward(6, 6, 5, 3, 2))
     assert not actor._fence_required
-    assert actor.pending_transition.action_id == "0000000000000006"
-    assert actor.pending_transition.reward == 0
-    await deliver(6, 6, 5, 4, 1)
+    assert actor.pending_transition.action_id == "0000000000000005"
+    await observe(actor, socket, tracked_reward(7, 6, 5, 3, 2))
+    assert queue.empty()
+    await observe(actor, socket, tracked_reward(8, 7, 7, 4, 3))
     actor_id, epoch, rollout, _bootstrap = queue.get_nowait()
     assert actor_id == 0 and epoch == 1
-    assert len(rollout) == 1 and rollout[0].policy_version == 1
-    assert rollout[0].action_id == "0000000000000006"
-    assert rollout[0].reward == pytest.approx(0.35)
+    assert [item.policy_version for item in rollout] == [1, 1]
+    assert [int(item.action_id, 16) for item in rollout] == [5, 7]
+    assert [item.reward for item in rollout] == pytest.approx([0.7, 0.35])
     stats = state.drain_runtime_stats()
-    assert stats["epoch_fence_intervals"] == 4
-    assert stats["received_foodValueDelta"] == 5
-    assert stats["reward_food"] == pytest.approx(0.1)
-    assert stats["commands_superseded"] == 1
+    assert stats["epoch_fence_intervals"] == 3
+    assert stats["received_foodValueDelta"] == 6
+    assert stats["reward_food"] == pytest.approx(0.3)
+    assert stats["commands_superseded"] == 3
     assert stats["command_delay_samples"] == 3
     assert stats["command_delay_steps_mean"] == 1
     assert stats["command_delay_steps_max"] == 1
@@ -592,17 +692,15 @@ async def test_closure_before_epoch_observation_contributes_empty_only_once(moti
     cfg.horizon = 1
     queue = asyncio.Queue()
     actor = SynchronousActorClient(0, cfg, state, queue)
-    await start(actor, motion_spec, Socket())
-    await actor._handle_sensors({"snakeId": 7, "tick": 1,
-                                 "sensors": np.zeros(motion_spec["sensorCount"]),
-                                 "reward": reward("live")}, Socket())
+    socket = Socket()
+    await start(actor, motion_spec, socket)
+    await observe(actor, socket, tracked_reward(1, 1, 1, 1))
+    await observe(actor, socket, tracked_reward(2, 1, 1, 1), source="neutral")
     queue.get_nowait()
     state.advance_collection_epoch()
-    closure = reward("terminal")
-    closure.update(observationSequence="0000000000000004",
-                   previousObservationSequence="0000000000000003",
-                   fromStep="0000000000000001", toStep="0000000000000002")
-    closure["state"].update(bodyLength=14, retainedGrowth=2)
+    closure = tracked_reward(3, 1, 1, 1)
+    closure["control"]["source"] = "neutral"
+    closure.update(transitionKind="terminal", reason="death")
     await actor._handle_transition({"reward": closure})
     assert queue.get_nowait()[1:3] == (1, [])
     await actor._on_assign(8, "b" * 32)

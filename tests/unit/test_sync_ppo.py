@@ -171,9 +171,9 @@ async def test_actor_contributes_only_once_per_collection_epoch():
     actor = SynchronousActorClient(0, cfg, state, queue)
     actor.rollout = [_transition(state)]
 
-    await actor._submit_collection_rollout(0.25)
+    await actor._submit_training_rollout(0.25)
     actor.rollout = [_transition(state)]
-    await actor._submit_collection_rollout(0.5)
+    await actor._submit_training_rollout(0.5)
 
     actor_id, epoch, rollout, bootstrap = queue.get_nowait()
     assert actor_id == 0
@@ -186,7 +186,7 @@ async def test_actor_contributes_only_once_per_collection_epoch():
     actor._refresh_collection_epoch()
     actor._fence_required = False  # This handcrafted rollout represents a fenced epoch.
     actor.rollout = [_transition(state)]
-    await actor._submit_collection_rollout(0.75)
+    await actor._submit_training_rollout(0.75)
     assert queue.get_nowait()[1] == 1
 
 

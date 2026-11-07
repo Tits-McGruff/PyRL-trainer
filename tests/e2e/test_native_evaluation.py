@@ -7,19 +7,22 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 
 import pytest
 import numpy as np
 import torch
+import websockets
 
 from pyrl_trainer.__main__ import discover_sensor_contract, main
+from pyrl_trainer.binary_sensors import decode_binary_sensors
 from pyrl_trainer.config import Config
 from pyrl_trainer.checkpointing import (
     save_checkpoint, load_checkpoint_if_present, save_best_checkpoint,
 )
 from pyrl_trainer.evaluation import policy_snapshot_sha256
 from pyrl_trainer.learner import collate_rollouts
-from pyrl_trainer.reward_contract import RewardContractError
+from pyrl_trainer.reward_contract import RewardContractError, reward_components
 from pyrl_trainer.sync_ppo import (
     SynchronousActorClient, SynchronousSharedState, _coherent_policy_version,
     _write_exact_best_metadata,
@@ -128,6 +131,72 @@ async def training_state(port, tmp_path):
     return cfg, contract, state
 
 
+async def read_control_message(ws, kind):
+    """Read a real UI control reply, skipping intervening frames and stats."""
+    while True:
+        raw = await ws.recv()
+        if isinstance(raw, str):
+            message = json.loads(raw)
+            assert message["type"] != "error", message
+            if message["type"] == kind:
+                return message
+
+
+@pytest.mark.asyncio
+async def test_native_actor_rejoins_on_same_socket_after_new_run(tmp_path):
+    """New Run replaces the authority while the existing actor loop stays connected."""
+    fixture = Path(__file__).resolve().parents[1] / "fixtures/reward_smoke_server.mjs"
+    loader = (Path(_SLITHER_ROOT) / "node_modules/tsx/dist/loader.mjs").resolve().as_uri()
+    process = await asyncio.create_subprocess_exec(
+        "node", "--import", loader, str(fixture), str(_SLITHER_ROOT),
+        str(tmp_path / "server.sqlite"), "ppo", stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        port = (await asyncio.wait_for(read_fixture_packet(process), timeout=30))["port"]
+        cfg, _contract, state = await training_state(port, tmp_path)
+        actor = SynchronousActorClient(0, cfg, state, asyncio.Queue())
+        name = "new-run-rejoin"
+        async with websockets.connect(cfg.ws_url) as actor_ws, websockets.connect(cfg.ws_url) as ui:
+            await asyncio.wait_for(actor._handshake(actor_ws, name), timeout=5)
+            # One actor socket and one receive loop for both worlds. The
+            # production reconnect wrapper cannot satisfy this test.
+            actor_loop = asyncio.create_task(actor._loop(actor_ws, name))
+            try:
+                await until(lambda: actor.last_reward_envelope is not None)
+                old_run = actor.last_reward_envelope["runId"]
+                old_token = actor.resume_token
+                old_assignments = actor.assign_count
+
+                await ui.send(json.dumps({"type": "hello", "clientType": "ui", "version": 2}))
+                await asyncio.wait_for(read_control_message(ui, "welcome"), timeout=5)
+                await ui.send(json.dumps({"type": "join", "mode": "spectator"}))
+                await ui.send(json.dumps({"type": "newRun", "requestId": "pyrl-rejoin"}))
+                notice = await asyncio.wait_for(read_control_message(ui, "stateReplaced"), 10)
+                assert notice["reason"] == "newRun"
+                new_run = notice["welcome"]["runId"]
+                assert new_run != old_run
+                await ui.send(json.dumps({"type": "join", "mode": "spectator",
+                                          "rejoinToken": notice["rejoinToken"]}))
+
+                def assigned_in_new_run():
+                    if actor_loop.done():
+                        actor_loop.result()
+                    reward = actor.last_reward_envelope
+                    return (actor.assign_count > old_assignments and reward is not None
+                            and reward["runId"] == new_run)
+
+                await until(assigned_in_new_run)
+                assert actor.snake_id == actor.last_reward_envelope["snakeId"]
+                assert actor.resume_token and actor.resume_token != old_token
+                assert not actor_loop.done()
+            finally:
+                actor_loop.cancel()
+                await asyncio.gather(actor_loop, return_exceptions=True)
+    finally:
+        await stop_server(process)
+
+
 def assert_checkpoint_roundtrip(state, contract):
     """The actual evaluator winner stays exact after training publishes newer weights."""
     cfg = state.cfg
@@ -146,11 +215,11 @@ def assert_checkpoint_roundtrip(state, contract):
     assert np.isfinite(float(restored.train_model.steering_std().detach()))
 
 
-def assert_terminal_food(contribution, runtime):
-    """Check the admitted terminal tail and independent survival/boost exposure."""
+def assert_food_before_forced_death(contribution, runtime):
+    """Credit real food and boost, then truncate at the last step controlled by PPO."""
     victim, bootstrap = contribution
-    assert victim[-1].done == 1 and bootstrap == 0
-    assert sum(item.reward_components.get("death", 0) for item in victim) == -0.5
+    assert victim[-1].done == 0 and math.isfinite(bootstrap)
+    assert all(item.reward_components.get("death", 0) == 0 for item in victim)
     assert sum(item.reward_components.get("food", 0) for item in victim) > 0
     assert sum(item.reward_components.get("growth", 0) for item in victim) > 0
     assert runtime["received_boostPointsSpentDelta"] > 0
@@ -227,6 +296,119 @@ def assert_epoch_fence_opened(actors):
         assert int(marker["firstAppliedStep"], 16) < int(envelope["toStep"], 16)
 
 
+def assert_rollout_matches_physics(rollout, received, actor):
+    """Compare admitted PPO data with the actual binary reward stream."""
+    for item in rollout:
+        credited = [envelope for envelope in received
+                    if envelope["control"]["source"] == "held"
+                    and envelope["control"]["appliedCommand"]["command"]["clientActionId"]
+                    == item.action_id]
+        assert item.elapsed_seconds == pytest.approx(sum(
+            envelope["deltas"]["elapsedSeconds"] for envelope in credited
+        ))
+        assert item.reward == pytest.approx(sum(
+            sum(reward_components(envelope, actor.reward_coefficients).values())
+            for envelope in credited
+        ))
+    assert actor.episode_return == pytest.approx(sum(
+        sum(reward_components(envelope, actor.reward_coefficients).values())
+        for envelope in received
+    ))
+
+
+def delayed_application(envelope, raw_action):
+    """Return the native receipt after verifying the original command and its delay."""
+    applied = envelope["control"]["appliedCommand"]
+    assert applied["command"]["clientActionId"] == json.loads(raw_action)["actionId"]
+    assert int(applied["firstAppliedStep"], 16) > int(applied["command"]["clientTick"], 16)
+    return applied
+
+
+@pytest.mark.asyncio
+async def test_native_ppo_credits_delayed_application_and_excludes_superseded_command(tmp_path):
+    """Buffer only outgoing actions; command admission, physics and rewards stay native."""
+    fixture = Path(__file__).resolve().parents[1] / "fixtures/reward_smoke_server.mjs"
+    loader = (Path(_SLITHER_ROOT) / "node_modules/tsx/dist/loader.mjs").resolve().as_uri()
+    process = await asyncio.create_subprocess_exec(
+        "node", "--import", loader, str(fixture), str(_SLITHER_ROOT),
+        str(tmp_path / "server.sqlite"), "ppo-attribution", stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        port = (await asyncio.wait_for(read_fixture_packet(process), timeout=30))["port"]
+        cfg, _contract, state = await training_state(port, tmp_path)
+        cfg.horizon = 1
+        queue = asyncio.Queue()
+        actor = SynchronousActorClient(0, cfg, state, queue)
+        buffered = []
+
+        class OutgoingActions:  # pylint: disable=too-few-public-methods
+            """Let the real actor issue commands while the test controls transmission."""
+
+            async def send(self, raw):
+                """Hold the actor's exact payload until the test releases it."""
+                buffered.append(raw)
+
+        async with websockets.connect(cfg.ws_url) as ws:
+            await asyncio.wait_for(actor._handshake(ws, "attribution-test"), timeout=5)
+            outgoing = OutgoingActions()
+
+            async def observe():
+                while True:
+                    raw = await ws.recv()
+                    if isinstance(raw, bytes):
+                        observation = decode_binary_sensors(raw)
+                        await actor._handle_sensors(observation, outgoing)
+                        return observation["reward"]
+                    assert json.loads(raw)["type"] == "stats"
+
+            initial = await asyncio.wait_for(observe(), timeout=5)
+            neutral = await asyncio.wait_for(observe(), timeout=5)
+            assert initial["transitionKind"] == "initial"
+            assert neutral["control"]["appliedCommand"] is None
+            assert neutral["deltas"]["aliveSecondsDelta"] > 0
+            assert actor.pending_transition is None and queue.empty()
+            assert len(buffered) == 2
+
+            received = [neutral]
+
+            async def observe_application(count):
+                while True:
+                    envelope = await observe()
+                    received.append(envelope)
+                    if envelope["control"]["appliedCount"] >= count:
+                        return envelope
+
+            await ws.send(buffered[0])
+            delayed = await asyncio.wait_for(observe_application(1), timeout=5)
+            first = delayed_application(delayed, buffered[0])
+            assert queue.empty()
+            held = await asyncio.wait_for(observe_application(1), timeout=5)
+            assert held["control"]["appliedCommand"] == first and queue.empty()
+
+            # Both reach Rust in this slow step. The second receipt replaces the
+            # first before physics selects a command.
+            await ws.send(buffered[1])
+            await ws.send(buffered[2])
+            selected = await asyncio.wait_for(observe_application(2), timeout=5)
+            control = selected["control"]
+            assert control["acceptedCount"] == 3
+            assert control["appliedCount"] == 2
+            assert control["supersededCount"] == 1
+            assert control["appliedCommand"]["command"]["clientActionId"] == (
+                json.loads(buffered[2])["actionId"]
+            )
+
+            _, epoch, rollout, _bootstrap = queue.get_nowait()
+            assert epoch == 0
+            assert [item.action_id for item in rollout] == [
+                json.loads(buffered[index])["actionId"] for index in (0, 2)
+            ]
+            assert_rollout_matches_physics(rollout, received, actor)
+    finally:
+        await stop_server(process)
+
+
 @pytest.mark.asyncio
 async def test_native_events_reach_two_synchronized_ppo_updates_and_exact_checkpoints(tmp_path):
     """Known real events train four actors, with terminal and cutoff bootstraps kept distinct."""
@@ -259,7 +441,7 @@ async def test_native_events_reach_two_synchronized_ppo_updates_and_exact_checkp
         await asyncio.gather(eval_task, return_exceptions=True)
         await fixture_command(process, "generation")
         first = await update_round(state, queue, 0)
-        assert_terminal_food(first[0], state.drain_runtime_stats())
+        assert_food_before_forced_death(first[0], state.drain_runtime_stats())
 
         cutoffs = {}
         for actor in actors:
@@ -322,7 +504,8 @@ async def test_seeded_native_run_stops_and_preserves_both_policies(tmp_path, mon
         assert policy_snapshot_sha256(initial) != policy_snapshot_sha256(candidate)
         log = capsys.readouterr().out
         assert f"initial_policy_sha256={policy_snapshot_sha256(initial)}" in log
-        assert "admitted_decisions=16, decision_budget=5" in log
+        admission = re.search(r"admitted_decisions=(\d+), decision_budget=5", log)
+        assert admission and 16 <= int(admission[1]) <= 20
     finally:
         await stop_server(process)
 

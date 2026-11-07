@@ -651,10 +651,14 @@ def gae(
     last_value = bootstrap_value
 
     for t in reversed(range(t_len)):
-        reward = rollout[t].reward
-        value = rollout[t].value
-        done = rollout[t].done
+        transition = rollout[t]
+        reward = transition.reward
+        value = transition.value
+        done = transition.done
         next_value = last_value if t == t_len - 1 else rollout[t + 1].value
+        if transition.bootstrap_override is not None:
+            next_value = transition.bootstrap_override
+            last_gae = 0.0
         delta = reward + gamma * (1.0 - done) * next_value - value
         last_gae = delta + gamma * lam * (1.0 - done) * last_gae
         adv[t] = last_gae

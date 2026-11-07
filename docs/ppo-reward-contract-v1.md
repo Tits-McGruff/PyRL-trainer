@@ -98,11 +98,30 @@ while retaining its acceptance marker. The counters exclude actions dropped
 before native admission.
 
 After an epoch advances, actors continue issuing actions while collection is
-fenced. Collection opens at the first valid observation proving that the first
-new-epoch command or a later new-epoch command has actually applied. The
-opening interval is excluded from PPO, and its observation starts the next
-decision. A lifecycle closure can contribute an empty rollout before the
-fence opens. Valid received events remain in episode accounting.
+fenced. They retain new-policy samples while waiting for native confirmation.
+Collection opens when the first new-epoch command or a later new-epoch command
+has actually applied. The opening interval can enter PPO when it proves which
+new-policy sample ran for the full step. A lifecycle closure can contribute an
+empty rollout before the fence opens. Valid received events remain in episode
+accounting.
+
+After the fence, PPO credits a sampled command only for a one-step interval
+whose native selection is `held` and whose applied action ID and tick match
+the sample.
+Delayed commands keep their original observation and policy log probability.
+Their credit starts at confirmed application. Superseded commands never become
+PPO samples. Neutral and ambiguous multi-step intervals contribute to episode
+accounting alone. Advantage traces stop at attribution gaps and bootstrap at
+the last credited observation. A same-step closure supplies an exact endpoint
+for the last sample, with zero continuation value at death and the final
+old-life observation at truncation. A death penalty enters PPO only when the
+closing interval identifies a credited command. Episode accounting still
+records the complete death.
+
+Sending a new command does not close a decision that is still held in physics.
+A synchronized contribution can contain one sample beyond the rollout target
+when the observation that completes the last decision also proves the next
+command's first step. Both samples still belong to the same policy epoch.
 
 ## Initial objective
 
@@ -144,8 +163,9 @@ and episode returns must all remain finite.
 
 Actors retain weighted components and simulated duration with each pending
 decision. Components enter `reward[...]` only after a completed rollout is
-successfully queued. Dropping a pending decision on disconnect does not count
-its reward as admitted to PPO.
+successfully queued. On disconnect, completed credited steps can be submitted
+with a bootstrap at their last observation. Unconfirmed actions and reward
+across the transport gap are excluded from PPO.
 
 Raw `received[...]` counters include accepted noninitial intervals while an
 actor waits at the collection barrier. They report interval and cumulative food,
